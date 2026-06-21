@@ -2,16 +2,90 @@ import { useEffect, useState } from 'react'
 import {
   closeTaskIllegal,
   closeTaskLegal,
-  fetchLinkLayers,
   fetchLinkedFeatures,
   fetchTask,
   fetchTaskFormFields,
   lookupTaskByFeature,
+  markDisruptionAbsent,
   sendTaskToField,
   updateTask,
 } from '../api/client'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource } from '../types'
 import { aiPhotoUuidFromAttributes, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
+
+type StatusAction = 'field' | 'legal' | 'illegal' | 'clear'
+
+type LegalValidation = {
+  isValid: boolean
+  hasLink: boolean
+  hasStation: boolean
+  message: string | null
+}
+
+const LEGAL_STATION_FIELDS = ['sps', 'station_avr'] as const
+const LEGAL_LINK_EXCLUDED_INDEX = 2
+const CRM_GROUP_ORDERS = 'Новые ордера ОАТИ, АВР и земляные работы'
+
+const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
+  field: 'Отправить задачу в поле?',
+  legal: 'Закрыть задачу как легальную?',
+  illegal: 'Закрыть задачу как нелегальную?',
+  clear: 'Отметить задачу: разрытие отсутствует?',
+}
+
+function isFilled(value: string | undefined): boolean {
+  return Boolean(value?.trim())
+}
+
+function fieldValue(
+  form: Record<string, string>,
+  record: TaskRecord | null,
+  field: string,
+): string {
+  const fromForm = form[field]?.trim()
+  if (fromForm) return fromForm
+  if (!record) return ''
+  return String((record as unknown as Record<string, unknown>)[field] ?? '').trim()
+}
+
+function getLegalLinkFields(linkFields: string[]): string[] {
+  return linkFields.filter((_, index) => index !== LEGAL_LINK_EXCLUDED_INDEX)
+}
+
+function getLegalValidation(
+  form: Record<string, string>,
+  legalLinkFields: string[],
+  record: TaskRecord | null,
+): LegalValidation {
+  const hasLink =
+    legalLinkFields.length === 0 ||
+    legalLinkFields.some((field) => isFilled(fieldValue(form, record, field)))
+  const hasStation = LEGAL_STATION_FIELDS.some((field) => isFilled(fieldValue(form, record, field)))
+
+  if (legalLinkFields.length > 0 && !hasLink) {
+    return {
+      isValid: false,
+      hasLink: false,
+      hasStation,
+      message: 'Заполните хотя бы одно поле в группе «Сопоставление» (кроме третьего).',
+    }
+  }
+
+  if (!hasStation) {
+    return {
+      isValid: false,
+      hasLink: true,
+      hasStation: false,
+      message: 'Заполните СПС или АВР в группе «Данные из Станции».',
+    }
+  }
+
+  return { isValid: true, hasLink: true, hasStation: true, message: null }
+}
+
+function isLegalRequiredField(field: string, legalLinkFields: string[]): boolean {
+  return legalLinkFields.includes(field) || (LEGAL_STATION_FIELDS as readonly string[]).includes(field)
+}
 
 interface TaskEditModalProps {
   context: SelectedTaskContext | null
@@ -41,13 +115,22 @@ export function TaskEditModal({
   const [form, setForm] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+  const [pendingStatusAction, setPendingStatusAction] = useState<StatusAction | null>(null)
+  const [showLegalRequirements, setShowLegalRequirements] = useState(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
   const isReadonly = taskSource !== 'active'
   const canSendToField = taskSource === 'active'
   const canCloseLegal = taskSource === 'active' || taskSource === 'field'
   const canCloseIllegal = taskSource === 'active' || taskSource === 'field'
+  const canMarkDisruptionAbsent = taskSource === 'active' || taskSource === 'field'
+  const hasStatusActions =
+    canSendToField || canCloseLegal || canCloseIllegal || canMarkDisruptionAbsent
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
+  const requiresLegalLink = context?.groupName !== CRM_GROUP_ORDERS
+  const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
+  const legalValidation = getLegalValidation(form, legalLinkFields, record)
+  const showLegalFieldHints = canCloseLegal && !isReadonly
 
   const handleViewPhoto = () => {
     if (!context) return
@@ -81,10 +164,14 @@ export function TaskEditModal({
   useEffect(() => {
     if (!context) {
       setRecord(null)
+      setPendingStatusAction(null)
+      setShowLegalRequirements(false)
       onPickModeChange(false, [])
       return
     }
 
+    setPendingStatusAction(null)
+    setShowLegalRequirements(false)
     let cancelled = false
     setLoading(true)
     lookupAndLoad(context)
@@ -92,7 +179,7 @@ export function TaskEditModal({
         if (cancelled) return
         setRecord(data.record)
         setReadonlyFields(data.readonly)
-        setLinkFields(isReadonly ? [] : data.link)
+        setLinkFields(data.link)
         setLabels(data.labels)
         const initial: Record<string, string> = {}
         const fields = isReadonly
@@ -131,11 +218,21 @@ export function TaskEditModal({
     }
   }, [pickedValue, onPickedConsumed, isReadonly])
 
-  const startPick = async (column: string) => {
-    if (isReadonly) return
-    setMessage(`Кликните объект на карте для поля «${labels[column] || column}»`)
-    const layers = await fetchLinkLayers(linkFields)
-    onPickModeChange(true, layers.layers)
+  useEffect(() => {
+    if (legalValidation.isValid) {
+      setShowLegalRequirements(false)
+    }
+  }, [legalValidation.isValid])
+
+  const formRowClass = (field: string) => {
+    if (!showLegalRequirements || !isLegalRequiredField(field, legalLinkFields)) return 'form-row'
+
+    const filled = isFilled(fieldValue(form, record, field))
+    const groupMissing =
+      (legalLinkFields.includes(field) && !legalValidation.hasLink) ||
+      ((LEGAL_STATION_FIELDS as readonly string[]).includes(field) && !legalValidation.hasStation)
+
+    return ['form-row', groupMissing && !filled && 'form-row-missing'].filter(Boolean).join(' ')
   }
 
   const handleSave = async () => {
@@ -166,8 +263,17 @@ export function TaskEditModal({
     }
   }
 
-  const handleAction = async (action: 'field' | 'legal' | 'illegal') => {
+  const handleAction = async (action: StatusAction) => {
     if (!record || isReadonly) return
+    if (action === 'legal') {
+      const validation = getLegalValidation(form, legalLinkFields, record)
+      if (!validation.isValid) {
+        setShowLegalRequirements(true)
+        setMessage(validation.message ?? '')
+        return
+      }
+    }
+    setPendingStatusAction(null)
     if (action !== 'field') await handleSave()
     else if (canSendToField) await handleSave()
     setLoading(true)
@@ -175,8 +281,18 @@ export function TaskEditModal({
       let result
       if (action === 'field') result = await sendTaskToField(record.key)
       else if (action === 'legal') result = await closeTaskLegal(record.key)
-      else result = await closeTaskIllegal(record.key)
-      setMessage(`Статус: ${result.status}`)
+      else if (action === 'illegal') result = await closeTaskIllegal(record.key)
+      else result = await markDisruptionAbsent(record.key)
+
+      if (action === 'clear') {
+        setMessage(
+          result.status === 'skipped'
+            ? 'Задача уже была отмечена как «разрытие отсутствует».'
+            : 'Задача отмечена: разрытие отсутствует.',
+        )
+      } else {
+        setMessage(`Статус: ${result.status}`)
+      }
       onSaved()
       onClose()
     } catch (e) {
@@ -185,6 +301,23 @@ export function TaskEditModal({
       setLoading(false)
     }
   }
+
+  const requestStatusAction = (action: StatusAction) => {
+    if (action === 'legal') {
+      const validation = getLegalValidation(form, legalLinkFields, record)
+      if (!validation.isValid) {
+        setShowLegalRequirements(true)
+        setMessage(validation.message ?? '')
+        return
+      }
+    }
+    setShowLegalRequirements(false)
+    setMessage('')
+    setPendingStatusAction(action)
+  }
+
+  const legalLinkLabels = legalLinkFields.map((field) => labels[field] || field)
+  const legalStationLabels = LEGAL_STATION_FIELDS.map((field) => labels[field] || field)
 
   if (!context) return null
 
@@ -202,7 +335,7 @@ export function TaskEditModal({
                 Отправлено: {new Date(context.feature.sent_at).toLocaleString('ru-RU')}
               </p>
             )}
-            {message && <p className="message">{message}</p>}
+            {message && <p className="message error-text">{message}</p>}
 
             <div className="form-section">
               <h4>Источник</h4>
@@ -215,30 +348,59 @@ export function TaskEditModal({
             </div>
 
             {!isReadonly && linkFields.length > 0 && (
-              <div className="form-section">
+              <div
+                className={[
+                  'form-section',
+                  showLegalRequirements && requiresLegalLink && !legalValidation.hasLink && 'form-section-missing',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              >
                 <h4>Сопоставление</h4>
+                {showLegalFieldHints && requiresLegalLink && (
+                  <p className="field-group-hint">
+                    Для «Закрыть легальное» — одно из: {legalLinkLabels.join(', ')}
+                  </p>
+                )}
                 {linkFields.map((f) => (
-                  <label key={f} className="form-row">
-                    <span>{labels[f] || f}</span>
-                    <div className="form-row-input">
-                      <input
-                        value={form[f] ?? ''}
-                        onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
-                      />
-                      <button type="button" className="btn small" onClick={() => startPick(f)}>
-                        На карте
-                      </button>
-                    </div>
+                  <label key={f} className={formRowClass(f)}>
+                    <span>
+                      {labels[f] || f}
+                      {showLegalFieldHints && requiresLegalLink && legalLinkFields.includes(f) && (
+                        <span className="required-marker">*</span>
+                      )}
+                    </span>
+                    <input
+                      value={form[f] ?? ''}
+                      onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
+                    />
                   </label>
                 ))}
               </div>
             )}
 
-            <div className="form-section">
+            <div
+              className={[
+                'form-section',
+                showLegalRequirements && !legalValidation.hasStation && 'form-section-missing',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
               <h4>Данные из Станции</h4>
+              {showLegalFieldHints && (
+                <p className="field-group-hint">
+                  Для «Закрыть легальное» — одно из: {legalStationLabels.join(' или ')}
+                </p>
+              )}
               {(['sps', 'kgs', 'station_avr'] as const).map((f) => (
-                <label key={f} className="form-row">
-                  <span>{labels[f] || f}</span>
+                <label key={f} className={formRowClass(f)}>
+                  <span>
+                    {labels[f] || f}
+                    {showLegalFieldHints && (f === 'sps' || f === 'station_avr') && (
+                      <span className="required-marker">*</span>
+                    )}
+                  </span>
                   <input
                     value={form[f] ?? ''}
                     readOnly={isReadonly}
@@ -249,34 +411,104 @@ export function TaskEditModal({
             </div>
 
             <div className="modal-actions">
-              {isAiPhoto && record && (
-                <button type="button" className="btn" onClick={handleViewPhoto} disabled={loading}>
-                  Просмотр фотографии
-                </button>
+              <div className="modal-action-group">
+                <h4>Управление задачей</h4>
+                <div className="modal-action-buttons">
+                  {isAiPhoto && record && (
+                    <button type="button" className="btn" onClick={handleViewPhoto} disabled={loading}>
+                      Просмотр фотографии
+                    </button>
+                  )}
+                  {!isReadonly && (
+                    <button type="button" className="btn" onClick={handleSave} disabled={loading}>
+                      Сохранить
+                    </button>
+                  )}
+                  <button type="button" className="btn" onClick={onClose}>
+                    Закрыть
+                  </button>
+                </div>
+              </div>
+
+              {hasStatusActions && (
+                <div className="modal-action-group">
+                  <h4>Изменить статус задачи</h4>
+                  {showLegalFieldHints && (
+                    <p className="legal-requirements">
+                      <span className="required-marker">*</span> Для «Закрыть легальное»:
+                      {requiresLegalLink
+                        ? ' одно поле «Сопоставление» (кроме третьего) и СПС или АВР в «Данные из Станции».'
+                        : ' СПС или АВР в «Данные из Станции».'}
+                    </p>
+                  )}
+                  {pendingStatusAction ? (
+                    <div className="status-confirm">
+                      <p>{STATUS_CONFIRM_MESSAGES[pendingStatusAction]}</p>
+                      <div className="modal-action-buttons">
+                        <button
+                          type="button"
+                          className="btn primary"
+                          disabled={loading}
+                          onClick={() => void handleAction(pendingStatusAction)}
+                        >
+                          Подтвердить
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={loading}
+                          onClick={() => setPendingStatusAction(null)}
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="modal-action-buttons">
+                      {canSendToField && (
+                        <button
+                          type="button"
+                          className="btn btn-status-field"
+                          onClick={() => requestStatusAction('field')}
+                          disabled={loading}
+                        >
+                          Отправить в поле
+                        </button>
+                      )}
+                      {canCloseLegal && (
+                        <button
+                          type="button"
+                          className="btn btn-status-legal"
+                          onClick={() => requestStatusAction('legal')}
+                          disabled={loading}
+                        >
+                          Закрыть легальное
+                        </button>
+                      )}
+                      {canCloseIllegal && (
+                        <button
+                          type="button"
+                          className="btn btn-status-illegal"
+                          onClick={() => requestStatusAction('illegal')}
+                          disabled={loading}
+                        >
+                          Закрыть нелегальное
+                        </button>
+                      )}
+                      {canMarkDisruptionAbsent && (
+                        <button
+                          type="button"
+                          className="btn btn-status-clear"
+                          onClick={() => requestStatusAction('clear')}
+                          disabled={loading}
+                        >
+                          Разрытие отсутствует
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
-              {!isReadonly && (
-                <button type="button" className="btn" onClick={handleSave} disabled={loading}>
-                  Сохранить
-                </button>
-              )}
-              {canSendToField && (
-                <button type="button" className="btn" onClick={() => handleAction('field')} disabled={loading}>
-                  Отправить в поле
-                </button>
-              )}
-              {canCloseLegal && (
-                <button type="button" className="btn" onClick={() => handleAction('legal')} disabled={loading}>
-                  Закрыть легальное
-                </button>
-              )}
-              {canCloseIllegal && (
-                <button type="button" className="btn" onClick={() => handleAction('illegal')} disabled={loading}>
-                  Закрыть нелегальное
-                </button>
-              )}
-              <button type="button" className="btn ghost" onClick={onClose}>
-                Закрыть
-              </button>
             </div>
           </>
         )}

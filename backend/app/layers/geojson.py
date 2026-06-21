@@ -364,15 +364,30 @@ def list_districts(
     schema: str = "odh_export",
     table: str = "hood",
     field: str = "rayon",
+    *,
+    exclude_okrug_shor: list[str] | None = None,
 ) -> list[str]:
+    filters = [
+        f'"{field}" IS NOT NULL',
+        f'TRIM("{field}"::text) <> \'\'',
+    ]
+    if exclude_okrug_shor:
+        placeholders = ", ".join(["%s"] * len(exclude_okrug_shor))
+        filters.append(
+            f'TRIM(COALESCE("okrug_shor", \'\')::text) NOT IN ({placeholders})'
+        )
+    where = " AND ".join(filters)
     query = f"""
         SELECT DISTINCT "{field}" AS rayon
         FROM "{schema}"."{table}"
-        WHERE "{field}" IS NOT NULL AND TRIM("{field}"::text) <> ''
+        WHERE {where}
         ORDER BY 1
     """
     with conn.cursor() as cur:
-        cur.execute(query)
+        if exclude_okrug_shor:
+            cur.execute(query, exclude_okrug_shor)
+        else:
+            cur.execute(query)
         return [row[0] for row in cur.fetchall()]
 
 

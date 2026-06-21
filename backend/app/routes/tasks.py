@@ -33,6 +33,7 @@ from app.crm.store import (
     send_task_to_done_illegal,
     send_task_to_done_legal,
     send_task_to_field,
+    send_task_to_clear,
     task_form_field_groups,
     update_task_record,
 )
@@ -79,7 +80,13 @@ def get_districts() -> dict:
         field = district_cfg.get("field", "rayon")
 
     with get_connection() as conn:
-        rayons = list_districts(conn, schema, table, field)
+        rayons = list_districts(
+            conn,
+            schema,
+            table,
+            field,
+            exclude_okrug_shor=["НАО", "ТАО"],
+        )
     return {"districts": rayons}
 
 
@@ -209,10 +216,13 @@ def get_active_tasks(
 @router.get("/tasks/snapshot")
 def get_snapshot_tasks(
     rayon: str = Query(...),
-    source: str = Query(..., description="field | done_legal | done_illegal"),
+    source: str = Query(..., description="field | done_legal | done_illegal | clear"),
 ) -> dict:
-    if source not in ("field", "done_legal", "done_illegal"):
-        raise HTTPException(status_code=400, detail="source must be field, done_legal, or done_illegal")
+    if source not in ("field", "done_legal", "done_illegal", "clear"):
+        raise HTTPException(
+            status_code=400,
+            detail="source must be field, done_legal, done_illegal, or clear",
+        )
     with get_connection() as conn:
         result = collect_snapshot_tasks(conn, rayon, source)
     return snapshot_result_to_dict(result, source)
@@ -303,6 +313,11 @@ def post_close_legal(key: str) -> SnapshotResultOut:
 @router.post("/tasks/{key}/close-illegal")
 def post_close_illegal(key: str) -> SnapshotResultOut:
     return _send_snapshot(key, send_task_to_done_illegal)
+
+
+@router.post("/tasks/{key}/disruption-absent")
+def post_disruption_absent(key: str) -> SnapshotResultOut:
+    return _send_snapshot(key, send_task_to_clear)
 
 
 def _send_snapshot(key: str, handler) -> SnapshotResultOut:

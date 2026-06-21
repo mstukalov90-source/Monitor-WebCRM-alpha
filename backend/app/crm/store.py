@@ -306,6 +306,7 @@ _SNAPSHOT_TABLES = (
     ("field_table", "tasks_field"),
     ("done_legal_table", "tasks_done_legal"),
     ("done_illegal_table", "tasks_done_illegal"),
+    ("clear_table", "tasks_clear"),
 )
 
 
@@ -448,6 +449,10 @@ def send_task_to_done_legal(conn: PgConnection, record: TaskRecord, store_cfg: D
 
 def send_task_to_done_illegal(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
     return send_task_snapshot(conn, record, store_cfg, "done_illegal_table", "tasks_done_illegal")
+
+
+def send_task_to_clear(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
+    return send_task_snapshot(conn, record, store_cfg, "clear_table", "tasks_clear")
 
 
 def fetch_task(

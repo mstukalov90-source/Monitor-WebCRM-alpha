@@ -152,7 +152,7 @@ export function fetchActiveTasks(rayon: string, applyDateFilter: boolean): Promi
 
 export function fetchSnapshotTasks(
   rayon: string,
-  source: 'field' | 'done_legal' | 'done_illegal',
+  source: 'field' | 'done_legal' | 'done_illegal' | 'clear',
 ): Promise<TaskResult> {
   const params = new URLSearchParams({ rayon, source })
   return request(`/api/tasks/snapshot?${params}`)
@@ -211,6 +211,10 @@ export function closeTaskLegal(key: string): Promise<{ status: string }> {
 
 export function closeTaskIllegal(key: string): Promise<{ status: string }> {
   return request(`/api/tasks/${key}/close-illegal`, { method: 'POST' })
+}
+
+export function markDisruptionAbsent(key: string): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/disruption-absent`, { method: 'POST' })
 }
 
 export function fetchLinkLayers(columns: string[]): Promise<{ layers: LinkLayerInfo[] }> {

@@ -8,7 +8,8 @@ import { TaskEditModal } from './components/TaskEditModal'
 import { TaskPanel } from './components/TaskPanel'
 import { TaskSourceTabs } from './components/TaskSourceTabs'
 import { useTaskCollection } from './components/Toolbar'
-import { allTaskFeatures, layerConfigMap } from './lib/taskFeatures'
+import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
+import { buildTaskExecutionContext } from './lib/openTaskExecution'
 import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskResult, TaskSource } from './types'
 import { areaStatusFromSource, isAreaSource } from './types'
 import './App.css'
@@ -40,7 +41,7 @@ function App() {
   const layerConfigByKey = useMemo(() => layerConfigMap(allLayers), [allLayers])
 
   const taskFeatures = useMemo(
-    () => (taskResult ? allTaskFeatures(taskResult.groups) : []),
+    () => (taskResult ? allTaskFeaturesOnMap(taskResult.groups) : []),
     [taskResult],
   )
 
@@ -60,7 +61,8 @@ function App() {
         } else if (
           source === 'field' ||
           source === 'done_legal' ||
-          source === 'done_illegal'
+          source === 'done_illegal' ||
+          source === 'clear'
         ) {
           const result = await fetchSnapshotTasks(rayon, source)
           setTaskResult(result)
@@ -127,6 +129,21 @@ function App() {
     setPickLayers([])
   }, [])
 
+  const handleExecuteTask = useCallback(async (ctx: SelectedTaskContext) => {
+    try {
+      const verified = await buildTaskExecutionContext(
+        ctx.groupName,
+        ctx.subgroupName,
+        ctx.feature,
+        ctx.taskSource,
+      )
+      setEditContext(verified)
+    } catch {
+      alert('Задача не найдена в crm.tasks.')
+      throw new Error('task not found')
+    }
+  }, [])
+
   if (!taskResult) {
     return (
       <DistrictStartScreen
@@ -171,10 +188,9 @@ function App() {
           <TaskPanel
             taskResult={taskResult}
             taskSource={taskSource}
-            onExecute={setEditContext}
+            onExecute={handleExecuteTask}
             onSelectHighlight={setPanelHighlight}
             onRefresh={handleRefresh}
-            onViewPhoto={setPhotoViewUuid}
           />
         </aside>
         <main className="map-area">
@@ -188,11 +204,14 @@ function App() {
             taskFeatures={taskFeatures}
             layerConfigByKey={layerConfigByKey}
             districtName={taskResult.district_name}
+            taskSource={taskSource}
             showTasksAreaOverlay={!isAreaSource(taskSource)}
+            showAreaPopups={isAreaSource(taskSource)}
             taskHighlight={activeHighlight}
             pickMode={pickMode}
             pickLayers={pickLayers}
             onFeaturePicked={handleFeaturePicked}
+            onExecuteTask={handleExecuteTask}
           />
         </main>
       </div>

@@ -48,12 +48,20 @@ body,
 }
 
 .district-screen {
-  min-height: 100%;
+  min-height: 100vh;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   background: linear-gradient(160deg, #f0f4f8 0%, #e8eef5 100%);
   padding: 24px;
+  box-sizing: border-box;
+}
+
+.district-layout {
+  display: flex;
+  gap: 20px;
+  width: min(1200px, 100%);
+  align-items: stretch;
 }
 
 .district-card {
@@ -62,9 +70,63 @@ body,
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
   padding: 32px 40px;
   width: min(420px, 100%);
+  flex: 0 0 min(420px, 100%);
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.district-map {
+  flex: 1;
+  min-width: 0;
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.district-map-hint {
+  margin: 0;
+  color: #666;
+  font-size: 0.85rem;
+}
+
+.district-map-container {
+  flex: 1;
+  min-height: 420px;
+  border-radius: 8px;
+  border: 1px solid #dde3ea;
+  z-index: 0;
+}
+
+.district-map-fallback {
+  margin-top: 8px;
+  color: #888;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .district-layout {
+    flex-direction: column;
+  }
+
+  .district-card {
+    flex: none;
+    width: 100%;
+  }
+
+  .district-map {
+    min-height: 360px;
+  }
+
+  .district-map-container {
+    min-height: 300px;
+  }
 }
 
 .district-card h1 {
@@ -434,6 +496,42 @@ body,
   border-radius: 4px;
 }
 
+.form-row-missing input {
+  border-color: #e53935;
+  background: #fff5f5;
+  box-shadow: 0 0 0 1px rgba(229, 57, 53, 0.15);
+}
+
+.form-section-missing {
+  padding: 10px;
+  margin: 0 -10px 16px;
+  border-radius: 8px;
+  background: #fff8f8;
+  border: 1px solid #ffcdd2;
+}
+
+.field-group-hint {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: #5c6b7a;
+}
+
+.required-marker {
+  margin-left: 2px;
+  color: #c62828;
+  font-weight: 600;
+}
+
+.legal-requirements {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: #5c6b7a;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
 .form-row-input {
   display: flex;
   gap: 6px;
@@ -445,14 +543,92 @@ body,
 
 .modal-actions {
   display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.modal-action-group h4 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+}
+
+.modal-action-buttons {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+}
+
+.status-confirm {
+  padding: 12px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.status-confirm p {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+}
+
+.btn-status-field {
+  background: #b8860b;
+  border-color: #8b6914;
+  color: #fff;
+}
+
+.btn-status-field:hover:not(:disabled) {
+  background: #9a7209;
+}
+
+.btn-status-legal {
+  background: #1b5e20;
+  border-color: #1b5e20;
+  color: #fff;
+}
+
+.btn-status-legal:hover:not(:disabled) {
+  background: #144a18;
+}
+
+.btn-status-illegal {
+  background: #b71c1c;
+  border-color: #b71c1c;
+  color: #fff;
+}
+
+.btn-status-illegal:hover:not(:disabled) {
+  background: #9a1616;
+}
+
+.btn-status-clear {
+  background: rgba(46, 125, 50, 0.75);
+  border-color: #2e7d32;
+  color: #fff;
+}
+
+.btn-status-clear:hover:not(:disabled) {
+  background: rgba(27, 94, 32, 0.85);
 }
 
 .message {
   font-size: 0.85rem;
   color: #2e7d32;
+}
+
+.message.error-text {
+  color: #c62828;
+}
+
+.map-popup {
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.85rem;
+}
+
+.map-popup-execute {
+  margin-top: 8px;
+  width: 100%;
 }
 
 .photo-modal {

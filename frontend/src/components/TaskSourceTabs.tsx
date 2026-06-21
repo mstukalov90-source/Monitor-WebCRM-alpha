@@ -12,6 +12,7 @@ const SOURCES: TaskSource[] = [
   'field',
   'done_legal',
   'done_illegal',
+  'clear',
   'area_free',
   'area_wip',
   'area_done',

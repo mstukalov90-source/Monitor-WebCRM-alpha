@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react'
-import { fetchLinkedFeatures, fetchTask, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
-import type { SelectedTaskContext, TaskGroup, TaskHighlight, TaskResult, TaskSource } from '../types'
-import { aiPhotoUuidFromAttributes, isAiPhotoContext, isAreaSource, TASK_SOURCE_LABELS } from '../types'
+import { fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
+import type { SelectedTaskContext, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
+import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel } from '../types'
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
   taskSource: TaskSource
-  onExecute: (ctx: SelectedTaskContext) => void
+  onExecute: (ctx: SelectedTaskContext) => void | Promise<void>
   onSelectHighlight: (highlight: TaskHighlight | null) => void
   onRefresh: () => void | Promise<void>
-  onViewPhoto: (uuid: string) => void
 }
 
 export function TaskPanel({
@@ -18,7 +17,6 @@ export function TaskPanel({
   onExecute,
   onSelectHighlight,
   onRefresh,
-  onViewPhoto,
 }: TaskPanelProps) {
   const [selectedGroup, setSelectedGroup] = useState(0)
   const [selectedSub, setSelectedSub] = useState(0)
@@ -34,52 +32,21 @@ export function TaskPanel({
   const features = subgroup?.features ?? []
   const groupName = groups[selectedGroup]?.name ?? ''
 
-  const fieldNames = useMemo(() => {
-    const names = new Set<string>()
-    features.forEach((f) => Object.keys(f.attributes).forEach((k) => {
-      if (!k.startsWith('_')) names.add(k)
-    }))
-    return Array.from(names).sort()
-  }, [features])
+  const showSentAt = !isArea && taskSource !== 'active'
+
+  const tableColumns = useMemo((): TaskTableColumn[] => {
+    return resolveTaskTableColumns(subgroup?.name, isArea, features.map((f) => f.attributes), showSentAt)
+  }, [subgroup?.name, isArea, features, showSentAt])
 
   const totalCount = useMemo(
     () => groups.reduce((acc, g) => acc + g.subgroups.reduce((a, s) => a + s.features.length, 0), 0),
     [groups],
   )
 
-  const showSentAt = !isArea && taskSource !== 'active'
-
   const selectedFeature = selectedRow !== null ? features[selectedRow] : null
   const selectedStatus = String(selectedFeature?.attributes?.status ?? '')
   const canSendAreaToSurvey = isArea && selectedFeature && selectedStatus !== 'wip'
   const canManageAreaSurvey = isArea && selectedFeature && selectedStatus === 'wip'
-  const isAiPhoto =
-    !isArea &&
-    subgroup != null &&
-    isAiPhotoContext(subgroup.name, selectedFeature?.layer_key)
-  const canViewAiPhoto = isAiPhoto && selectedFeature != null
-
-  const handleViewPhoto = async () => {
-    if (!selectedFeature || !subgroup) return
-    let uuid = aiPhotoUuidFromAttributes(selectedFeature.attributes)
-    if (!uuid && selectedFeature.task_key) {
-      setBusy(true)
-      try {
-        const record = await fetchTask(selectedFeature.task_key)
-        uuid = record.photo_uuid?.trim() || null
-      } catch {
-        setActionMessage('Не удалось определить UUID фотографии')
-        return
-      } finally {
-        setBusy(false)
-      }
-    }
-    if (!uuid) {
-      setActionMessage('UUID фотографии не найден')
-      return
-    }
-    onViewPhoto(uuid)
-  }
 
   const loadHighlight = async (row: number) => {
     const feat = features[row]
@@ -139,21 +106,15 @@ export function TaskPanel({
 
     setBusy(true)
     try {
-      const taskKey = feature.task_key
-      if (taskKey) {
-        await fetchTask(taskKey)
-      } else {
-        await lookupTaskByFeature(subgroup.name, feature.attributes)
-      }
-      onExecute({
+      await onExecute({
         groupName: groups[selectedGroup].name,
         subgroupName: subgroup.name,
         feature,
-        taskKey: taskKey ?? undefined,
+        taskKey: feature.task_key ?? undefined,
         taskSource,
       })
     } catch {
-      alert('Задача не найдена в crm.tasks.')
+      /* ошибка уже показана в onExecute */
     } finally {
       setBusy(false)
     }
@@ -284,8 +245,8 @@ export function TaskPanel({
             <tr>
               <th>{isArea ? 'Заказ' : 'Слой'}</th>
               {showSentAt && <th>Отправлено</th>}
-              {fieldNames.slice(0, showSentAt ? 5 : 6).map((f) => (
-                <th key={f}>{f}</th>
+              {tableColumns.map((col) => (
+                <th key={col.field}>{col.label}</th>
               ))}
             </tr>
           </thead>
@@ -300,8 +261,10 @@ export function TaskPanel({
                 {showSentAt && (
                   <td>{feat.sent_at ? new Date(feat.sent_at).toLocaleString('ru-RU') : ''}</td>
                 )}
-                {fieldNames.slice(0, showSentAt ? 5 : 6).map((f) => (
-                  <td key={f}>{String(feat.attributes[f] ?? '')}</td>
+                {tableColumns.map((col) => (
+                  <td key={col.field}>
+                    {formatTaskTableCell(feat.attributes[col.field], col.format)}
+                  </td>
                 ))}
               </tr>
             ))}
@@ -343,23 +306,13 @@ export function TaskPanel({
         </div>
       ) : (
         <div className="area-actions">
-          {canViewAiPhoto && (
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={handleViewPhoto}
-            >
-              Просмотр фотографии
-            </button>
-          )}
           <button
             type="button"
             className="btn primary"
             disabled={selectedRow === null || busy}
             onClick={handleExecute}
           >
-            {taskSource === 'active' ? 'Исполнить задачу' : 'Просмотр задачи'}
+            {taskExecuteButtonLabel(taskSource)}
           </button>
         </div>
       )}

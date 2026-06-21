@@ -27,6 +27,7 @@ SNAPSHOT_SOURCES = {
     "field": ("field_table", "tasks_field"),
     "done_legal": ("done_legal_table", "tasks_done_legal"),
     "done_illegal": ("done_illegal_table", "tasks_done_illegal"),
+    "clear": ("clear_table", "tasks_clear"),
 }
 
 

@@ -5,7 +5,9 @@ import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson } from '../api/client'
 import { fetchTasksAreaGeoJson } from '../api/client'
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
-import type { LayerConfig, LinkLayerInfo, TaskFeature, TaskHighlight } from '../types'
+import type { TaskFeatureOnMap } from '../lib/taskFeatures'
+import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
+import { buildTaskPopupHtml } from '../types'
 
 const MOSCOW_CENTER: [number, number] = [55.7558, 37.6173]
 const MAP_MAX_ZOOM = 19
@@ -21,14 +23,17 @@ const LEAFLET_ATTRIBUTION_PREFIX =
   `<a href="https://leafletjs.com" title="A JavaScript library for interactive maps">${RUSSIAN_FLAG_SVG} Leaflet</a>`
 
 interface MapViewProps {
-  taskFeatures: TaskFeature[]
+  taskFeatures: TaskFeatureOnMap[]
   layerConfigByKey: Map<string, LayerConfig>
   districtName?: string | null
+  taskSource: TaskSource
   showTasksAreaOverlay?: boolean
+  showAreaPopups?: boolean
   taskHighlight?: TaskHighlight | null
   pickMode: boolean
   pickLayers: LinkLayerInfo[]
   onFeaturePicked?: (taskColumn: string, value: string) => void
+  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
 }
 
 const TASKS_AREA_STYLE: L.PathOptions = {
@@ -54,17 +59,7 @@ function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
         if (cancelled) return
         const gj = L.geoJSON(geojson, {
           style: () => TASKS_AREA_STYLE,
-          onEachFeature: (feature, layer) => {
-            const props = feature.properties || {}
-            const lines = [
-              '<b>Площадные заказы</b>',
-              ...Object.entries(props)
-                .filter(([k]) => k !== 'geom')
-                .slice(0, 8)
-                .map(([k, v]) => `<b>${k}</b>: ${v}`),
-            ].join('<br/>')
-            layer.bindPopup(`<div style="max-height:200px;overflow:auto">${lines}</div>`)
-          },
+          interactive: false,
         })
         gj.addTo(map)
         layerRef.current = gj
@@ -83,12 +78,57 @@ function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
   return null
 }
 
+function bindTaskPopup(
+  layer: L.Layer,
+  taskFeat: TaskFeatureOnMap,
+  taskSource: TaskSource,
+  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>,
+) {
+  const popupHtml = buildTaskPopupHtml(taskFeat, taskFeat.subgroupName, taskSource)
+  layer.bindPopup(popupHtml)
+
+  if (!onExecuteTask) return
+
+  layer.on('popupopen', () => {
+    const popupEl = layer.getPopup()?.getElement()
+    const btn = popupEl?.querySelector<HTMLButtonElement>('[data-map-action="execute-task"]')
+    if (!btn) return
+
+    const handleClick = (event: Event) => {
+      L.DomEvent.stopPropagation(event)
+      L.DomEvent.preventDefault(event)
+      btn.disabled = true
+      void Promise.resolve(
+        onExecuteTask({
+          groupName: taskFeat.groupName,
+          subgroupName: taskFeat.subgroupName,
+          feature: taskFeat,
+          taskKey: taskFeat.task_key ?? undefined,
+          taskSource,
+        }),
+      )
+        .then(() => layer.closePopup())
+        .catch(() => {
+          btn.disabled = false
+        })
+    }
+
+    btn.addEventListener('click', handleClick, { once: true })
+  })
+}
+
 function TaskFeaturesLayer({
   taskFeatures,
   layerConfigByKey,
+  taskSource,
+  showAreaPopups,
+  onExecuteTask,
 }: {
-  taskFeatures: TaskFeature[]
+  taskFeatures: TaskFeatureOnMap[]
   layerConfigByKey: Map<string, LayerConfig>
+  taskSource: TaskSource
+  showAreaPopups: boolean
+  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
 }) {
   const map = useMap()
   const groupRef = useRef<L.FeatureGroup | null>(null)
@@ -102,12 +142,17 @@ function TaskFeaturesLayer({
     const withGeom = taskFeatures.filter((f) => f.geometry)
     if (!withGeom.length) return
 
+    const areaFeatures = withGeom.filter((f) => f.layer_key === 'tasks_area')
+    const otherFeatures = withGeom.filter((f) => f.layer_key !== 'tasks_area')
+    const sortedFeatures = [...areaFeatures, ...otherFeatures]
+
     const group = L.featureGroup()
-    withGeom.forEach((taskFeat) => {
+    sortedFeatures.forEach((taskFeat) => {
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
       const isAreaLayer = taskFeat.layer_key === 'tasks_area'
       const geomType = layerCfg?.geometry_type ?? (isAreaLayer ? 'polygon' : 'point')
       const symbology = layerCfg?.symbology ?? {}
+      const areaInteractive = isAreaLayer && showAreaPopups
 
       const gj = L.geoJSON(
         {
@@ -116,6 +161,7 @@ function TaskFeaturesLayer({
           properties: taskFeat.attributes,
         } as GeoJSON.Feature,
         {
+          interactive: !isAreaLayer || areaInteractive,
           pointToLayer: (_feature, latlng) =>
             L.circleMarker(latlng, {
               radius: pointRadius(symbology),
@@ -125,15 +171,9 @@ function TaskFeaturesLayer({
             isAreaLayer
               ? TASKS_AREA_STYLE
               : styleForGeometryType(geomType, symbology),
-          onEachFeature: (feature, layer) => {
-            const props = feature.properties || {}
-            const lines = [
-              `<b>${taskFeat.layer_name}</b>`,
-              ...Object.entries(props)
-                .slice(0, 10)
-                .map(([k, v]) => `<b>${k}</b>: ${v}`),
-            ].join('<br/>')
-            layer.bindPopup(`<div style="max-height:200px;overflow:auto">${lines}</div>`)
+          onEachFeature: (_feature, layer) => {
+            if (isAreaLayer && !showAreaPopups) return
+            bindTaskPopup(layer, taskFeat, taskSource, onExecuteTask)
           },
         },
       )
@@ -151,7 +191,7 @@ function TaskFeaturesLayer({
     return () => {
       if (groupRef.current) map.removeLayer(groupRef.current)
     }
-  }, [map, taskFeatures, layerConfigByKey])
+  }, [map, taskFeatures, layerConfigByKey, taskSource, showAreaPopups, onExecuteTask])
 
   return null
 }
@@ -350,11 +390,14 @@ export function MapView({
   taskFeatures,
   layerConfigByKey,
   districtName,
+  taskSource,
   showTasksAreaOverlay = true,
+  showAreaPopups = false,
   taskHighlight,
   pickMode,
   pickLayers,
   onFeaturePicked,
+  onExecuteTask,
 }: MapViewProps) {
   return (
     <MapContainer
@@ -374,7 +417,13 @@ export function MapView({
       {!pickMode && (
         <>
           {showTasksAreaOverlay && <TasksAreaLayer districtName={districtName} />}
-          <TaskFeaturesLayer taskFeatures={taskFeatures} layerConfigByKey={layerConfigByKey} />
+          <TaskFeaturesLayer
+            taskFeatures={taskFeatures}
+            layerConfigByKey={layerConfigByKey}
+            taskSource={taskSource}
+            showAreaPopups={showAreaPopups}
+            onExecuteTask={onExecuteTask}
+          />
         </>
       )}
       <PickLayerLoader
