@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchDistricts } from '../api/client'
 import { DistrictPickerMap } from './DistrictPickerMap'
-import type { CollectProgress } from '../types'
+import type { CollectProgress, UserRole } from '../types'
 import { normalizeRayonName } from '../types'
 
 interface DistrictStartScreenProps {
@@ -10,9 +10,14 @@ interface DistrictStartScreenProps {
   loading: boolean
   error: string | null
   progress: CollectProgress | null
+  canCollect: boolean
+  userLogin: string
+  userRole: UserRole
   onRayonChange: (v: string) => void
   onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
+  onLoadFieldTasks: () => void
+  onLogout: () => Promise<void>
 }
 
 export function DistrictStartScreen({
@@ -21,9 +26,14 @@ export function DistrictStartScreen({
   loading,
   error,
   progress,
+  canCollect,
+  userLogin,
+  userRole,
   onRayonChange,
   onApplyDateFilterChange,
   onCollect,
+  onLoadFieldTasks,
+  onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
 
@@ -33,12 +43,33 @@ export function DistrictStartScreen({
       .catch(() => setDistricts([]))
   }, [])
 
+  const handleSubmit = () => {
+    if (canCollect) {
+      void onCollect()
+    } else {
+      onLoadFieldTasks()
+    }
+  }
+
   return (
     <div className="district-screen">
       <div className="district-layout">
         <div className="district-card">
+          <div className="workspace-meta district-user-meta">
+            <span className="muted">
+              {userLogin} ({userRole})
+            </span>
+            <button type="button" className="btn" onClick={() => void onLogout()}>
+              Выйти
+            </button>
+          </div>
+
           <h1>Monitor Web CRM</h1>
-          <p className="district-hint">Выберите район для загрузки задач из crm.tasks</p>
+          <p className="district-hint">
+            {canCollect
+              ? 'Выберите район для загрузки задач из crm.tasks'
+              : 'Выберите район для загрузки задач в поле'}
+          </p>
 
           <label className="district-field">
             <span>Район</span>
@@ -56,27 +87,31 @@ export function DistrictStartScreen({
             </select>
           </label>
 
-          <label className="checkbox-label district-checkbox">
-            <input
-              type="checkbox"
-              checked={applyDateFilter}
-              onChange={(e) => onApplyDateFilterChange(e.target.checked)}
-              disabled={loading}
-            />
-            Фильтр по дате (ордера и уведомления)
-          </label>
+          {canCollect && (
+            <label className="checkbox-label district-checkbox">
+              <input
+                type="checkbox"
+                checked={applyDateFilter}
+                onChange={(e) => onApplyDateFilterChange(e.target.checked)}
+                disabled={loading}
+              />
+              Фильтр по дате (ордера и уведомления)
+            </label>
+          )}
 
           <button
             type="button"
             className="btn primary district-submit"
             disabled={!rayon || loading}
-            onClick={onCollect}
+            onClick={handleSubmit}
           >
             {loading
               ? progress
                 ? `Слой ${progress.current}/${progress.total}: ${progress.layerName}`
                 : 'Подготовка…'
-              : 'Получить задачу'}
+              : canCollect
+                ? 'Получить задачу'
+                : 'Загрузить задачи'}
           </button>
 
           {loading && progress && (

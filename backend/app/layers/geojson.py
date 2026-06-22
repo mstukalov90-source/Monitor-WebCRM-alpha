@@ -370,16 +370,22 @@ def list_districts(
     field: str = "rayon",
     *,
     exclude_okrug_shor: list[str] | None = None,
+    allowed_gids: list[int] | None = None,
 ) -> list[str]:
     filters = [
         f'"{field}" IS NOT NULL',
         f'TRIM("{field}"::text) <> \'\'',
     ]
+    params: list = []
     if exclude_okrug_shor:
         placeholders = ", ".join(["%s"] * len(exclude_okrug_shor))
         filters.append(
             f'TRIM(COALESCE("okrug_shor", \'\')::text) NOT IN ({placeholders})'
         )
+        params.extend(exclude_okrug_shor)
+    if allowed_gids is not None:
+        filters.append('"gid" = ANY(%s)')
+        params.append(allowed_gids)
     where = " AND ".join(filters)
     query = f"""
         SELECT DISTINCT "{field}" AS rayon
@@ -388,10 +394,7 @@ def list_districts(
         ORDER BY 1
     """
     with conn.cursor() as cur:
-        if exclude_okrug_shor:
-            cur.execute(query, exclude_okrug_shor)
-        else:
-            cur.execute(query)
+        cur.execute(query, params)
         return [row[0] for row in cur.fetchall()]
 
 

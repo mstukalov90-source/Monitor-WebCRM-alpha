@@ -3,25 +3,15 @@ import { TASK_SOURCE_LABELS } from '../types'
 
 interface TaskSourceTabsProps {
   value: TaskSource
+  allowedSources: TaskSource[]
   onChange: (source: TaskSource) => void
   loading?: boolean
 }
 
-const SOURCES: TaskSource[] = [
-  'active',
-  'field',
-  'done_legal',
-  'done_illegal',
-  'clear',
-  'area_free',
-  'area_wip',
-  'area_done',
-]
-
-export function TaskSourceTabs({ value, onChange, loading }: TaskSourceTabsProps) {
+export function TaskSourceTabs({ value, allowedSources, onChange, loading }: TaskSourceTabsProps) {
   return (
     <div className="task-source-tabs">
-      {SOURCES.map((source) => (
+      {allowedSources.map((source) => (
         <button
           key={source}
           type="button"

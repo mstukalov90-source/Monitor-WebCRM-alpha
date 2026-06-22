@@ -78,6 +78,7 @@ def persist_district_tasks(
     conn: PgConnection,
     rayon: str,
     apply_date_filter: bool,
+    login: str,
 ) -> PersistStats:
     """Добавить новые задачи района в crm.tasks (INSERT ... SELECT на стороне БД)."""
     cfg = crm_tasks_config()
@@ -126,6 +127,7 @@ def persist_district_tasks(
                         date_field,
                         date_from if date_field else None,
                         date_to if date_field else None,
+                        login,
                     )
                 except Exception:
                     stats.invalid += 1

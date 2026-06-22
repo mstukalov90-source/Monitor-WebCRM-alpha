@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { collectTasksByLayers, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea } from './api/client'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
+import { LoginScreen } from './components/LoginScreen'
 import { MapView } from './components/MapView'
 import { flattenLayers } from './components/LayerControl'
 import { PhotoViewModal } from './components/PhotoViewModal'
 import { TaskEditModal } from './components/TaskEditModal'
 import { TaskPanel } from './components/TaskPanel'
 import { TaskSourceTabs } from './components/TaskSourceTabs'
+import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
@@ -15,6 +17,7 @@ import { areaStatusFromSource, isAreaSource } from './types'
 import './App.css'
 
 function App() {
+  const { user, loading: authLoading, logout } = useAuth()
   const [layerGroups, setLayerGroups] = useState<LayerGroupConfig[]>([])
   const [taskResult, setTaskResult] = useState<TaskResult | null>(null)
   const [taskSource, setTaskSource] = useState<TaskSource>('active')
@@ -32,10 +35,17 @@ function App() {
   const collection = useTaskCollection()
 
   useEffect(() => {
+    if (!user) return
     fetchLayersConfig()
       .then((cfg) => setLayerGroups(cfg.groups))
       .catch(() => {})
-  }, [])
+  }, [user])
+
+  useEffect(() => {
+    if (user?.default_task_source) {
+      setTaskSource(user.default_task_source)
+    }
+  }, [user?.default_task_source, user?.login])
 
   const allLayers = useMemo(() => flattenLayers(layerGroups), [layerGroups])
   const layerConfigByKey = useMemo(() => layerConfigMap(allLayers), [allLayers])
@@ -93,6 +103,23 @@ function App() {
     }
   }
 
+  const handleLoadFieldTasks = async () => {
+    if (!collection.rayon) return
+    setSourceLoading(true)
+    setLoadError(null)
+    try {
+      const result = await fetchSnapshotTasks(collection.rayon, 'field')
+      setTaskResult(result)
+      setTaskSource('field')
+      setPanelHighlight(null)
+      setModalHighlight(null)
+    } catch (e) {
+      setLoadError(String(e))
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
   const handleSourceChange = async (source: TaskSource) => {
     if (!taskResult?.district_name) return
     try {
@@ -109,7 +136,7 @@ function App() {
 
   const handleChangeDistrict = () => {
     setTaskResult(null)
-    setTaskSource('active')
+    setTaskSource(user?.default_task_source ?? 'active')
     setPanelHighlight(null)
     setModalHighlight(null)
     setEditContext(null)
@@ -144,17 +171,36 @@ function App() {
     }
   }, [])
 
+  if (authLoading) {
+    return (
+      <div className="district-screen">
+        <div className="district-card login-card">
+          <p className="district-hint">Загрузка…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <LoginScreen />
+  }
+
   if (!taskResult) {
     return (
       <DistrictStartScreen
         rayon={collection.rayon}
         applyDateFilter={collection.applyDateFilter}
-        loading={collection.loading}
-        error={collection.error}
+        loading={collection.loading || sourceLoading}
+        error={collection.error || loadError}
         progress={collection.progress}
+        canCollect={user.can_collect}
+        userLogin={user.login}
+        userRole={user.role}
         onRayonChange={collection.setRayon}
         onApplyDateFilterChange={collection.setApplyDateFilter}
         onCollect={handleCollect}
+        onLoadFieldTasks={handleLoadFieldTasks}
+        onLogout={logout}
       />
     )
   }
@@ -170,16 +216,27 @@ function App() {
             <span>
               Район: <strong>{taskResult.district_name}</strong>
             </span>
+            <span className="muted">
+              {user.login} ({user.role})
+            </span>
             <span className="muted">На карте: {taskFeatures.length}</span>
             <button type="button" className="btn" onClick={handleChangeDistrict}>
               Сменить район
+            </button>
+            <button type="button" className="btn" onClick={() => void logout()}>
+              Выйти
             </button>
             <button type="button" className="btn primary" disabled={loading} onClick={handleRefresh}>
               {loading ? 'Обновление…' : 'Обновить'}
             </button>
           </div>
         </div>
-        <TaskSourceTabs value={taskSource} onChange={handleSourceChange} loading={loading} />
+        <TaskSourceTabs
+          value={taskSource}
+          allowedSources={user.allowed_task_sources}
+          onChange={handleSourceChange}
+          loading={loading}
+        />
         {loadError && <div className="error-banner">{loadError}</div>}
       </header>
 

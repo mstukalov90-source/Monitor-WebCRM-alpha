@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 
 from app.config import get_settings
@@ -25,8 +25,13 @@ from app.photos.sftp_fetch import (
     resolved_cache_dir,
     sftp_configured,
 )
+from app.auth.deps import get_current_user
 
-router = APIRouter(prefix="/api/photos", tags=["photos"])
+router = APIRouter(
+    prefix="/api/photos",
+    tags=["photos"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _image_url(uuid: str) -> str:

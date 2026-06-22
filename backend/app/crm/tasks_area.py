@@ -9,6 +9,7 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.crm.collector import TaskFeature, TaskGroup, TaskResult, TaskSubgroup
+from app.crm.user_audit import make_user_audit, user_audit_migration_statements
 
 AREA_LAYER_KEY = "tasks_area"
 AREA_LAYER_NAME = "Площадные заказы"
@@ -21,6 +22,26 @@ AREA_STATUS_LABELS = {
     "wip": "На обследовании",
     "done": "Завершённые",
 }
+
+TASKS_AREA_SCHEMA = "crm"
+TASKS_AREA_TABLE = "tasks_area"
+_tasks_area_audit_ready = False
+
+
+def ensure_tasks_area_audit_columns(conn: PgConnection) -> bool:
+    global _tasks_area_audit_ready
+    if _tasks_area_audit_ready:
+        return True
+    try:
+        with conn.cursor() as cur:
+            for stmt in user_audit_migration_statements(TASKS_AREA_SCHEMA, TASKS_AREA_TABLE):
+                cur.execute(stmt)
+        conn.commit()
+        _tasks_area_audit_ready = True
+        return True
+    except Exception:
+        conn.rollback()
+        return False
 
 
 def fetch_tasks_area_geojson(
@@ -117,43 +138,57 @@ def tasks_area_result_to_dict(result: TaskResult, status: str) -> dict[str, Any]
     return data
 
 
-def send_area_to_survey(conn: PgConnection, key: str) -> str:
-    return _transition_area_status(conn, key, from_status=None, to_status="wip", skip_if="wip")
+def send_area_to_survey(conn: PgConnection, key: str, login: str) -> str:
+    return _transition_area_status(
+        conn, key, login=login, from_status=None, to_status="wip", skip_if="wip"
+    )
 
 
-def release_area_from_survey(conn: PgConnection, key: str) -> str:
-    return _transition_area_status(conn, key, from_status="wip", to_status="free")
+def release_area_from_survey(conn: PgConnection, key: str, login: str) -> str:
+    return _transition_area_status(conn, key, login=login, from_status="wip", to_status="free")
 
 
-def complete_area_survey(conn: PgConnection, key: str) -> str:
-    return _transition_area_status(conn, key, from_status="wip", to_status="done")
+def complete_area_survey(conn: PgConnection, key: str, login: str) -> str:
+    return _transition_area_status(conn, key, login=login, from_status="wip", to_status="done")
 
 
 def _transition_area_status(
     conn: PgConnection,
     key: str,
     *,
+    login: str,
     from_status: str | None,
     to_status: str,
     skip_if: str | None = None,
 ) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    audit = make_user_audit(login)
+
     if from_status is None:
         where = "key = %s::uuid AND COALESCE(status, '') <> %s"
-        params = (key, skip_if or to_status)
-    else:
-        where = "key = %s::uuid AND status = %s"
-        params = (key, from_status)
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            UPDATE crm.tasks_area
-            SET status = %s
+        params: tuple[Any, ...] = (to_status, audit, audit, key, skip_if or to_status)
+        sql = f"""
+            UPDATE crm.tasks_area SET
+                status = %s,
+                user_last_edit = %s::text[],
+                user_created = COALESCE(user_created, %s::text[])
             WHERE {where}
             RETURNING key
-            """,
-            (to_status, *params),
-        )
+        """
+    else:
+        where = "key = %s::uuid AND status = %s"
+        params = (to_status, audit, audit, key, from_status)
+        sql = f"""
+            UPDATE crm.tasks_area SET
+                status = %s,
+                user_last_edit = %s::text[],
+                user_created = COALESCE(user_created, %s::text[])
+            WHERE {where}
+            RETURNING key
+        """
+
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
         row = cur.fetchone()
     conn.commit()
     if row:

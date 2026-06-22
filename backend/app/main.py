@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import close_pool, init_pool
-from app.routes import layers, photos, tasks
+from app.routes import auth, layers, photos, tasks
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(layers.router)
 app.include_router(tasks.router)
 app.include_router(photos.router)

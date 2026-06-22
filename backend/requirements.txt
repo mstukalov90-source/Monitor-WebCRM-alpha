@@ -5,3 +5,4 @@ pydantic>=2.9.0
 pydantic-settings>=2.6.0
 eval_type_backport>=0.2.0
 paramiko>=3.4.0
+PyJWT>=2.9.0

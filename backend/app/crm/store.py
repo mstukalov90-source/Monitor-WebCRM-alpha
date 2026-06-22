@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from psycopg2.extensions import connection as PgConnection
 
+from app.crm.user_audit import (
+    USER_AUDIT_COLUMNS,
+    make_user_audit,
+    user_audit_migration_statements,
+)
+
 logger = logging.getLogger(__name__)
 
 TASK_ID_COLUMNS = (
@@ -35,7 +41,13 @@ LINK_COLUMNS_BY_GROUP = {
 
 STATION_COLUMNS = ("sps", "kgs", "station_avr")
 
-_TASK_SELECT_COLUMNS = ("key", "type") + TASK_ID_COLUMNS + STATION_COLUMNS + ("field_observed",)
+_TASK_SELECT_COLUMNS = (
+    ("key", "type")
+    + TASK_ID_COLUMNS
+    + STATION_COLUMNS
+    + ("field_observed",)
+    + USER_AUDIT_COLUMNS
+)
 
 
 def _task_select_columns_sql() -> str:
@@ -55,6 +67,8 @@ TASK_COLUMN_LABELS = {
     "kgs": "КГС",
     "station_avr": "АВР",
     "field_observed": "Обследовано в поле",
+    "user_created": "Создал",
+    "user_last_edit": "Изменил",
 }
 
 _DDL_STATEMENTS = (
@@ -96,7 +110,7 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     ) + (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS field_observed BOOLEAN",
-    )
+    ) + user_audit_migration_statements(schema, table)
 
 
 def _snapshot_ddl_statements(
@@ -155,6 +169,8 @@ class TaskRecord:
     kgs: Optional[str] = None
     station_avr: Optional[str] = None
     field_observed: Optional[bool] = None
+    user_created: Optional[List[str]] = None
+    user_last_edit: Optional[List[str]] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -171,6 +187,8 @@ class TaskRecord:
             "kgs": self.kgs,
             "station_avr": self.station_avr,
             "field_observed": self.field_observed,
+            "user_created": self.user_created,
+            "user_last_edit": self.user_last_edit,
         }
 
     @classmethod
@@ -178,6 +196,8 @@ class TaskRecord:
         field_observed = None
         if len(row) > 12 and row[12] is not None:
             field_observed = bool(row[12])
+        user_created = list(row[13]) if len(row) > 13 and row[13] is not None else None
+        user_last_edit = list(row[14]) if len(row) > 14 and row[14] is not None else None
         return cls(
             key=str(row[0]),
             type=row[1] or "",
@@ -192,6 +212,8 @@ class TaskRecord:
             kgs=_normalize_id_value(row[10]) if len(row) > 10 else None,
             station_avr=_normalize_id_value(row[11]) if len(row) > 11 else None,
             field_observed=field_observed,
+            user_created=user_created,
+            user_last_edit=user_last_edit,
         )
 
 
@@ -483,6 +505,7 @@ def send_task_snapshot(
     store_cfg: Dict[str, Any],
     config_key: str,
     default_table: str,
+    login: str,
 ) -> SendTaskSnapshotResult:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     if not ensure_task_snapshot_table(conn, store_cfg, config_key, default_table):
@@ -495,12 +518,18 @@ def send_task_snapshot(
     if not task_type:
         raise ValueError("type cannot be empty")
 
-    columns = ["task_key", "type"] + list(TASK_ID_COLUMNS) + list(STATION_COLUMNS)
+    audit = make_user_audit(login)
+    columns = (
+        ["task_key", "type"]
+        + list(TASK_ID_COLUMNS)
+        + list(STATION_COLUMNS)
+        + list(USER_AUDIT_COLUMNS)
+    )
     values = [record.key, task_type] + [
         _normalize_id_value(getattr(record, col)) for col in TASK_ID_COLUMNS
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
-    ]
+    ] + [audit, audit]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -515,22 +544,42 @@ def send_task_snapshot(
         raise
 
 
-def send_task_to_field(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "field_table", "tasks_field")
+def send_task_to_field(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return send_task_snapshot(conn, record, store_cfg, "field_table", "tasks_field", login)
 
 
-def send_task_to_done_legal(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "done_legal_table", "tasks_done_legal")
+def send_task_to_done_legal(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return send_task_snapshot(conn, record, store_cfg, "done_legal_table", "tasks_done_legal", login)
 
 
-def send_task_to_done_illegal(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
+def send_task_to_done_illegal(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
     if record.field_observed is False:
         raise ValueError(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
-    return send_task_snapshot(conn, record, store_cfg, "done_illegal_table", "tasks_done_illegal")
+    return send_task_snapshot(conn, record, store_cfg, "done_illegal_table", "tasks_done_illegal", login)
 
 
-def send_task_to_clear(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "clear_table", "tasks_clear")
+def send_task_to_clear(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return send_task_snapshot(conn, record, store_cfg, "clear_table", "tasks_clear", login)
 
 
 def fetch_task(
@@ -633,7 +682,12 @@ def task_form_field_groups(
     return readonly, link
 
 
-def update_task_record(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> None:
+def update_task_record(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> None:
     schema, table = _table_ref(store_cfg)
     task_type = (record.type or "").strip()
     if not task_type:
@@ -641,14 +695,20 @@ def update_task_record(conn: PgConnection, record: TaskRecord, store_cfg: Dict[s
 
     id_values = {col: _normalize_id_value(getattr(record, col)) for col in TASK_ID_COLUMNS}
     station_values = {col: _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS}
+    audit = make_user_audit(login)
 
     try:
         with conn.cursor() as cur:
             all_columns = list(TASK_ID_COLUMNS) + list(STATION_COLUMNS)
-            set_parts = ['"type" = %s'] + [f'"{col}" = %s' for col in all_columns]
+            set_parts = (
+                ['"type" = %s']
+                + [f'"{col}" = %s' for col in all_columns]
+                + ['"user_last_edit" = %s::text[]']
+            )
             params: List[Any] = [task_type] + [
                 id_values[col] for col in TASK_ID_COLUMNS
             ] + [station_values[col] for col in STATION_COLUMNS]
+            params.append(audit)
             params.append(record.key)
             query = f'UPDATE "{schema}"."{table}" SET {", ".join(set_parts)} WHERE key = %s'
             cur.execute(query, params)
@@ -666,9 +726,10 @@ def _task_exists(cur, schema: str, table: str, column: str, value: str) -> bool:
     return cur.fetchone() is not None
 
 
-def _insert_task(cur, schema: str, table: str, row: Dict[str, Any]) -> None:
-    columns = ["type"] + list(TASK_ID_COLUMNS)
-    values = [row["type"]] + [row[col] for col in TASK_ID_COLUMNS]
+def _insert_task(cur, schema: str, table: str, row: Dict[str, Any], login: str) -> None:
+    audit = make_user_audit(login)
+    columns = ["type"] + list(TASK_ID_COLUMNS) + list(USER_AUDIT_COLUMNS)
+    values = [row["type"]] + [row[col] for col in TASK_ID_COLUMNS] + [audit, audit]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -704,6 +765,7 @@ def persist_new_tasks_in_district(
     date_field: Optional[str],
     date_from: Optional["date"],
     date_to: Optional["date"],
+    login: str,
 ) -> int:
     """INSERT ... SELECT новых задач слоя в районе (без выгрузки всех строк в Python)."""
     from app.layers.geojson import _district_spatial_filter
@@ -736,6 +798,7 @@ def persist_new_tasks_in_district(
         filters.append(f"({layer.sql_filter})")
 
     params: List[Any] = list(spatial_params) + [group_name]
+    audit = make_user_audit(login)
     if date_field and date_from and date_to:
         filters.append(f't."{date_field}"::date BETWEEN %s AND %s')
         params.extend([date_from, date_to])
@@ -747,13 +810,15 @@ def persist_new_tasks_in_district(
         else:
             id_values.append("NULL")
 
-    col_list = ", ".join(f'"{col}"' for col in ["type"] + list(TASK_ID_COLUMNS))
+    insert_columns = ["type"] + list(TASK_ID_COLUMNS) + list(USER_AUDIT_COLUMNS)
+    col_list = ", ".join(f'"{col}"' for col in insert_columns)
     query = f"""
         INSERT INTO "{schema}"."{tasks_table}" ({col_list})
-        SELECT %s, {", ".join(id_values)}
+        SELECT %s, {", ".join(id_values)}, %s::text[], %s::text[]
         FROM {layer.qualified_table} t
         WHERE {" AND ".join(filters)}
     """
+    params.extend([audit, audit])
 
     with conn.cursor() as cur:
         cur.execute(query, params)
@@ -762,7 +827,12 @@ def persist_new_tasks_in_district(
     return inserted
 
 
-def persist_task_result(conn: PgConnection, task_result, store_cfg: Dict[str, Any]) -> PersistStats:
+def persist_task_result(
+    conn: PgConnection,
+    task_result,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> PersistStats:
     stats = PersistStats()
     if not ensure_tasks_table(conn):
         return stats
@@ -792,7 +862,7 @@ def persist_task_result(conn: PgConnection, task_result, store_cfg: Dict[str, An
                             stats.skipped += 1
                             continue
 
-                        _insert_task(cur, schema, table, row)
+                        _insert_task(cur, schema, table, row, login)
                         stats.inserted += 1
         conn.commit()
     except Exception:

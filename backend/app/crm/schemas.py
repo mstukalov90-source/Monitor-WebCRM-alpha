@@ -98,6 +98,8 @@ class TaskRecordOut(BaseModel):
     kgs: str | None = None
     station_avr: str | None = None
     field_observed: bool | None = None
+    user_created: list[str] | None = None
+    user_last_edit: list[str] | None = None
 
 
 class TaskRecordUpdate(BaseModel):

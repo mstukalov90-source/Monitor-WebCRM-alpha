@@ -11,10 +11,17 @@ import type {
   CollectLayerChunk,
   CollectProgress,
   AiPhotoMeta,
+  AuthUser,
 } from '../types'
 import { appendLayerChunk, taskResultFromPlan } from '../lib/collectTasks'
 
 const API_BASE = ''
+
+let unauthorizedHandler: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: () => void) {
+  unauthorizedHandler = handler
+}
 
 async function request<T>(
   path: string,
@@ -25,10 +32,14 @@ async function request<T>(
   const timer = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(`${API_BASE}${path}`, {
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
       ...init,
       signal: controller.signal,
     })
+    if (res.status === 401 && !path.startsWith('/api/auth/login')) {
+      unauthorizedHandler?.()
+    }
     if (!res.ok) {
       const text = await res.text()
       try {
@@ -41,6 +52,9 @@ async function request<T>(
         throw new Error(text || res.statusText)
       }
     }
+    if (res.status === 204) {
+      return undefined as T
+    }
     return res.json() as Promise<T>
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
@@ -50,6 +64,21 @@ async function request<T>(
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+export function fetchAuthMe(): Promise<AuthUser> {
+  return request('/api/auth/me')
+}
+
+export function login(loginName: string, password: string): Promise<AuthUser> {
+  return request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ login: loginName, password }),
+  })
+}
+
+export function logout(): Promise<void> {
+  return request('/api/auth/logout', { method: 'POST' })
 }
 
 export function fetchLayersConfig(): Promise<{ groups: LayerGroupConfig[] }> {

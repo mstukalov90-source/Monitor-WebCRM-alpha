@@ -76,6 +76,30 @@ body,
   gap: 16px;
 }
 
+.login-card {
+  margin: auto;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.district-field input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.district-user-meta {
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
 .district-map {
   flex: 1;
   min-width: 0;

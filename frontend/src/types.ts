@@ -1,3 +1,14 @@
+export type UserRole = 'admin' | 'field' | 'office' | 'manager'
+
+export interface AuthUser {
+  login: string
+  role: UserRole
+  work_zones: number[]
+  allowed_task_sources: TaskSource[]
+  default_task_source: TaskSource
+  can_collect: boolean
+}
+
 export const HOOD_BOUNDARIES_DISPLAY_NAME = 'Границы районов'
 export const DISTRICT_RAYON_FIELD = 'rayon'
 export const DISTRICT_OKRUG_FIELD = 'okrug_shor'
@@ -349,6 +360,8 @@ export interface TaskRecord {
   kgs?: string | null
   station_avr?: string | null
   field_observed?: boolean | null
+  user_created?: string[] | null
+  user_last_edit?: string[] | null
 }
 
 export interface TaskFormFields {

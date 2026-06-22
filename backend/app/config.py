@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     photo_sftp_key_path: str = ""
     photo_sftp_remote_dir: str = "/opt/monitor/downloaded_photo"
     photo_local_cache_dir: str = "./data/photo_cache"
+    auth_secret_key: str = "change-me-in-production-use-32-chars-min"
+    auth_cookie_name: str = "monitor_session"
+    auth_token_ttl_hours: int = 12
 
     @property
     def cors_origin_list(self) -> list[str]:

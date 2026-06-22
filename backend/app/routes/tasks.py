@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from psycopg2 import OperationalError
 
+from app.auth.deps import (
+    check_area_status,
+    check_rayon,
+    check_task_source,
+    check_task_source_any,
+    get_current_user,
+    require_can_collect,
+)
+from app.auth.session import UserSession, districts_unrestricted
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.collector import (
     build_collect_plan,
@@ -51,13 +60,17 @@ from app.db import get_connection
 from app.layers.geojson import list_districts, lookup_feature
 from app.layers.registry import get_registry
 
-router = APIRouter(prefix="/api", tags=["crm"])
+router = APIRouter(
+    prefix="/api",
+    tags=["crm"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
-def _background_persist_tasks(rayon: str, apply_date_filter: bool) -> None:
+def _background_persist_tasks(rayon: str, apply_date_filter: bool, login: str) -> None:
     try:
         with get_connection() as conn:
-            persist_district_tasks(conn, rayon, apply_date_filter)
+            persist_district_tasks(conn, rayon, apply_date_filter, login)
     except Exception:
         pass
 
@@ -67,7 +80,7 @@ def _record_to_out(record: TaskRecord) -> TaskRecordOut:
 
 
 @router.get("/districts")
-def get_districts() -> dict:
+def get_districts(user: UserSession = Depends(get_current_user)) -> dict:
     cfg = crm_tasks_config()
     district_cfg = cfg.get("district_filter", {})
     boundaries_layer = district_cfg.get("boundaries_layer", "Границы районов")
@@ -79,6 +92,12 @@ def get_districts() -> dict:
         schema, table = hood.schema, hood.table_name
         field = district_cfg.get("field", "rayon")
 
+    allowed_gids: list[int] | None = None
+    if not districts_unrestricted(user):
+        if not user.work_zones:
+            return {"districts": []}
+        allowed_gids = user.work_zones
+
     with get_connection() as conn:
         rayons = list_districts(
             conn,
@@ -86,21 +105,30 @@ def get_districts() -> dict:
             table,
             field,
             exclude_okrug_shor=["НАО", "ТАО"],
+            allowed_gids=allowed_gids,
         )
     return {"districts": rayons}
 
 
-@router.get("/tasks/collect/plan")
+@router.get("/tasks/collect/plan", dependencies=[Depends(require_can_collect)])
 def get_collect_plan(
     rayon: str = Query(...),
     apply_date_filter: bool = Query(True),
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
+    check_task_source(user, "active")
+    check_rayon(user, rayon)
     result, layers = build_collect_plan(rayon, apply_date_filter)
     return collect_plan_to_dict(result, layers)
 
 
-@router.post("/tasks/collect/layer")
-def post_collect_layer(body: CollectLayerRequest) -> dict:
+@router.post("/tasks/collect/layer", dependencies=[Depends(require_can_collect)])
+def post_collect_layer(
+    body: CollectLayerRequest,
+    user: UserSession = Depends(get_current_user),
+) -> dict:
+    check_task_source(user, "active")
+    check_rayon(user, body.rayon)
     try:
         with get_connection() as conn:
             features, errors = collect_layer_tasks(
@@ -130,20 +158,26 @@ def post_collect_layer(body: CollectLayerRequest) -> dict:
     )
 
 
-@router.post("/tasks/collect/persist")
+@router.post("/tasks/collect/persist", dependencies=[Depends(require_can_collect)])
 def post_collect_persist(
     body: CollectTasksRequest,
     background_tasks: BackgroundTasks,
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
-    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter)
+    check_task_source(user, "active")
+    check_rayon(user, body.rayon)
+    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter, user.login)
     return {"status": "pending"}
 
 
-@router.post("/tasks/collect")
+@router.post("/tasks/collect", dependencies=[Depends(require_can_collect)])
 def post_collect_tasks(
     body: CollectTasksRequest,
     background_tasks: BackgroundTasks,
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
+    check_task_source(user, "active")
+    check_rayon(user, body.rayon)
     try:
         with get_connection() as conn:
             result, _ = collect_tasks(
@@ -171,7 +205,7 @@ def post_collect_tasks(
         "invalid": 0,
         "pending": True,
     }
-    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter)
+    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter, user.login)
     return data
 
 
@@ -199,7 +233,10 @@ def lookup_task_by_feature(
 def get_active_tasks(
     rayon: str = Query(...),
     apply_date_filter: bool = Query(True),
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
+    check_task_source(user, "active")
+    check_rayon(user, rayon)
     with get_connection() as conn:
         result, _ = collect_tasks(
             conn,
@@ -217,12 +254,15 @@ def get_active_tasks(
 def get_snapshot_tasks(
     rayon: str = Query(...),
     source: str = Query(..., description="field | done_legal | done_illegal | clear"),
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
     if source not in ("field", "done_legal", "done_illegal", "clear"):
         raise HTTPException(
             status_code=400,
             detail="source must be field, done_legal, done_illegal, or clear",
         )
+    check_task_source(user, source)
+    check_rayon(user, rayon)
     with get_connection() as conn:
         result = collect_snapshot_tasks(conn, rayon, source)
     return snapshot_result_to_dict(result, source)
@@ -232,9 +272,12 @@ def get_snapshot_tasks(
 def get_tasks_area_list(
     rayon: str = Query(...),
     status: str = Query(..., description="free | wip | done"),
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
     if status not in AREA_STATUSES:
         raise HTTPException(status_code=400, detail="status must be free, wip, or done")
+    check_area_status(user, status)
+    check_rayon(user, rayon)
     with get_connection() as conn:
         result = collect_tasks_area(conn, rayon, status)
     return tasks_area_result_to_dict(result, status)
@@ -287,7 +330,11 @@ def get_linked_features(
 
 
 @router.patch("/tasks/{key}")
-def patch_task(key: str, body: TaskRecordUpdate) -> TaskRecordOut:
+def patch_task(
+    key: str,
+    body: TaskRecordUpdate,
+    user: UserSession = Depends(get_current_user),
+) -> TaskRecordOut:
     store_cfg = crm_task_store_config()
     with get_connection() as conn:
         record = fetch_task_by_key(conn, store_cfg, key)
@@ -296,38 +343,54 @@ def patch_task(key: str, body: TaskRecordUpdate) -> TaskRecordOut:
         updates = body.model_dump(exclude_unset=True)
         for field_name, value in updates.items():
             setattr(record, field_name, value)
-        update_task_record(conn, record, store_cfg)
+        update_task_record(conn, record, store_cfg, user.login)
     return _record_to_out(record)
 
 
 @router.post("/tasks/{key}/send-to-field")
-def post_send_to_field(key: str) -> SnapshotResultOut:
-    return _send_snapshot(key, send_task_to_field)
+def post_send_to_field(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> SnapshotResultOut:
+    check_task_source(user, "active")
+    return _send_snapshot(key, send_task_to_field, user.login)
 
 
 @router.post("/tasks/{key}/close-legal")
-def post_close_legal(key: str) -> SnapshotResultOut:
-    return _send_snapshot(key, send_task_to_done_legal)
+def post_close_legal(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> SnapshotResultOut:
+    check_task_source_any(user, ["active", "field"])
+    return _send_snapshot(key, send_task_to_done_legal, user.login)
 
 
 @router.post("/tasks/{key}/close-illegal")
-def post_close_illegal(key: str) -> SnapshotResultOut:
-    return _send_snapshot(key, send_task_to_done_illegal)
+def post_close_illegal(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> SnapshotResultOut:
+    check_task_source_any(user, ["active", "field"])
+    return _send_snapshot(key, send_task_to_done_illegal, user.login)
 
 
 @router.post("/tasks/{key}/disruption-absent")
-def post_disruption_absent(key: str) -> SnapshotResultOut:
-    return _send_snapshot(key, send_task_to_clear)
+def post_disruption_absent(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> SnapshotResultOut:
+    check_task_source_any(user, ["active", "field"])
+    return _send_snapshot(key, send_task_to_clear, user.login)
 
 
-def _send_snapshot(key: str, handler) -> SnapshotResultOut:
+def _send_snapshot(key: str, handler, login: str) -> SnapshotResultOut:
     store_cfg = crm_task_store_config()
     with get_connection() as conn:
         record = fetch_task_by_key(conn, store_cfg, key)
         if record is None:
             raise HTTPException(status_code=404, detail="Task not found")
         try:
-            status = handler(conn, record, store_cfg)
+            status = handler(conn, record, store_cfg, login)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SnapshotResultOut(status=status)
@@ -352,27 +415,36 @@ def get_feature_lookup(
 
 
 @router.post("/crm/tasks-area/{key}/send-to-survey")
-def post_area_send_to_survey(key: str) -> dict:
+def post_area_send_to_survey(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> dict:
     with get_connection() as conn:
-        result_status = send_area_to_survey(conn, key)
+        result_status = send_area_to_survey(conn, key, user.login)
     if result_status == "not_found":
         raise HTTPException(status_code=404, detail="Area order not found")
     return {"status": result_status}
 
 
 @router.post("/crm/tasks-area/{key}/release-from-survey")
-def post_area_release_from_survey(key: str) -> dict:
+def post_area_release_from_survey(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> dict:
     with get_connection() as conn:
-        result_status = release_area_from_survey(conn, key)
+        result_status = release_area_from_survey(conn, key, user.login)
     if result_status == "not_found":
         raise HTTPException(status_code=404, detail="Area order not found or not on survey")
     return {"status": result_status}
 
 
 @router.post("/crm/tasks-area/{key}/complete-survey")
-def post_area_complete_survey(key: str) -> dict:
+def post_area_complete_survey(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> dict:
     with get_connection() as conn:
-        result_status = complete_area_survey(conn, key)
+        result_status = complete_area_survey(conn, key, user.login)
     if result_status == "not_found":
         raise HTTPException(status_code=404, detail="Area order not found or not on survey")
     return {"status": result_status}
@@ -382,7 +454,12 @@ def post_area_complete_survey(key: str) -> dict:
 def get_tasks_area(
     rayon: str = Query("", description="Filter by district name"),
     status: str = Query("", description="Optional status filter"),
+    user: UserSession = Depends(get_current_user),
 ) -> dict:
+    if rayon:
+        check_rayon(user, rayon)
+    if status:
+        check_area_status(user, status)
     with get_connection() as conn:
         return fetch_tasks_area_geojson(
             conn,
