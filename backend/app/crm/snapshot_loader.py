@@ -19,7 +19,12 @@ from app.crm.collector import (
     task_result_to_dict,
 )
 from app.crm.link_resolver import find_subgroup_cfg
-from app.crm.store import TASK_ID_COLUMNS, TaskRecord, _find_subgroup_for_record
+from app.crm.store import (
+    TASK_ID_COLUMNS,
+    TaskRecord,
+    _find_subgroup_for_record,
+    enrich_task_result_field_observed,
+)
 from app.layers.geojson import fetch_district_wkt, geometry_in_district, lookup_feature
 from app.layers.registry import get_registry
 
@@ -223,6 +228,10 @@ def collect_snapshot_tasks(
                 group.subgroups.append(TaskSubgroup(name=sub_name, features=features))
         if group.subgroups:
             result.groups.append(group)
+
+    store_cfg = crm_task_store_config()
+    if store_cfg:
+        enrich_task_result_field_observed(result, conn, store_cfg)
 
     return result
 

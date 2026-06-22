@@ -35,6 +35,12 @@ LINK_COLUMNS_BY_GROUP = {
 
 STATION_COLUMNS = ("sps", "kgs", "station_avr")
 
+_TASK_SELECT_COLUMNS = ("key", "type") + TASK_ID_COLUMNS + STATION_COLUMNS + ("field_observed",)
+
+
+def _task_select_columns_sql() -> str:
+    return ", ".join(f'"{col}"' for col in _TASK_SELECT_COLUMNS)
+
 TASK_COLUMN_LABELS = {
     "key": "Ключ задачи",
     "type": "Тип",
@@ -48,6 +54,7 @@ TASK_COLUMN_LABELS = {
     "sps": "СПС",
     "kgs": "КГС",
     "station_avr": "АВР",
+    "field_observed": "Обследовано в поле",
 }
 
 _DDL_STATEMENTS = (
@@ -86,6 +93,9 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
         f'ALTER TABLE "{schema}"."{table}" '
         f'ADD COLUMN IF NOT EXISTS "{col}" TEXT'
         for col in STATION_COLUMNS
+    ) + (
+        f'ALTER TABLE "{schema}"."{table}" '
+        f"ADD COLUMN IF NOT EXISTS field_observed BOOLEAN",
     )
 
 
@@ -120,7 +130,7 @@ def _snapshot_ddl_statements(
     )
 
 
-SendTaskSnapshotResult = Literal["inserted", "skipped"]
+ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY = "Не проведено полевое обследование."
 
 
 @dataclass
@@ -144,6 +154,7 @@ class TaskRecord:
     sps: Optional[str] = None
     kgs: Optional[str] = None
     station_avr: Optional[str] = None
+    field_observed: Optional[bool] = None
 
     def as_dict(self) -> Dict[str, Any]:
         return {
@@ -159,10 +170,14 @@ class TaskRecord:
             "sps": self.sps,
             "kgs": self.kgs,
             "station_avr": self.station_avr,
+            "field_observed": self.field_observed,
         }
 
     @classmethod
     def from_row(cls, row: Tuple) -> "TaskRecord":
+        field_observed = None
+        if len(row) > 12 and row[12] is not None:
+            field_observed = bool(row[12])
         return cls(
             key=str(row[0]),
             type=row[1] or "",
@@ -176,6 +191,7 @@ class TaskRecord:
             sps=_normalize_id_value(row[9]) if len(row) > 9 else None,
             kgs=_normalize_id_value(row[10]) if len(row) > 10 else None,
             station_avr=_normalize_id_value(row[11]) if len(row) > 11 else None,
+            field_observed=field_observed,
         )
 
 
@@ -348,6 +364,66 @@ def fetch_task_keys_index(
     return index
 
 
+def fetch_all_field_observed(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+) -> Dict[str, Optional[bool]]:
+    """Все field_observed из crm.tasks (key → bool|None)."""
+    schema, table = _table_ref(store_cfg)
+    query = f'SELECT key::text, field_observed FROM "{schema}"."{table}"'
+    result: Dict[str, Optional[bool]] = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            for row in cur.fetchall():
+                key = str(row[0])
+                result[key] = bool(row[1]) if row[1] is not None else None
+    except Exception as exc:
+        logger.warning("Failed to load field_observed from crm.tasks: %s", exc)
+    return result
+
+
+def enrich_features_field_observed(
+    features: list,
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    subgroup_name: str,
+) -> None:
+    if not features:
+        return
+
+    task_index = fetch_task_keys_index(conn, store_cfg)
+    observed_map = fetch_all_field_observed(conn, store_cfg)
+
+    for feat in features:
+        if feat.layer_key == "tasks_area":
+            continue
+        key = feat.task_key
+        if not key:
+            lookup = resolve_task_lookup(subgroup_name, feat.attributes, store_cfg)
+            if lookup:
+                key = task_index.get(lookup)
+                if key:
+                    feat.task_key = key
+        if not key:
+            continue
+        if key in observed_map and "field_observed" not in feat.attributes:
+            feat.attributes["field_observed"] = observed_map[key]
+
+
+def enrich_task_result_field_observed(
+    task_result,
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+) -> None:
+    """Заполнить attributes['field_observed'] и task_key для списков заказов."""
+    for group in task_result.groups:
+        for subgroup in group.subgroups:
+            enrich_features_field_observed(
+                subgroup.features, conn, store_cfg, subgroup.name
+            )
+
+
 def filter_sent_tasks_from_result(task_result, conn: PgConnection, store_cfg: Dict[str, Any]) -> int:
     snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     if not snapshot_keys:
@@ -448,6 +524,8 @@ def send_task_to_done_legal(conn: PgConnection, record: TaskRecord, store_cfg: D
 
 
 def send_task_to_done_illegal(conn: PgConnection, record: TaskRecord, store_cfg: Dict[str, Any]) -> SendTaskSnapshotResult:
+    if record.field_observed is False:
+        raise ValueError(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
     return send_task_snapshot(conn, record, store_cfg, "done_illegal_table", "tasks_done_illegal")
 
 
@@ -465,9 +543,7 @@ def fetch_task(
         return None
 
     schema, table = _table_ref(store_cfg)
-    columns = ", ".join(
-        f'"{col}"' for col in ("key", "type") + TASK_ID_COLUMNS + STATION_COLUMNS
-    )
+    columns = _task_select_columns_sql()
     query = f'SELECT {columns} FROM "{schema}"."{table}" WHERE "{task_column}" = %s LIMIT 1'
     with conn.cursor() as cur:
         cur.execute(query, (business_id,))
@@ -495,9 +571,7 @@ def fetch_all_task_records(
     store_cfg: Dict[str, Any],
 ) -> List[TaskRecord]:
     schema, table = _table_ref(store_cfg)
-    columns = ", ".join(
-        f'"{col}"' for col in ("key", "type") + TASK_ID_COLUMNS + STATION_COLUMNS
-    )
+    columns = _task_select_columns_sql()
     query = f'SELECT {columns} FROM "{schema}"."{table}"'
     with conn.cursor() as cur:
         cur.execute(query)
@@ -506,9 +580,7 @@ def fetch_all_task_records(
 
 def fetch_task_by_key(conn: PgConnection, store_cfg: Dict[str, Any], key: str) -> Optional[TaskRecord]:
     schema, table = _table_ref(store_cfg)
-    columns = ", ".join(
-        f'"{col}"' for col in ("key", "type") + TASK_ID_COLUMNS + STATION_COLUMNS
-    )
+    columns = _task_select_columns_sql()
     query = f'SELECT {columns} FROM "{schema}"."{table}" WHERE key = %s LIMIT 1'
     with conn.cursor() as cur:
         cur.execute(query, (key,))

@@ -124,6 +124,7 @@ def fetch_task_attributes_in_district(
     where = " AND ".join(filters)
     query = f"""
         SELECT ct.key::text AS task_key,
+               ct.field_observed,
                to_jsonb(t) - '{geom_col}' AS attrs,
                ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
         FROM {table} t
@@ -139,6 +140,9 @@ def fetch_task_attributes_in_district(
     features = []
     for row in rows:
         attrs = dict(row["attrs"]) if row["attrs"] else {}
+        field_observed = row.get("field_observed")
+        if field_observed is not None:
+            attrs["field_observed"] = bool(field_observed)
         features.append({
             "layer_name": layer.display_name,
             "layer_key": layer.layer_key,

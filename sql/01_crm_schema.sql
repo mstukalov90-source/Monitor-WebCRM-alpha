@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS crm.tasks (
 ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS sps TEXT;
 ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS kgs TEXT;
 ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS station_avr TEXT;
+ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS field_observed BOOLEAN;
 
 DROP INDEX IF EXISTS crm.tasks_uq_photo_uuid;
 DROP INDEX IF EXISTS crm.tasks_uq_photo_lens;
@@ -117,3 +118,7 @@ ALTER TABLE crm.tasks_done_legal ADD COLUMN IF NOT EXISTS station_avr TEXT;
 ALTER TABLE crm.tasks_done_illegal ADD COLUMN IF NOT EXISTS sps TEXT;
 ALTER TABLE crm.tasks_done_illegal ADD COLUMN IF NOT EXISTS kgs TEXT;
 ALTER TABLE crm.tasks_done_illegal ADD COLUMN IF NOT EXISTS station_avr TEXT;
+
+ALTER TABLE crm.tasks_field ADD COLUMN IF NOT EXISTS field_observed BOOLEAN;
+ALTER TABLE crm.tasks_done_legal ADD COLUMN IF NOT EXISTS field_observed BOOLEAN;
+ALTER TABLE crm.tasks_done_illegal ADD COLUMN IF NOT EXISTS field_observed BOOLEAN;

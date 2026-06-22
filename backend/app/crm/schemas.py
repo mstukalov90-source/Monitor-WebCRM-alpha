@@ -97,6 +97,7 @@ class TaskRecordOut(BaseModel):
     sps: str | None = None
     kgs: str | None = None
     station_avr: str | None = None
+    field_observed: bool | None = None
 
 
 class TaskRecordUpdate(BaseModel):

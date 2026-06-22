@@ -11,7 +11,7 @@ import {
   updateTask,
 } from '../api/client'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource } from '../types'
-import { aiPhotoUuidFromAttributes, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
+import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
 
 type StatusAction = 'field' | 'legal' | 'illegal' | 'clear'
 
@@ -25,6 +25,7 @@ type LegalValidation = {
 const LEGAL_STATION_FIELDS = ['sps', 'station_avr'] as const
 const LEGAL_LINK_EXCLUDED_INDEX = 2
 const CRM_GROUP_ORDERS = 'Новые ордера ОАТИ, АВР и земляные работы'
+const ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY = 'Не проведено полевое обследование.'
 
 const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
   field: 'Отправить задачу в поле?',
@@ -87,6 +88,12 @@ function isLegalRequiredField(field: string, legalLinkFields: string[]): boolean
   return legalLinkFields.includes(field) || (LEGAL_STATION_FIELDS as readonly string[]).includes(field)
 }
 
+function fieldObservedBadgeClass(value: boolean | null | undefined): string {
+  if (value === true) return 'field-observed field-observed-yes'
+  if (value === false) return 'field-observed field-observed-no'
+  return 'field-observed field-observed-unknown'
+}
+
 interface TaskEditModalProps {
   context: SelectedTaskContext | null
   onClose: () => void
@@ -122,10 +129,12 @@ export function TaskEditModal({
   const isReadonly = taskSource !== 'active'
   const canSendToField = taskSource === 'active'
   const canCloseLegal = taskSource === 'active' || taskSource === 'field'
-  const canCloseIllegal = taskSource === 'active' || taskSource === 'field'
+  const showIllegalClose = taskSource === 'active' || taskSource === 'field'
+  const canCloseIllegal = showIllegalClose && record != null && record.field_observed !== false
+  const showIllegalFieldHint = showIllegalClose && !isReadonly && record?.field_observed === false
   const canMarkDisruptionAbsent = taskSource === 'active' || taskSource === 'field'
   const hasStatusActions =
-    canSendToField || canCloseLegal || canCloseIllegal || canMarkDisruptionAbsent
+    canSendToField || canCloseLegal || showIllegalClose || canMarkDisruptionAbsent
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
   const requiresLegalLink = context?.groupName !== CRM_GROUP_ORDERS
   const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
@@ -273,6 +282,10 @@ export function TaskEditModal({
         return
       }
     }
+    if (action === 'illegal' && record.field_observed === false) {
+      setMessage(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
+      return
+    }
     setPendingStatusAction(null)
     if (action !== 'field') await handleSave()
     else if (canSendToField) await handleSave()
@@ -303,6 +316,7 @@ export function TaskEditModal({
   }
 
   const requestStatusAction = (action: StatusAction) => {
+    if (!record) return
     if (action === 'legal') {
       const validation = getLegalValidation(form, legalLinkFields, record)
       if (!validation.isValid) {
@@ -310,6 +324,10 @@ export function TaskEditModal({
         setMessage(validation.message ?? '')
         return
       }
+    }
+    if (action === 'illegal' && record.field_observed === false) {
+      setMessage(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
+      return
     }
     setShowLegalRequirements(false)
     setMessage('')
@@ -330,6 +348,9 @@ export function TaskEditModal({
         {record && (
           <>
             <p className="muted small">Ключ: {record.key}</p>
+            <p className={fieldObservedBadgeClass(record.field_observed)}>
+              Обследовано в поле: {formatFieldObserved(record.field_observed)}
+            </p>
             {context.feature.sent_at && (
               <p className="muted small">
                 Отправлено: {new Date(context.feature.sent_at).toLocaleString('ru-RU')}
@@ -441,6 +462,9 @@ export function TaskEditModal({
                         : ' СПС или АВР в «Данные из Станции».'}
                     </p>
                   )}
+                  {showIllegalFieldHint && (
+                    <p className="illegal-requirements">{ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY}</p>
+                  )}
                   {pendingStatusAction ? (
                     <div className="status-confirm">
                       <p>{STATUS_CONFIRM_MESSAGES[pendingStatusAction]}</p>
@@ -485,12 +509,13 @@ export function TaskEditModal({
                           Закрыть легальное
                         </button>
                       )}
-                      {canCloseIllegal && (
+                      {showIllegalClose && (
                         <button
                           type="button"
                           className="btn btn-status-illegal"
                           onClick={() => requestStatusAction('illegal')}
-                          disabled={loading}
+                          disabled={!canCloseIllegal || loading}
+                          title={showIllegalFieldHint ? ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY : undefined}
                         >
                           Закрыть нелегальное
                         </button>

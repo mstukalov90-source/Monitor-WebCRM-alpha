@@ -14,6 +14,8 @@ from app.crm.link_resolver import find_subgroup_cfg
 from app.crm.store import (
     PersistStats,
     _table_ref,
+    enrich_features_field_observed,
+    enrich_task_result_field_observed,
     fetch_snapshot_task_keys,
     filter_sent_tasks_from_result,
     persist_new_tasks_in_district,
@@ -274,6 +276,10 @@ def collect_layer_tasks(
                 task_key=task_key,
             )
         )
+
+    if features:
+        enrich_features_field_observed(features, conn, store_cfg, subgroup_name)
+
     return features, errors
 
 
@@ -312,6 +318,10 @@ def collect_tasks(
         store_cfg = crm_task_store_config()
         if store_cfg:
             filter_sent_tasks_from_result(result, conn, store_cfg)
+
+    store_cfg = crm_task_store_config()
+    if store_cfg:
+        enrich_task_result_field_observed(result, conn, store_cfg)
 
     return result, None
 

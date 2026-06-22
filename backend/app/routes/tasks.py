@@ -326,7 +326,10 @@ def _send_snapshot(key: str, handler) -> SnapshotResultOut:
         record = fetch_task_by_key(conn, store_cfg, key)
         if record is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        status = handler(conn, record, store_cfg)
+        try:
+            status = handler(conn, record, store_cfg)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     return SnapshotResultOut(status=status)
 
 

@@ -182,7 +182,13 @@ export const LOCAL_REPAIR_SUBGROUP = 'Текущие локальные ремо
 export interface TaskTableColumn {
   field: string
   label: string
-  format?: 'date'
+  format?: 'date' | 'field_observed'
+}
+
+export const FIELD_OBSERVED_COLUMN: TaskTableColumn = {
+  field: 'field_observed',
+  label: 'Обследовано в поле',
+  format: 'field_observed',
 }
 
 export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
@@ -220,7 +226,17 @@ export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
   { field: 'date_survey', label: 'Дата обследования', format: 'date' },
 ]
 
-export function formatTaskTableCell(value: unknown, format?: 'date'): string {
+export function formatFieldObserved(value: unknown): string {
+  if (value == null || value === '') return ''
+  if (typeof value === 'boolean') return value ? 'Да' : 'Нет'
+  const text = String(value).trim().toLowerCase()
+  if (['true', 't', '1', 'yes', 'да'].includes(text)) return 'Да'
+  if (['false', 'f', '0', 'no', 'нет'].includes(text)) return 'Нет'
+  return String(value)
+}
+
+export function formatTaskTableCell(value: unknown, format?: TaskTableColumn['format']): string {
+  if (format === 'field_observed') return formatFieldObserved(value)
   if (value == null || value === '') return ''
   if (format === 'date') {
     const d = new Date(String(value))
@@ -245,19 +261,26 @@ export function resolveTaskTableColumns(
   showSentAt: boolean,
 ): TaskTableColumn[] {
   const configured = taskTableColumnsForSubgroup(subgroupName, isArea)
-  if (configured) return configured
+  const cols = configured
+    ? [...configured]
+    : (() => {
+        const names = new Set<string>()
+        for (const attrs of featureAttributesList) {
+          for (const key of Object.keys(attrs)) {
+            if (!key.startsWith('_')) names.add(key)
+          }
+        }
+        const limit = showSentAt ? 5 : 6
+        return Array.from(names)
+          .sort()
+          .slice(0, limit)
+          .map((field) => ({ field, label: field }))
+      })()
 
-  const names = new Set<string>()
-  for (const attrs of featureAttributesList) {
-    for (const key of Object.keys(attrs)) {
-      if (!key.startsWith('_')) names.add(key)
-    }
+  if (!isArea && !cols.some((col) => col.field === 'field_observed')) {
+    return [FIELD_OBSERVED_COLUMN, ...cols]
   }
-  const limit = showSentAt ? 5 : 6
-  return Array.from(names)
-    .sort()
-    .slice(0, limit)
-    .map((field) => ({ field, label: field }))
+  return cols
 }
 
 function escapePopupHtml(value: string): string {
@@ -325,6 +348,7 @@ export interface TaskRecord {
   sps?: string | null
   kgs?: string | null
   station_avr?: string | null
+  field_observed?: boolean | null
 }
 
 export interface TaskFormFields {

@@ -631,6 +631,42 @@ body,
   width: 100%;
 }
 
+.field-observed {
+  display: inline-block;
+  margin: 4px 0 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.field-observed-yes {
+  color: #1b5e20;
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+}
+
+.field-observed-no {
+  color: #b71c1c;
+  background: #ffebee;
+  border: 1px solid #ef9a9a;
+}
+
+.field-observed-unknown {
+  color: #5c6b7a;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.illegal-requirements {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: #b71c1c;
+  background: #fff5f5;
+  border: 1px solid #ffcdd2;
+  border-radius: 6px;
+}
+
 .photo-modal {
   width: min(900px, 96vw);
 }
