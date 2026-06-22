@@ -3,6 +3,7 @@ import { collectTasksByLayers, fetchLayersConfig, fetchSnapshotTasks, fetchTasks
 import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { MapView } from './components/MapView'
+import { MapLegend } from './components/MapLegend'
 import { flattenLayers } from './components/LayerControl'
 import { PhotoViewModal } from './components/PhotoViewModal'
 import { TaskEditModal } from './components/TaskEditModal'
@@ -251,25 +252,34 @@ function App() {
           />
         </aside>
         <main className="map-area">
-          {activeHighlight && activeHighlight.linked.length > 0 && (
-            <div className="linked-banner">
-              Привязанные объекты: {activeHighlight.linked.length}
+          <div className="map-area-stack">
+            <div className="map-viewport">
+              {activeHighlight && activeHighlight.linked.length > 0 && (
+                <div className="linked-banner">
+                  Привязанные объекты: {activeHighlight.linked.length}
+                </div>
+              )}
+              {pickMode && <div className="pick-banner">Режим выбора на карте — кликните объект</div>}
+              <MapView
+                taskFeatures={taskFeatures}
+                layerConfigByKey={layerConfigByKey}
+                districtName={taskResult.district_name}
+                taskSource={taskSource}
+                showTasksAreaOverlay={!isAreaSource(taskSource)}
+                showAreaPopups={isAreaSource(taskSource)}
+                taskHighlight={activeHighlight}
+                pickMode={pickMode}
+                pickLayers={pickLayers}
+                onFeaturePicked={handleFeaturePicked}
+                onExecuteTask={handleExecuteTask}
+              />
             </div>
-          )}
-          {pickMode && <div className="pick-banner">Режим выбора на карте — кликните объект</div>}
-          <MapView
-            taskFeatures={taskFeatures}
-            layerConfigByKey={layerConfigByKey}
-            districtName={taskResult.district_name}
-            taskSource={taskSource}
-            showTasksAreaOverlay={!isAreaSource(taskSource)}
-            showAreaPopups={isAreaSource(taskSource)}
-            taskHighlight={activeHighlight}
-            pickMode={pickMode}
-            pickLayers={pickLayers}
-            onFeaturePicked={handleFeaturePicked}
-            onExecuteTask={handleExecuteTask}
-          />
+            <MapLegend
+              taskFeatures={taskFeatures}
+              layerConfigByKey={layerConfigByKey}
+              showAreaOverlay={!isAreaSource(taskSource)}
+            />
+          </div>
         </main>
       </div>
 

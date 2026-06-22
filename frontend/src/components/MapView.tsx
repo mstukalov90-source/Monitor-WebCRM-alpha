@@ -1,13 +1,20 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AttributionControl, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { fetchGeoJson } from '../api/client'
+import { fetchGeoJson, fetchLayersConfig } from '../api/client'
 import { fetchTasksAreaGeoJson } from '../api/client'
+import { findHoodLayerKey } from '../lib/hoodLayer'
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
-import { buildTaskPopupHtml } from '../types'
+import {
+  DISTRICT_RAYON_FIELD,
+  filterDistrictGeoJson,
+  MOSCOW_MAP_BBOX,
+  normalizeRayonName,
+  buildTaskPopupHtml,
+} from '../types'
 
 const MOSCOW_CENTER: [number, number] = [55.7558, 37.6173]
 const MAP_MAX_ZOOM = 19
@@ -40,6 +47,69 @@ const TASKS_AREA_STYLE: L.PathOptions = {
   color: '#0066cc',
   weight: 2,
   fillOpacity: 0,
+}
+
+const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
+  color: '#cc0000',
+  weight: 2,
+  fillColor: '#ff6666',
+  fillOpacity: 0.06,
+}
+
+function DistrictBoundaryLayer({ districtName }: { districtName?: string | null }) {
+  const map = useMap()
+  const layerRef = useRef<L.GeoJSON | null>(null)
+  const [layerKey, setLayerKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetchLayersConfig()
+      .then((cfg) => setLayerKey(findHoodLayerKey(cfg.groups)))
+      .catch(() => setLayerKey(null))
+  }, [])
+
+  useEffect(() => {
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current)
+      layerRef.current = null
+    }
+    if (!layerKey || !districtName) return
+
+    const districtNorm = normalizeRayonName(districtName)
+    let cancelled = false
+
+    fetchGeoJson(layerKey, MOSCOW_MAP_BBOX, 500)
+      .then((geojson) => {
+        if (cancelled) return
+
+        const filtered = filterDistrictGeoJson(geojson)
+        const features = filtered.features.filter(
+          (feature) =>
+            normalizeRayonName(String(feature.properties?.[DISTRICT_RAYON_FIELD] ?? '')) === districtNorm,
+        )
+        if (!features.length) return
+
+        const gj = L.geoJSON(
+          { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection,
+          {
+            style: () => DISTRICT_BOUNDARY_STYLE,
+            interactive: false,
+          },
+        )
+        gj.addTo(map)
+        layerRef.current = gj
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current)
+        layerRef.current = null
+      }
+    }
+  }, [map, layerKey, districtName])
+
+  return null
 }
 
 function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
@@ -414,6 +484,7 @@ export function MapView({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={MAP_MAX_ZOOM}
       />
+      <DistrictBoundaryLayer districtName={districtName} />
       {!pickMode && (
         <>
           {showTasksAreaOverlay && <TasksAreaLayer districtName={districtName} />}

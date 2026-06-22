@@ -3,11 +3,10 @@ import { AttributionControl, MapContainer, TileLayer, useMap } from 'react-leafl
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
-import type { LayerGroupConfig } from '../types'
+import { findHoodLayerKey } from '../lib/hoodLayer'
 import {
   DISTRICT_RAYON_FIELD,
   filterDistrictGeoJson,
-  HOOD_BOUNDARIES_DISPLAY_NAME,
   MOSCOW_MAP_BBOX,
   normalizeRayonName,
   resolveRayonFromDistricts,
@@ -45,21 +44,6 @@ interface DistrictPickerMapProps {
   districts: string[]
   onRayonSelect: (rayon: string) => void
   disabled?: boolean
-}
-
-function findHoodLayerKey(groups: LayerGroupConfig[]): string | null {
-  for (const group of groups) {
-    for (const layer of group.layers) {
-      if (layer.display_name === HOOD_BOUNDARIES_DISPLAY_NAME) {
-        return layer.layer_key
-      }
-    }
-    if (group.groups.length) {
-      const nested = findHoodLayerKey(group.groups)
-      if (nested) return nested
-    }
-  }
-  return null
 }
 
 function HoodDistrictsLayer({
