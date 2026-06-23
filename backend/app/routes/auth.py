@@ -11,6 +11,8 @@ from app.auth.session import (
     UserSession,
     allowed_task_sources,
     can_collect,
+    can_create_users,
+    can_manage_personnel,
     default_task_source,
 )
 from app.auth.tokens import create_token
@@ -32,6 +34,8 @@ class AuthUserOut(BaseModel):
     allowed_task_sources: list[str]
     default_task_source: str
     can_collect: bool
+    can_manage_personnel: bool
+    can_create_users: bool
 
 
 @router.post("/login", response_model=AuthUserOut)
@@ -77,4 +81,6 @@ def _user_out(session: UserSession) -> AuthUserOut:
         allowed_task_sources=allowed_task_sources(session.role),
         default_task_source=default_task_source(session.role),
         can_collect=can_collect(session.role),
+        can_manage_personnel=can_manage_personnel(session.role),
+        can_create_users=can_create_users(session.role),
     )

@@ -44,6 +44,26 @@ def require_can_collect(user: UserSession = Depends(get_current_user)) -> UserSe
     return user
 
 
+def require_manager_or_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
+    from app.auth.session import can_manage_personnel
+
+    if not can_manage_personnel(user.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Управление персоналом недоступно для вашей роли",
+        )
+    return user
+
+
+def require_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступно только администратору",
+        )
+    return user
+
+
 def check_rayon(user: UserSession, rayon: str) -> None:
     with get_connection() as conn:
         if not is_rayon_allowed(conn, user, rayon):

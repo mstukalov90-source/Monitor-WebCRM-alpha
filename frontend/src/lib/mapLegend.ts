@@ -19,7 +19,7 @@ const AREA_OVERLAY_ITEM: MapLegendItem = {
   symbology: {
     color: '#0066cc',
     fill_color: '#0066cc',
-    fill_opacity: 0,
+    fill_opacity: 0.125,
     outline_width: 2,
   },
 }
@@ -30,8 +30,7 @@ const DISTRICT_BOUNDARY_ITEM: MapLegendItem = {
   kind: 'polygon',
   symbology: {
     color: '#cc0000',
-    fill_color: '#ff6666',
-    fill_opacity: 0.06,
+    fill_opacity: 0,
     outline_width: 2,
   },
 }
@@ -46,6 +45,15 @@ const HIGHLIGHT_LINKED_ITEM: MapLegendItem = {
   id: 'highlight_linked',
   label: 'Привязанные объекты',
   kind: 'highlight-linked',
+}
+
+function cssRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '')
+  if (normalized.length !== 6) return hex
+  const r = parseInt(normalized.slice(0, 2), 16)
+  const g = parseInt(normalized.slice(2, 4), 16)
+  const b = parseInt(normalized.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 export function buildMapLegendItems(
@@ -150,7 +158,7 @@ export function swatchStyles(item: MapLegendItem): {
     return {
       polygon: {
         backgroundColor:
-          fillOpacity === 0 ? 'transparent' : String(s.fillColor ?? '#3388ff'),
+          fillOpacity === 0 ? 'transparent' : cssRgba(String(s.fillColor ?? '#3388ff'), fillOpacity),
         borderColor: String(s.color ?? '#3388ff'),
         borderWidth: Number(s.weight) || 1,
       },

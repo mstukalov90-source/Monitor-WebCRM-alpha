@@ -5,15 +5,18 @@ import {
   fetchLinkedFeatures,
   fetchTask,
   fetchTaskFormFields,
+  lookupFieldSnapshot,
   lookupTaskByFeature,
   markDisruptionAbsent,
+  returnTaskToActive,
   sendTaskToField,
   updateTask,
 } from '../api/client'
-import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource } from '../types'
+import { TaskExecutorAssign } from './TaskExecutorAssign'
+import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
 import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
 
-type StatusAction = 'field' | 'legal' | 'illegal' | 'clear'
+type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active'
 
 type LegalValidation = {
   isValid: boolean
@@ -32,6 +35,7 @@ const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
   legal: 'Закрыть задачу как легальную?',
   illegal: 'Закрыть задачу как нелегальную?',
   clear: 'Отметить задачу: разрытие отсутствует?',
+  active: 'Вернуть задачу в активные?',
 }
 
 function isFilled(value: string | undefined): boolean {
@@ -96,6 +100,8 @@ function fieldObservedBadgeClass(value: boolean | null | undefined): string {
 
 interface TaskEditModalProps {
   context: SelectedTaskContext | null
+  canManagePersonnel: boolean
+  userRole: UserRole
   onClose: () => void
   onSaved: () => void
   onHighlightChange: (highlight: TaskHighlight | null) => void
@@ -107,6 +113,8 @@ interface TaskEditModalProps {
 
 export function TaskEditModal({
   context,
+  canManagePersonnel,
+  userRole,
   onClose,
   onSaved,
   onHighlightChange,
@@ -124,22 +132,36 @@ export function TaskEditModal({
   const [message, setMessage] = useState('')
   const [pendingStatusAction, setPendingStatusAction] = useState<StatusAction | null>(null)
   const [showLegalRequirements, setShowLegalRequirements] = useState(false)
+  const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
+  const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
   const isReadonly = taskSource !== 'active'
+  const canManageFieldTaskStatus =
+    taskSource === 'field' && (userRole === 'admin' || userRole === 'manager')
+  const canPerformStatusActions = !isReadonly || canManageFieldTaskStatus
   const canSendToField = taskSource === 'active'
-  const canCloseLegal = taskSource === 'active' || taskSource === 'field'
-  const showIllegalClose = taskSource === 'active' || taskSource === 'field'
+  const canCloseLegal =
+    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
+  const showIllegalClose =
+    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
   const canCloseIllegal = showIllegalClose && record != null && record.field_observed !== false
-  const showIllegalFieldHint = showIllegalClose && !isReadonly && record?.field_observed === false
-  const canMarkDisruptionAbsent = taskSource === 'active' || taskSource === 'field'
+  const showIllegalFieldHint =
+    showIllegalClose && canPerformStatusActions && record?.field_observed === false
+  const canMarkDisruptionAbsent =
+    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
+  const canReturnToActive = canManageFieldTaskStatus
   const hasStatusActions =
-    canSendToField || canCloseLegal || showIllegalClose || canMarkDisruptionAbsent
+    canSendToField ||
+    canCloseLegal ||
+    showIllegalClose ||
+    canMarkDisruptionAbsent ||
+    canReturnToActive
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
   const requiresLegalLink = context?.groupName !== CRM_GROUP_ORDERS
   const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
   const legalValidation = getLegalValidation(form, legalLinkFields, record)
-  const showLegalFieldHints = canCloseLegal && !isReadonly
+  const showLegalFieldHints = canCloseLegal && canPerformStatusActions
 
   const handleViewPhoto = () => {
     if (!context) return
@@ -211,6 +233,45 @@ export function TaskEditModal({
     }
   }, [context, isReadonly])
 
+  useEffect(() => {
+    if (!context || taskSource !== 'field' || !record) {
+      setFieldSnapshotKey(null)
+      setFieldExecutor(null)
+      return
+    }
+
+    const attrs = context.feature.attributes
+    const snapKey = attrs._snapshot_key ? String(attrs._snapshot_key) : ''
+    const exec =
+      attrs.executor != null && String(attrs.executor).trim() !== ''
+        ? String(attrs.executor)
+        : null
+
+    if (snapKey) {
+      setFieldSnapshotKey(snapKey)
+      setFieldExecutor(exec)
+      return
+    }
+
+    let cancelled = false
+    lookupFieldSnapshot(record.key)
+      .then((row) => {
+        if (cancelled) return
+        setFieldSnapshotKey(row.snapshot_key)
+        setFieldExecutor(row.executor?.trim() || null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFieldSnapshotKey(null)
+          setFieldExecutor(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [context, taskSource, record?.key])
+
   async function lookupAndLoad(ctx: SelectedTaskContext) {
     const rec = ctx.taskKey
       ? await fetchTask(ctx.taskKey)
@@ -273,7 +334,7 @@ export function TaskEditModal({
   }
 
   const handleAction = async (action: StatusAction) => {
-    if (!record || isReadonly) return
+    if (!record || !canPerformStatusActions) return
     if (action === 'legal') {
       const validation = getLegalValidation(form, legalLinkFields, record)
       if (!validation.isValid) {
@@ -287,21 +348,29 @@ export function TaskEditModal({
       return
     }
     setPendingStatusAction(null)
-    if (action !== 'field') await handleSave()
-    else if (canSendToField) await handleSave()
+    const shouldSaveBeforeAction = !isReadonly && action !== 'field' && action !== 'active'
+    if (shouldSaveBeforeAction) await handleSave()
+    else if (action === 'field' && canSendToField && !isReadonly) await handleSave()
     setLoading(true)
     try {
       let result
       if (action === 'field') result = await sendTaskToField(record.key)
       else if (action === 'legal') result = await closeTaskLegal(record.key)
       else if (action === 'illegal') result = await closeTaskIllegal(record.key)
-      else result = await markDisruptionAbsent(record.key)
+      else if (action === 'clear') result = await markDisruptionAbsent(record.key)
+      else result = await returnTaskToActive(record.key)
 
       if (action === 'clear') {
         setMessage(
           result.status === 'skipped'
             ? 'Задача уже была отмечена как «разрытие отсутствует».'
             : 'Задача отмечена: разрытие отсутствует.',
+        )
+      } else if (action === 'active') {
+        setMessage(
+          result.status === 'deleted'
+            ? 'Задача возвращена в активные.'
+            : `Статус: ${result.status}`,
         )
       } else {
         setMessage(`Статус: ${result.status}`)
@@ -431,6 +500,19 @@ export function TaskEditModal({
               ))}
             </div>
 
+            {taskSource === 'field' && fieldSnapshotKey && (
+              <TaskExecutorAssign
+                table="field"
+                assignmentKey={fieldSnapshotKey}
+                initialExecutor={fieldExecutor}
+                canManage={canManagePersonnel}
+                onAssigned={(executor) => {
+                  setFieldExecutor(executor)
+                  onSaved()
+                }}
+              />
+            )}
+
             <div className="modal-actions">
               <div className="modal-action-group">
                 <h4>Управление задачей</h4>
@@ -528,6 +610,16 @@ export function TaskEditModal({
                           disabled={loading}
                         >
                           Разрытие отсутствует
+                        </button>
+                      )}
+                      {canReturnToActive && (
+                        <button
+                          type="button"
+                          className="btn btn-status-active"
+                          onClick={() => requestStatusAction('active')}
+                          disabled={loading}
+                        >
+                          Вернуть в активные
                         </button>
                       )}
                     </div>

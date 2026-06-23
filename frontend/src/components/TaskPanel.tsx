@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
-import type { SelectedTaskContext, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
+import type { SelectedTaskContext, TaskFeature, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
 import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel } from '../types'
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
   taskSource: TaskSource
   onExecute: (ctx: SelectedTaskContext) => void | Promise<void>
+  onViewArea?: (feature: TaskFeature) => void
   onSelectHighlight: (highlight: TaskHighlight | null) => void
   onRefresh: () => void | Promise<void>
 }
@@ -15,6 +16,7 @@ export function TaskPanel({
   taskResult,
   taskSource,
   onExecute,
+  onViewArea,
   onSelectHighlight,
   onRefresh,
 }: TaskPanelProps) {
@@ -274,6 +276,16 @@ export function TaskPanel({
 
       {isArea ? (
         <div className="area-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={selectedRow === null || busy}
+            onClick={() => {
+              if (selectedFeature && onViewArea) onViewArea(selectedFeature)
+            }}
+          >
+            Просмотр заказа
+          </button>
           {canManageAreaSurvey ? (
             <>
               <button

@@ -7,7 +7,53 @@ export interface AuthUser {
   allowed_task_sources: TaskSource[]
   default_task_source: TaskSource
   can_collect: boolean
+  can_manage_personnel: boolean
+  can_create_users: boolean
 }
+
+export interface PersonnelUserCreate {
+  login: string
+  password: string
+  role: UserRole
+  work_zones: number[]
+}
+
+export interface PersonnelUser {
+  uuid: string
+  login: string
+  role: UserRole
+  work_zones: number[]
+  district_names: string[]
+}
+
+export interface DistrictOption {
+  gid: number
+  rayon: string
+}
+
+export interface AssignableTask {
+  key: string
+  table: 'active' | 'field' | 'clear' | 'area'
+  executor: string | null
+  type?: string | null
+  task_key?: string | null
+  sent_at?: string | null
+  rayon?: string | null
+  status?: string | null
+  area?: number | null
+  date_survey?: string | null
+}
+
+export type WorkflowTargetStatus = 'active' | 'field' | 'clear'
+
+export interface BulkStatusResult {
+  updated: number
+  skipped: number
+  not_found: number
+  failed: { task_key: string; error: string }[]
+}
+
+export type AppView = 'workspace' | 'personnel'
 
 export const HOOD_BOUNDARIES_DISPLAY_NAME = 'Границы районов'
 export const DISTRICT_RAYON_FIELD = 'rayon'
@@ -235,6 +281,7 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
 
 export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
   { field: 'date_survey', label: 'Дата обследования', format: 'date' },
+  { field: 'executor', label: 'Исполнитель' },
 ]
 
 export function formatFieldObserved(value: unknown): string {

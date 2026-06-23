@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { collectTasksByLayers, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea } from './api/client'
+import { AreaTaskViewModal } from './components/AreaTaskViewModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
+import { PersonnelScreen } from './components/PersonnelScreen'
 import { flattenLayers } from './components/LayerControl'
 import { PhotoViewModal } from './components/PhotoViewModal'
 import { TaskEditModal } from './components/TaskEditModal'
+import { ResizeHandle } from './components/ResizeHandle'
 import { TaskPanel } from './components/TaskPanel'
 import { TaskSourceTabs } from './components/TaskSourceTabs'
+import { useWorkspaceLayout } from './hooks/useWorkspaceLayout'
 import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
-import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskResult, TaskSource } from './types'
+import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, AppView } from './types'
 import { areaStatusFromSource, isAreaSource } from './types'
 import './App.css'
 
@@ -31,9 +35,12 @@ function App() {
   const [pickLayers, setPickLayers] = useState<LinkLayerInfo[]>([])
   const [pickedValue, setPickedValue] = useState<{ column: string; value: string } | null>(null)
   const [photoViewUuid, setPhotoViewUuid] = useState<string | null>(null)
+  const [appView, setAppView] = useState<AppView>('workspace')
+  const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
+  const workspace = useWorkspaceLayout()
 
   useEffect(() => {
     if (!user) return
@@ -186,6 +193,17 @@ function App() {
     return <LoginScreen />
   }
 
+  if (appView === 'personnel' && user.can_manage_personnel) {
+    return (
+      <PersonnelScreen
+        userLogin={user.login}
+        canCreateUsers={user.can_create_users}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
   if (!taskResult) {
     return (
       <DistrictStartScreen
@@ -195,12 +213,14 @@ function App() {
         error={collection.error || loadError}
         progress={collection.progress}
         canCollect={user.can_collect}
+        canManagePersonnel={user.can_manage_personnel}
         userLogin={user.login}
         userRole={user.role}
         onRayonChange={collection.setRayon}
         onApplyDateFilterChange={collection.setApplyDateFilter}
         onCollect={handleCollect}
         onLoadFieldTasks={handleLoadFieldTasks}
+        onOpenPersonnel={() => setAppView('personnel')}
         onLogout={logout}
       />
     )
@@ -224,6 +244,11 @@ function App() {
             <button type="button" className="btn" onClick={handleChangeDistrict}>
               Сменить район
             </button>
+            {user.can_manage_personnel && (
+              <button type="button" className="btn" onClick={() => setAppView('personnel')}>
+                Персонал
+              </button>
+            )}
             <button type="button" className="btn" onClick={() => void logout()}>
               Выйти
             </button>
@@ -241,19 +266,30 @@ function App() {
         {loadError && <div className="error-banner">{loadError}</div>}
       </header>
 
-      <div className="app-body">
+      <div
+        ref={workspace.appBodyRef}
+        className={`app-body${workspace.resizing ? ' app-body--resizing' : ''}`}
+        style={workspace.layoutStyle}
+      >
         <aside className="sidebar">
           <TaskPanel
             taskResult={taskResult}
             taskSource={taskSource}
             onExecute={handleExecuteTask}
+            onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}
             onRefresh={handleRefresh}
           />
         </aside>
-        <main className="map-area">
+        <ResizeHandle
+          orientation="vertical"
+          onResize={workspace.handleSidebarResize}
+          onResizeStart={() => workspace.setResizing(true)}
+          onResizeEnd={() => workspace.setResizing(false)}
+        />
+        <main ref={workspace.mapAreaRef} className="map-area">
           <div className="map-area-stack">
-            <div className="map-viewport">
+            <div className={`map-viewport${workspace.resizing ? ' map-viewport--resizing' : ''}`}>
               {activeHighlight && activeHighlight.linked.length > 0 && (
                 <div className="linked-banner">
                   Привязанные объекты: {activeHighlight.linked.length}
@@ -285,6 +321,8 @@ function App() {
 
       <TaskEditModal
         context={editContext}
+        canManagePersonnel={user.can_manage_personnel}
+        userRole={user.role}
         onClose={() => setEditContext(null)}
         onSaved={handleRefresh}
         onHighlightChange={setModalHighlight}
@@ -292,6 +330,14 @@ function App() {
         pickedValue={pickedValue}
         onPickedConsumed={() => setPickedValue(null)}
         onViewPhoto={setPhotoViewUuid}
+      />
+
+      <AreaTaskViewModal
+        feature={areaViewFeature}
+        taskSource={taskSource}
+        canManagePersonnel={user.can_manage_personnel}
+        onClose={() => setAreaViewFeature(null)}
+        onSaved={handleRefresh}
       />
 
       <PhotoViewModal uuid={photoViewUuid} onClose={() => setPhotoViewUuid(null)} />

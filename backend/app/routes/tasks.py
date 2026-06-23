@@ -13,6 +13,7 @@ from app.auth.deps import (
     check_task_source_any,
     get_current_user,
     require_can_collect,
+    require_manager_or_admin,
 )
 from app.auth.session import UserSession, districts_unrestricted
 from app.config import crm_task_store_config, crm_tasks_config
@@ -43,6 +44,9 @@ from app.crm.store import (
     send_task_to_done_legal,
     send_task_to_field,
     send_task_to_clear,
+    return_task_to_active,
+    remove_task_from_field,
+    task_key_exists_in_snapshot,
     task_form_field_groups,
     update_task_record,
 )
@@ -77,6 +81,46 @@ def _background_persist_tasks(rayon: str, apply_date_filter: bool, login: str) -
 
 def _record_to_out(record: TaskRecord) -> TaskRecordOut:
     return TaskRecordOut(**record.as_dict())
+
+
+def _field_executor_login(user: UserSession) -> str | None:
+    if user.role == "field":
+        return user.login
+    return None
+
+
+def _require_field_task_manager(user: UserSession, conn, store_cfg, task_key: str) -> None:
+    if not task_key_exists_in_snapshot(conn, store_cfg, "field_table", "tasks_field", task_key):
+        return
+    if user.role not in ("admin", "manager"):
+        raise HTTPException(
+            status_code=403,
+            detail="Изменение статуса задачи «В поле» доступно только manager и admin",
+        )
+
+
+def _send_snapshot(
+    key: str,
+    handler,
+    login: str,
+    *,
+    user: UserSession | None = None,
+    remove_from_field_after: bool = False,
+) -> SnapshotResultOut:
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if user is not None:
+            _require_field_task_manager(user, conn, store_cfg, key)
+        try:
+            status = handler(conn, record, store_cfg, login)
+            if remove_from_field_after and status in ("inserted", "skipped"):
+                remove_task_from_field(conn, record, store_cfg, login)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SnapshotResultOut(status=status)
 
 
 @router.get("/districts")
@@ -264,7 +308,12 @@ def get_snapshot_tasks(
     check_task_source(user, source)
     check_rayon(user, rayon)
     with get_connection() as conn:
-        result = collect_snapshot_tasks(conn, rayon, source)
+        result = collect_snapshot_tasks(
+            conn,
+            rayon,
+            source,
+            field_executor_login=_field_executor_login(user),
+        )
     return snapshot_result_to_dict(result, source)
 
 
@@ -279,7 +328,12 @@ def get_tasks_area_list(
     check_area_status(user, status)
     check_rayon(user, rayon)
     with get_connection() as conn:
-        result = collect_tasks_area(conn, rayon, status)
+        result = collect_tasks_area(
+            conn,
+            rayon,
+            status,
+            field_executor_login=_field_executor_login(user),
+        )
     return tasks_area_result_to_dict(result, status)
 
 
@@ -362,7 +416,13 @@ def post_close_legal(
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
-    return _send_snapshot(key, send_task_to_done_legal, user.login)
+    return _send_snapshot(
+        key,
+        send_task_to_done_legal,
+        user.login,
+        user=user,
+        remove_from_field_after=True,
+    )
 
 
 @router.post("/tasks/{key}/close-illegal")
@@ -371,7 +431,13 @@ def post_close_illegal(
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
-    return _send_snapshot(key, send_task_to_done_illegal, user.login)
+    return _send_snapshot(
+        key,
+        send_task_to_done_illegal,
+        user.login,
+        user=user,
+        remove_from_field_after=True,
+    )
 
 
 @router.post("/tasks/{key}/disruption-absent")
@@ -380,20 +446,22 @@ def post_disruption_absent(
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
-    return _send_snapshot(key, send_task_to_clear, user.login)
+    return _send_snapshot(
+        key,
+        send_task_to_clear,
+        user.login,
+        user=user,
+        remove_from_field_after=True,
+    )
 
 
-def _send_snapshot(key: str, handler, login: str) -> SnapshotResultOut:
-    store_cfg = crm_task_store_config()
-    with get_connection() as conn:
-        record = fetch_task_by_key(conn, store_cfg, key)
-        if record is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        try:
-            status = handler(conn, record, store_cfg, login)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return SnapshotResultOut(status=status)
+@router.post("/tasks/{key}/return-to-active")
+def post_return_to_active(
+    key: str,
+    user: UserSession = Depends(require_manager_or_admin),
+) -> SnapshotResultOut:
+    check_task_source_any(user, ["field"])
+    return _send_snapshot(key, return_task_to_active, user.login, user=user)
 
 
 @router.get("/features/lookup")
@@ -465,6 +533,7 @@ def get_tasks_area(
             conn,
             rayon=rayon or None,
             status=status or None,
+            field_executor_login=_field_executor_login(user),
         )
 
 

@@ -11,7 +11,13 @@ import type {
   CollectLayerChunk,
   CollectProgress,
   AiPhotoMeta,
+  AssignableTask,
   AuthUser,
+  DistrictOption,
+  PersonnelUser,
+  PersonnelUserCreate,
+  WorkflowTargetStatus,
+  BulkStatusResult,
 } from '../types'
 import { appendLayerChunk, taskResultFromPlan } from '../lib/collectTasks'
 
@@ -246,6 +252,10 @@ export function markDisruptionAbsent(key: string): Promise<{ status: string }> {
   return request(`/api/tasks/${key}/disruption-absent`, { method: 'POST' })
 }
 
+export function returnTaskToActive(key: string): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/return-to-active`, { method: 'POST' })
+}
+
 export function fetchLinkLayers(columns: string[]): Promise<{ layers: LinkLayerInfo[] }> {
   const params = new URLSearchParams({ columns: columns.join(',') })
   return request(`/api/crm/link-layers?${params}`)
@@ -298,4 +308,138 @@ export function fetchAiPhotoMeta(uuid: string): Promise<AiPhotoMeta> {
 
 export function aiPhotoImageUrl(uuid: string): string {
   return `/api/photos/ai/${encodeURIComponent(uuid)}/image`
+}
+
+export function fetchPersonnelUsers(): Promise<PersonnelUser[]> {
+  return request('/api/personnel/users')
+}
+
+export function createPersonnelUser(data: PersonnelUserCreate): Promise<PersonnelUser> {
+  return request('/api/personnel/users', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function fetchPersonnelDistricts(): Promise<DistrictOption[]> {
+  return request('/api/personnel/districts')
+}
+
+export function updatePersonnelUserWorkZones(
+  uuid: string,
+  workZones: number[],
+): Promise<PersonnelUser> {
+  return request(`/api/personnel/users/${encodeURIComponent(uuid)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ work_zones: workZones }),
+  })
+}
+
+const PERSONNEL_TASKS_TIMEOUT_MS = 90_000
+const PERSONNEL_BULK_TIMEOUT_MS = 300_000
+
+function personnelBulkTimeout(taskCount: number): number {
+  return Math.max(PERSONNEL_BULK_TIMEOUT_MS, taskCount * 5_000)
+}
+
+export function fetchPersonnelActiveTasks(params: {
+  rayon?: string
+}): Promise<AssignableTask[]> {
+  const q = new URLSearchParams()
+  if (params.rayon) q.set('rayon', params.rayon)
+  const qs = q.toString()
+  return request(`/api/personnel/tasks/active${qs ? `?${qs}` : ''}`, undefined, PERSONNEL_TASKS_TIMEOUT_MS)
+}
+
+export function fetchPersonnelClearTasks(params: {
+  rayon?: string
+}): Promise<AssignableTask[]> {
+  const q = new URLSearchParams()
+  if (params.rayon) q.set('rayon', params.rayon)
+  const qs = q.toString()
+  return request(`/api/personnel/tasks/clear${qs ? `?${qs}` : ''}`, undefined, PERSONNEL_TASKS_TIMEOUT_MS)
+}
+
+export function fetchPersonnelFieldTasks(params: {
+  rayon?: string
+  executor?: string
+  unassignedOnly?: boolean
+}): Promise<AssignableTask[]> {
+  const q = new URLSearchParams()
+  if (params.rayon) q.set('rayon', params.rayon)
+  if (params.executor) q.set('executor', params.executor)
+  if (params.unassignedOnly) q.set('unassigned_only', 'true')
+  const qs = q.toString()
+  return request(`/api/personnel/tasks/field${qs ? `?${qs}` : ''}`, undefined, PERSONNEL_TASKS_TIMEOUT_MS)
+}
+
+export function fetchPersonnelAreaTasks(params: {
+  rayon?: string
+  status?: string
+  executor?: string
+  unassignedOnly?: boolean
+}): Promise<AssignableTask[]> {
+  const q = new URLSearchParams()
+  if (params.rayon) q.set('rayon', params.rayon)
+  if (params.status) q.set('status', params.status)
+  if (params.executor) q.set('executor', params.executor)
+  if (params.unassignedOnly) q.set('unassigned_only', 'true')
+  const qs = q.toString()
+  return request(`/api/personnel/tasks/area${qs ? `?${qs}` : ''}`, undefined, PERSONNEL_TASKS_TIMEOUT_MS)
+}
+
+export function bulkChangePersonnelTaskStatus(
+  taskKeys: string[],
+  targetStatus: WorkflowTargetStatus,
+): Promise<BulkStatusResult> {
+  return request(
+    '/api/personnel/tasks/bulk-status',
+    {
+      method: 'POST',
+      body: JSON.stringify({ task_keys: taskKeys, target_status: targetStatus }),
+    },
+    personnelBulkTimeout(taskKeys.length),
+  )
+}
+
+export function bulkAssignPersonnelTasks(
+  table: 'field' | 'area',
+  keys: string[],
+  executor: string | null,
+): Promise<{ updated: number; not_found: number }> {
+  return request(
+    '/api/personnel/tasks/bulk-assign',
+    {
+      method: 'POST',
+      body: JSON.stringify({ table, keys, executor }),
+    },
+    personnelBulkTimeout(keys.length),
+  )
+}
+
+export function assignFieldTaskExecutor(
+  key: string,
+  executor: string | null,
+): Promise<{ status: string }> {
+  return request(`/api/personnel/tasks/field/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ executor }),
+  })
+}
+
+export function assignAreaTaskExecutor(
+  key: string,
+  executor: string | null,
+): Promise<{ status: string }> {
+  return request(`/api/personnel/tasks/area/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ executor }),
+  })
+}
+
+export function lookupFieldSnapshot(
+  taskKey: string,
+): Promise<{ snapshot_key: string; executor: string | null }> {
+  const params = new URLSearchParams({ task_key: taskKey })
+  return request(`/api/personnel/tasks/field/lookup?${params}`)
 }

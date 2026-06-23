@@ -71,6 +71,14 @@ def can_collect(role: str) -> bool:
     return role != "field"
 
 
+def can_manage_personnel(role: str) -> bool:
+    return role in ("manager", "admin")
+
+
+def can_create_users(role: str) -> bool:
+    return role == "admin"
+
+
 def hood_gid_sql_filter(session: UserSession) -> str:
     if districts_unrestricted(session) or not session.work_zones:
         return ""

@@ -8,6 +8,7 @@ import { findHoodLayerKey } from '../lib/hoodLayer'
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
+import { MapResizeObserver } from './MapResizeObserver'
 import {
   DISTRICT_RAYON_FIELD,
   filterDistrictGeoJson,
@@ -46,14 +47,14 @@ interface MapViewProps {
 const TASKS_AREA_STYLE: L.PathOptions = {
   color: '#0066cc',
   weight: 2,
-  fillOpacity: 0,
+  fillColor: '#0066cc',
+  fillOpacity: 0.125,
 }
 
 const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
   color: '#cc0000',
   weight: 2,
-  fillColor: '#ff6666',
-  fillOpacity: 0.06,
+  fillOpacity: 0,
 }
 
 function DistrictBoundaryLayer({ districtName }: { districtName?: string | null }) {
@@ -478,6 +479,7 @@ export function MapView({
       className="map-container"
       style={{ height: '100%', width: '100%' }}
     >
+      <MapResizeObserver />
       <AttributionControl prefix={LEAFLET_ATTRIBUTION_PREFIX} />
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'

@@ -11,6 +11,7 @@
 - **Получить задачу** — сбор объектов по району (логика как в QGIS-плагине)
 - Запись в `crm.tasks`, скрытие отправленных задач
 - **Исполнить задачу** — сопоставление ID, поля станции, отправка в поле / закрытие
+- **Персонал** (manager/admin) — районы сотрудников и назначение задач
 
 ## Структура
 
@@ -20,6 +21,7 @@ MONITOR_WEBCRM/
 ├── sql/01_crm_schema.sql       # схема crm.*
 ├── sql/05_crm_users.sql        # пользователи crm.users
 ├── sql/06_task_user_audit.sql  # user_created / user_last_edit
+├── sql/07_task_executor.sql    # executor в tasks_field / tasks_area
 ├── backend/                    # FastAPI :8080
 └── frontend/                   # Vite + React :5173
 ```
@@ -38,6 +40,7 @@ ssh -i <path_to_key> -L 5432:127.0.0.1:5432 root@77.222.63.161
 psql -h localhost -U monitor -d monitor -f sql/01_crm_schema.sql
 psql -h localhost -U monitor -d monitor -f sql/05_crm_users.sql
 psql -h localhost -U monitor -d monitor -f sql/06_task_user_audit.sql
+psql -h localhost -U monitor -d monitor -f sql/07_task_executor.sql
 ```
 
 ### 3. Backend
@@ -81,7 +84,15 @@ npm run dev
 | `office` | только «Активные» | wip и done |
 | `manager` | все вкладки | все статусы |
 
-Роль `field` не выполняет сбор из слоёв — только загрузка снимка «В поле».
+Роль `field` не выполняет сбор из слоёв — только загрузка снимка «В поле». Роли `manager` и `admin` имеют доступ к странице **Персонал** (управление районами сотрудников и назначение задач).
+
+## Назначение исполнителя (executor)
+
+В таблицах `crm.tasks_field` и `crm.tasks_area` поле `executor` — логин сотрудника (`crm.users.login`, роли `field` / `office`).
+
+- Менеджер/админ назначает задачи на экране «Персонал».
+- Сотрудник `field` видит только задачи, где `executor` = его логин **или** `executor IS NULL` (неназначенные).
+- Роли `office`, `manager`, `admin` видят все задачи в районе без фильтра по `executor`.
 
 ## Аудит задач
 
@@ -107,6 +118,17 @@ npm run dev
 | GET | `/api/tasks/active?rayon=...` | Активные задачи района |
 | PATCH | `/api/tasks/{key}` | Обновление задачи |
 | POST | `/api/tasks/{key}/send-to-field` | Отправить в поле |
+| GET | `/api/personnel/users` | Список сотрудников (manager/admin) |
+| POST | `/api/personnel/users` | Создать сотрудника (только admin) |
+| PATCH | `/api/personnel/users/{uuid}` | Обновить work_zones |
+| GET | `/api/personnel/districts` | Районы с gid |
+| GET | `/api/personnel/tasks/field` | Задачи tasks_field для назначения |
+| GET | `/api/personnel/tasks/active` | Активные задачи для управления (manager/admin) |
+| GET | `/api/personnel/tasks/clear` | Задачи «разрывие отсутствует» (manager/admin) |
+| GET | `/api/personnel/tasks/area` | Задачи tasks_area для назначения |
+| POST | `/api/personnel/tasks/bulk-assign` | Массовое назначение executor |
+| POST | `/api/personnel/tasks/bulk-status` | Массовая смена статуса (active/field/clear) |
+| POST | `/api/tasks/{key}/return-to-active` | Вернуть задачу из «В поле» в активные |
 
 Все `/api/*` кроме `/api/auth/login` требуют активной сессии.
 
@@ -119,6 +141,11 @@ npm run dev
 5. «Исполнить задачу» → «На карте» для link-поля → «Отправить в поле»
 6. Войти как `vasya` — только 2 района, вкладки «В поле» и «Площадные — на обследовании», без кнопки сбора
 7. Войти как `gena` — «Активные» + площадные wip/done
+8. Войти как `lena` (manager) → «Персонал» → изменить районы `vasya`, назначить задачу из `tasks_field`
+9. Войти как `vasya` — видны только свои и неназначенные задачи в поле
+10. Войти как `admin` → «Персонал» → «Добавить сотрудника» → создать пользователя `test_field` (роль field); войти под новым логином
+11. Войти как `admin` или `lena` → «Персонал» → вкладка «Активные» → выбрать задачи → «В поле» → на карте задачи появляются во вкладке «В поле»
+12. На вкладке «В поле» → выбрать задачи → назначить исполнителя из списка → «В активные» или «Разрывие отсутствует»
 
 ```sql
 SELECT * FROM crm.tasks_field ORDER BY sent_at DESC LIMIT 5;

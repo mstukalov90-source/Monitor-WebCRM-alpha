@@ -9,6 +9,7 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.crm.collector import TaskFeature, TaskGroup, TaskResult, TaskSubgroup
+from app.crm.executor import ensure_executor_column
 from app.crm.user_audit import make_user_audit, user_audit_migration_statements
 
 AREA_LAYER_KEY = "tasks_area"
@@ -49,6 +50,8 @@ def fetch_tasks_area_geojson(
     rayon: str | None = None,
     status: str | None = None,
     limit: int = 5000,
+    *,
+    field_executor_login: str | None = None,
 ) -> dict[str, Any]:
     filters = ['"geom" IS NOT NULL']
     params: list[Any] = []
@@ -59,6 +62,10 @@ def fetch_tasks_area_geojson(
     if status:
         filters.append('"status" = %s')
         params.append(status)
+    if field_executor_login is not None:
+        ensure_executor_column(conn, TASKS_AREA_SCHEMA, TASKS_AREA_TABLE)
+        filters.append('(executor IS NULL OR executor = %s)')
+        params.append(field_executor_login)
 
     where = " AND ".join(filters)
     params.append(limit)
@@ -95,12 +102,19 @@ def collect_tasks_area(
     conn: PgConnection,
     rayon: str,
     status: str,
+    *,
+    field_executor_login: str | None = None,
 ) -> TaskResult:
     if status not in AREA_STATUSES:
         raise ValueError(f"Unknown area status: {status}")
 
     today = date.today()
-    geojson = fetch_tasks_area_geojson(conn, rayon=rayon, status=status)
+    geojson = fetch_tasks_area_geojson(
+        conn,
+        rayon=rayon,
+        status=status,
+        field_executor_login=field_executor_login,
+    )
     features: list[TaskFeature] = []
 
     for item in geojson.get("features", []):

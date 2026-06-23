@@ -124,3 +124,77 @@ class TaskFormFieldsOut(BaseModel):
 
 class SnapshotResultOut(BaseModel):
     status: str
+
+
+class PersonnelUserOut(BaseModel):
+    uuid: str
+    login: str
+    role: str
+    work_zones: list[int]
+    district_names: list[str]
+
+
+class PersonnelUserUpdate(BaseModel):
+    work_zones: list[int]
+
+
+class PersonnelUserCreate(BaseModel):
+    login: str
+    password: str
+    role: str
+    work_zones: list[int] = Field(default_factory=list)
+
+
+class DistrictOptionOut(BaseModel):
+    gid: int
+    rayon: str
+
+
+class AssignableTaskOut(BaseModel):
+    key: str
+    table: str
+    executor: str | None = None
+    type: str | None = None
+    task_key: str | None = None
+    sent_at: str | None = None
+    rayon: str | None = None
+    status: str | None = None
+    area: float | None = None
+    date_survey: str | None = None
+
+
+class TaskExecutorUpdate(BaseModel):
+    executor: str | None = None
+
+
+class BulkAssignRequest(BaseModel):
+    table: str
+    keys: list[str]
+    executor: str | None = None
+
+
+class BulkAssignResultOut(BaseModel):
+    updated: int
+    not_found: int
+
+
+class BulkStatusRequest(BaseModel):
+    task_keys: list[str]
+    target_status: str
+
+
+class BulkStatusFailureOut(BaseModel):
+    task_key: str
+    error: str
+
+
+class BulkStatusResultOut(BaseModel):
+    updated: int
+    skipped: int
+    not_found: int
+    failed: list[BulkStatusFailureOut]
+
+
+class FieldSnapshotLookupOut(BaseModel):
+    snapshot_key: str
+    executor: str | None = None

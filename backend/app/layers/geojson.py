@@ -398,6 +398,42 @@ def list_districts(
         return [row[0] for row in cur.fetchall()]
 
 
+def list_districts_with_gid(
+    conn: PgConnection,
+    schema: str = "odh_export",
+    table: str = "hood",
+    field: str = "rayon",
+    *,
+    exclude_okrug_shor: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    filters = [
+        f'"{field}" IS NOT NULL',
+        f'TRIM("{field}"::text) <> \'\'',
+        '"gid" IS NOT NULL',
+    ]
+    params: list = []
+    if exclude_okrug_shor:
+        placeholders = ", ".join(["%s"] * len(exclude_okrug_shor))
+        filters.append(
+            f'TRIM(COALESCE("okrug_shor", \'\')::text) NOT IN ({placeholders})'
+        )
+        params.extend(exclude_okrug_shor)
+    where = " AND ".join(filters)
+    query = f"""
+        SELECT "gid" AS gid, "{field}" AS rayon
+        FROM "{schema}"."{table}"
+        WHERE {where}
+        ORDER BY "{field}"
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        return [
+            {"gid": int(row["gid"]), "rayon": str(row["rayon"]).strip()}
+            for row in cur.fetchall()
+            if row["gid"] is not None and row["rayon"]
+        ]
+
+
 def geometry_in_district(
     conn: PgConnection,
     geometry: dict[str, Any],

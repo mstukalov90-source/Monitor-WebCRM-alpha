@@ -16,6 +16,10 @@ from app.crm.user_audit import (
 
 logger = logging.getLogger(__name__)
 
+SendTaskSnapshotResult = Literal["inserted", "skipped", "deleted", "not_found"]
+WorkflowStatus = Literal["active", "field", "clear", "done_legal", "done_illegal"]
+WorkflowTarget = Literal["active", "field", "clear"]
+
 TASK_ID_COLUMNS = (
     "photo_uuid",
     "photo_lens",
@@ -367,6 +371,48 @@ def fetch_snapshot_task_keys(
     return keys
 
 
+def fetch_active_task_summaries(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    *,
+    limit: int = 2000,
+) -> List[Tuple[str, str]]:
+    """Активные задачи (не в snapshot-таблицах) — быстрый SQL без загрузки всей crm.tasks."""
+    schema, table = _table_ref(store_cfg)
+    exclusions: List[str] = []
+    for config_key, default_table in _SNAPSHOT_TABLES:
+        snap_schema, snap_table = _snapshot_table_ref(store_cfg, config_key, default_table)
+        exclusions.append(
+            f'NOT EXISTS (SELECT 1 FROM "{snap_schema}"."{snap_table}" s '
+            f'WHERE s.task_key = t.key)'
+        )
+    where = " AND ".join(exclusions) if exclusions else "TRUE"
+    query = f'''
+        SELECT t.key::text, COALESCE(t.type, '') AS type
+        FROM "{schema}"."{table}" t
+        WHERE {where}
+        ORDER BY t.key
+        LIMIT %s
+    '''
+    with conn.cursor() as cur:
+        cur.execute(query, (limit,))
+        return [(str(row[0]), row[1] or "") for row in cur.fetchall()]
+
+
+def fetch_task_types_by_keys(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    keys: List[str],
+) -> Dict[str, str]:
+    if not keys:
+        return {}
+    schema, table = _table_ref(store_cfg)
+    query = f'SELECT key::text, COALESCE(type, \'\') FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
+    with conn.cursor() as cur:
+        cur.execute(query, (keys,))
+        return {str(row[0]): row[1] or "" for row in cur.fetchall()}
+
+
 def fetch_task_keys_index(
     conn: PgConnection,
     store_cfg: Dict[str, Any],
@@ -506,9 +552,11 @@ def send_task_snapshot(
     config_key: str,
     default_table: str,
     login: str,
+    *,
+    ensure_table: bool = True,
 ) -> SendTaskSnapshotResult:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
-    if not ensure_task_snapshot_table(conn, store_cfg, config_key, default_table):
+    if ensure_table and not ensure_task_snapshot_table(conn, store_cfg, config_key, default_table):
         raise RuntimeError(f"Cannot prepare table {schema}.{table}")
 
     if task_key_exists_in_snapshot(conn, store_cfg, config_key, default_table, record.key):
@@ -549,8 +597,12 @@ def send_task_to_field(
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
+    *,
+    ensure_table: bool = True,
 ) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "field_table", "tasks_field", login)
+    return send_task_snapshot(
+        conn, record, store_cfg, "field_table", "tasks_field", login, ensure_table=ensure_table
+    )
 
 
 def send_task_to_done_legal(
@@ -578,8 +630,173 @@ def send_task_to_clear(
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
+    *,
+    ensure_table: bool = True,
 ) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "clear_table", "tasks_clear", login)
+    return send_task_snapshot(
+        conn, record, store_cfg, "clear_table", "tasks_clear", login, ensure_table=ensure_table
+    )
+
+
+def remove_task_from_field(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    schema, table = _snapshot_table_ref(store_cfg, "field_table", "tasks_field")
+    audit = make_user_audit(login)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'DELETE FROM "{schema}"."{table}" WHERE task_key = %s::uuid RETURNING key',
+                (record.key,),
+            )
+            deleted = cur.fetchone()
+            if deleted:
+                tasks_schema, tasks_table = _table_ref(store_cfg)
+                cur.execute(
+                    f"""
+                    UPDATE "{tasks_schema}"."{tasks_table}"
+                    SET user_last_edit = %s::text[]
+                    WHERE key = %s::uuid
+                    """,
+                    (audit, record.key),
+                )
+        conn.commit()
+        return "deleted" if deleted else "not_found"
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def return_task_to_active(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return remove_task_from_field(conn, record, store_cfg, login)
+
+
+def remove_task_from_clear(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    schema, table = _snapshot_table_ref(store_cfg, "clear_table", "tasks_clear")
+    audit = make_user_audit(login)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'DELETE FROM "{schema}"."{table}" WHERE task_key = %s::uuid RETURNING key',
+                (record.key,),
+            )
+            deleted = cur.fetchone()
+            if deleted:
+                tasks_schema, tasks_table = _table_ref(store_cfg)
+                cur.execute(
+                    f"""
+                    UPDATE "{tasks_schema}"."{tasks_table}"
+                    SET user_last_edit = %s::text[]
+                    WHERE key = %s::uuid
+                    """,
+                    (audit, record.key),
+                )
+        conn.commit()
+        return "deleted" if deleted else "not_found"
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def detect_task_workflow_status(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    task_key: str,
+) -> WorkflowStatus:
+    for config_key, default_table, status in (
+        ("field_table", "tasks_field", "field"),
+        ("clear_table", "tasks_clear", "clear"),
+        ("done_legal_table", "tasks_done_legal", "done_legal"),
+        ("done_illegal_table", "tasks_done_illegal", "done_illegal"),
+    ):
+        if task_key_exists_in_snapshot(conn, store_cfg, config_key, default_table, task_key):
+            return status  # type: ignore[return-value]
+    return "active"
+
+
+def fetch_workflow_status_map(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    task_keys: List[str],
+) -> Dict[str, WorkflowStatus]:
+    if not task_keys:
+        return {}
+    status_map: Dict[str, WorkflowStatus] = {key: "active" for key in task_keys}
+    for config_key, default_table, status in (
+        ("field_table", "tasks_field", "field"),
+        ("clear_table", "tasks_clear", "clear"),
+        ("done_legal_table", "tasks_done_legal", "done_legal"),
+        ("done_illegal_table", "tasks_done_illegal", "done_illegal"),
+    ):
+        schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
+        query = f'SELECT task_key::text FROM "{schema}"."{table}" WHERE task_key = ANY(%s::uuid[])'
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query, (task_keys,))
+                for row in cur.fetchall():
+                    key = str(row[0])
+                    if key in status_map and status_map[key] == "active":
+                        status_map[key] = status  # type: ignore[assignment]
+        except Exception:
+            continue
+    return status_map
+
+
+def set_task_workflow_status(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    target: WorkflowTarget,
+    login: str,
+    *,
+    current: WorkflowStatus | None = None,
+    ensure_snapshot: bool = True,
+) -> str:
+    if current is None:
+        current = detect_task_workflow_status(conn, store_cfg, record.key)
+    if current in ("done_legal", "done_illegal"):
+        raise ValueError("Закрытая задача недоступна для смены статуса")
+
+    if target == "active":
+        if current == "active":
+            return "skipped"
+        field_result = remove_task_from_field(conn, record, store_cfg, login)
+        clear_result = remove_task_from_clear(conn, record, store_cfg, login)
+        if field_result == "deleted" or clear_result == "deleted":
+            return "updated"
+        return "not_found"
+
+    if target == "field":
+        if current == "field":
+            return "skipped"
+        if current == "clear":
+            remove_task_from_clear(conn, record, store_cfg, login)
+        result = send_task_to_field(
+            conn, record, store_cfg, login, ensure_table=ensure_snapshot
+        )
+        return "updated" if result in ("inserted", "skipped") else result
+
+    if current == "clear":
+        return "skipped"
+    if current == "field":
+        remove_task_from_field(conn, record, store_cfg, login)
+    result = send_task_to_clear(
+        conn, record, store_cfg, login, ensure_table=ensure_snapshot
+    )
+    return "updated" if result in ("inserted", "skipped") else result
 
 
 def fetch_task(
@@ -625,6 +842,25 @@ def fetch_all_task_records(
     with conn.cursor() as cur:
         cur.execute(query)
         return [TaskRecord.from_row(row) for row in cur.fetchall()]
+
+
+def fetch_tasks_by_keys(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    keys: List[str],
+) -> Dict[str, TaskRecord]:
+    if not keys:
+        return {}
+    schema, table = _table_ref(store_cfg)
+    columns = _task_select_columns_sql()
+    query = f'SELECT {columns} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
+    result: Dict[str, TaskRecord] = {}
+    with conn.cursor() as cur:
+        cur.execute(query, (keys,))
+        for row in cur.fetchall():
+            record = TaskRecord.from_row(row)
+            result[record.key] = record
+    return result
 
 
 def fetch_task_by_key(conn: PgConnection, store_cfg: Dict[str, Any], key: str) -> Optional[TaskRecord]:

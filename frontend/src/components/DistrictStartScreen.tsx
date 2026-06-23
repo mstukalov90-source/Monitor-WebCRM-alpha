@@ -11,12 +11,14 @@ interface DistrictStartScreenProps {
   error: string | null
   progress: CollectProgress | null
   canCollect: boolean
+  canManagePersonnel?: boolean
   userLogin: string
   userRole: UserRole
   onRayonChange: (v: string) => void
   onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
   onLoadFieldTasks: () => void
+  onOpenPersonnel?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -27,12 +29,14 @@ export function DistrictStartScreen({
   error,
   progress,
   canCollect,
+  canManagePersonnel,
   userLogin,
   userRole,
   onRayonChange,
   onApplyDateFilterChange,
   onCollect,
   onLoadFieldTasks,
+  onOpenPersonnel,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -59,6 +63,11 @@ export function DistrictStartScreen({
             <span className="muted">
               {userLogin} ({userRole})
             </span>
+            {canManagePersonnel && onOpenPersonnel && (
+              <button type="button" className="btn" onClick={onOpenPersonnel}>
+                Персонал
+              </button>
+            )}
             <button type="button" className="btn" onClick={() => void onLogout()}>
               Выйти
             </button>

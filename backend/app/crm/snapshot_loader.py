@@ -44,6 +44,7 @@ class SnapshotRow:
     record: TaskRecord
     subgroup_name: str
     group_name: str
+    executor: Optional[str] = None
 
 
 def _snapshot_table_ref(store_cfg: dict, config_key: str, default_table: str) -> tuple[str, str]:
@@ -60,53 +61,117 @@ def _find_group_name(subgroup_name: str, crm_cfg: dict[str, Any]) -> str:
     return ""
 
 
+def _row_to_snapshot_row(
+    row: dict[str, Any],
+    store_cfg: dict[str, Any],
+    crm_cfg: dict[str, Any],
+    *,
+    include_executor: bool,
+) -> SnapshotRow | None:
+    record = TaskRecord(
+        key=str(row["task_key"]),
+        type=row["type"] or "",
+        photo_uuid=row.get("photo_uuid"),
+        photo_lens=row.get("photo_lens"),
+        ogh_id=row.get("ogh_id"),
+        oati_id=row.get("oati_id"),
+        earthwork_id=row.get("earthwork_id"),
+        localwork_id=row.get("localwork_id"),
+        avr_mos_id=row.get("avr_mos_id"),
+        sps=row.get("sps"),
+        kgs=row.get("kgs"),
+        station_avr=row.get("station_avr"),
+    )
+    resolved = _find_subgroup_for_record(record, store_cfg)
+    if resolved is None:
+        return None
+    subgroup_name, _, _ = resolved
+    group_name = row["type"] or _find_group_name(subgroup_name, crm_cfg)
+    sent_at = row.get("sent_at")
+    sent_str = sent_at.isoformat() if isinstance(sent_at, datetime) else str(sent_at or "")
+    return SnapshotRow(
+        snapshot_key=str(row["key"]),
+        task_key=str(row["task_key"]),
+        sent_at=sent_str or None,
+        record=record,
+        subgroup_name=subgroup_name,
+        group_name=group_name,
+        executor=row.get("executor") if include_executor else None,
+    )
+
+
+def _snapshot_select_columns(table: str) -> list[str]:
+    columns = ["key", "task_key", "sent_at", "type"] + list(TASK_ID_COLUMNS) + ["sps", "kgs", "station_avr"]
+    if table == "tasks_field":
+        columns.append("executor")
+    return columns
+
+
 def fetch_snapshot_rows(
     conn: PgConnection,
     store_cfg: dict[str, Any],
     config_key: str,
     default_table: str,
+    *,
+    field_executor_login: str | None = None,
 ) -> list[SnapshotRow]:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     crm_cfg = crm_tasks_config()
-    columns = ["key", "task_key", "sent_at", "type"] + list(TASK_ID_COLUMNS) + ["sps", "kgs", "station_avr"]
-    col_list = ", ".join(f'"{c}"' for c in columns)
-    query = f'SELECT {col_list} FROM "{schema}"."{table}" ORDER BY sent_at DESC'
+    include_executor = table == "tasks_field"
+    if include_executor:
+        from app.crm.executor import ensure_executor_column
+
+        ensure_executor_column(conn, schema, table)
+    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
+
+    filters: list[str] = []
+    params: list[Any] = []
+    if field_executor_login is not None and table == "tasks_field":
+        from app.crm.executor import ensure_executor_column
+
+        ensure_executor_column(conn, schema, table)
+        filters.append("(executor IS NULL OR executor = %s)")
+        params.append(field_executor_login)
+
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    query = f'SELECT {col_list} FROM "{schema}"."{table}" {where} ORDER BY sent_at DESC'
 
     rows: list[SnapshotRow] = []
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query)
+        cur.execute(query, params)
         for row in cur.fetchall():
-            record = TaskRecord(
-                key=str(row["task_key"]),
-                type=row["type"] or "",
-                photo_uuid=row.get("photo_uuid"),
-                photo_lens=row.get("photo_lens"),
-                ogh_id=row.get("ogh_id"),
-                oati_id=row.get("oati_id"),
-                earthwork_id=row.get("earthwork_id"),
-                localwork_id=row.get("localwork_id"),
-                avr_mos_id=row.get("avr_mos_id"),
-                sps=row.get("sps"),
-                kgs=row.get("kgs"),
-                station_avr=row.get("station_avr"),
-            )
-            resolved = _find_subgroup_for_record(record, store_cfg)
-            if resolved is None:
-                continue
-            subgroup_name, _, _ = resolved
-            group_name = row["type"] or _find_group_name(subgroup_name, crm_cfg)
-            sent_at = row.get("sent_at")
-            sent_str = sent_at.isoformat() if isinstance(sent_at, datetime) else str(sent_at or "")
-            rows.append(
-                SnapshotRow(
-                    snapshot_key=str(row["key"]),
-                    task_key=str(row["task_key"]),
-                    sent_at=sent_str or None,
-                    record=record,
-                    subgroup_name=subgroup_name,
-                    group_name=group_name,
-                )
-            )
+            snap = _row_to_snapshot_row(row, store_cfg, crm_cfg, include_executor=include_executor)
+            if snap is not None:
+                rows.append(snap)
+    return rows
+
+
+def fetch_snapshot_rows_by_keys(
+    conn: PgConnection,
+    store_cfg: dict[str, Any],
+    config_key: str,
+    default_table: str,
+    snapshot_keys: list[str],
+) -> list[SnapshotRow]:
+    if not snapshot_keys:
+        return []
+    schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
+    crm_cfg = crm_tasks_config()
+    include_executor = table == "tasks_field"
+    if include_executor:
+        from app.crm.executor import ensure_executor_column
+
+        ensure_executor_column(conn, schema, table)
+    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
+    query = f'SELECT {col_list} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
+
+    rows: list[SnapshotRow] = []
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, (snapshot_keys,))
+        for row in cur.fetchall():
+            snap = _row_to_snapshot_row(row, store_cfg, crm_cfg, include_executor=include_executor)
+            if snap is not None:
+                rows.append(snap)
     return rows
 
 
@@ -159,6 +224,8 @@ def snapshot_row_to_feature(
     attrs = dict(feature_data.get("attributes") or {})
     attrs["_task_key"] = snap.task_key
     attrs["_snapshot_key"] = snap.snapshot_key
+    if snap.executor:
+        attrs["executor"] = snap.executor
     if snap.sent_at:
         attrs["_sent_at"] = snap.sent_at
 
@@ -176,6 +243,8 @@ def collect_snapshot_tasks(
     conn: PgConnection,
     rayon: str,
     source: str,
+    *,
+    field_executor_login: str | None = None,
 ) -> TaskResult:
     if source not in SNAPSHOT_SOURCES:
         raise ValueError(f"Unknown snapshot source: {source}")
@@ -199,7 +268,14 @@ def collect_snapshot_tasks(
             errors=[f"District polygon not found for «{rayon}»"],
         )
 
-    snapshot_rows = fetch_snapshot_rows(conn, store_cfg, config_key, default_table)
+    executor_filter = field_executor_login if source == "field" else None
+    snapshot_rows = fetch_snapshot_rows(
+        conn,
+        store_cfg,
+        config_key,
+        default_table,
+        field_executor_login=executor_filter,
+    )
 
     groups_map: dict[str, dict[str, list[TaskFeature]]] = {}
     for snap in snapshot_rows:
