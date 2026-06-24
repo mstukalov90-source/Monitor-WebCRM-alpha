@@ -42,6 +42,7 @@ export interface AssignableTask {
   status?: string | null
   area?: number | null
   date_survey?: string | null
+  task_number?: string | null
 }
 
 export type WorkflowTargetStatus = 'active' | 'field' | 'clear'
@@ -239,7 +240,7 @@ export const LOCAL_REPAIR_SUBGROUP = 'Текущие локальные ремо
 export interface TaskTableColumn {
   field: string
   label: string
-  format?: 'date' | 'field_observed'
+  format?: 'date' | 'field_observed' | 'area_status' | 'area_hectares'
 }
 
 export const FIELD_OBSERVED_COLUMN: TaskTableColumn = {
@@ -280,9 +281,33 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
 }
 
 export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
+  { field: 'status', label: 'Статус', format: 'area_status' },
+  { field: 'task_number', label: 'Номер задачи' },
+  { field: 'area', label: 'Площадь', format: 'area_hectares' },
   { field: 'date_survey', label: 'Дата обследования', format: 'date' },
   { field: 'executor', label: 'Исполнитель' },
 ]
+
+export const AREA_TASK_STATUS_LABELS: Record<AreaStatus, string> = {
+  free: 'Свободный заказ',
+  wip: 'На обследовании',
+  done: 'Завершённый',
+}
+
+export function formatAreaStatus(value: unknown): string {
+  if (value == null || value === '') return ''
+  const key = String(value).trim().toLowerCase()
+  if (key in AREA_TASK_STATUS_LABELS) return AREA_TASK_STATUS_LABELS[key as AreaStatus]
+  return String(value)
+}
+
+export function formatAreaHectares(value: unknown): string {
+  if (value == null || value === '') return ''
+  const num = Number(value)
+  if (!Number.isFinite(num)) return String(value)
+  const hectares = num / 10_000
+  return `${hectares.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} га`
+}
 
 export function formatFieldObserved(value: unknown): string {
   if (value == null || value === '') return ''
@@ -295,6 +320,8 @@ export function formatFieldObserved(value: unknown): string {
 
 export function formatTaskTableCell(value: unknown, format?: TaskTableColumn['format']): string {
   if (format === 'field_observed') return formatFieldObserved(value)
+  if (format === 'area_status') return formatAreaStatus(value)
+  if (format === 'area_hectares') return formatAreaHectares(value)
   if (value == null || value === '') return ''
   if (format === 'date') {
     const d = new Date(String(value))

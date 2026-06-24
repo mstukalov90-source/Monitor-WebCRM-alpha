@@ -480,7 +480,7 @@ def list_area_tasks_for_assignment(
 
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     query = f"""
-        SELECT key::text, rayon, status, executor, area, date_survey
+        SELECT key::text, rayon, status, executor, area, date_survey, task_number
         FROM crm.tasks_area
         {where}
         ORDER BY loaded_at DESC NULLS LAST
@@ -500,6 +500,7 @@ def list_area_tasks_for_assignment(
                 "status": row.get("status"),
                 "executor": row.get("executor"),
                 "area": row.get("area"),
+                "task_number": row.get("task_number"),
                 "date_survey": date_survey.isoformat()
                 if hasattr(date_survey, "isoformat")
                 else date_survey,

@@ -35,7 +35,9 @@ from app.crm.schemas import (
     PersonnelUserCreate,
     PersonnelUserUpdate,
     TaskExecutorUpdate,
+    TaskNumberUpdate,
 )
+from app.crm.tasks_area import update_area_task_number
 from app.db import get_connection
 
 router = APIRouter(prefix="/api/personnel", tags=["personnel"])
@@ -189,6 +191,19 @@ def patch_area_task_executor(
             result = assign_task_executor(conn, "area", key, body.executor, user.login)
     except PersonnelError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if result == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
+    return {"status": result}
+
+
+@router.patch("/tasks/area/{key}/task-number", response_model=dict[str, str])
+def patch_area_task_number(
+    key: str,
+    body: TaskNumberUpdate,
+    user: UserSession = Depends(require_admin),
+) -> dict[str, str]:
+    with get_connection() as conn:
+        result = update_area_task_number(conn, key, body.task_number, user.login)
     if result == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задача не найдена")
     return {"status": result}

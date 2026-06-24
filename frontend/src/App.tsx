@@ -174,7 +174,7 @@ function App() {
       )
       setEditContext(verified)
     } catch {
-      alert('Задача не найдена в crm.tasks.')
+      alert('Задача не найдена.')
       throw new Error('task not found')
     }
   }, [])
@@ -215,7 +215,6 @@ function App() {
         canCollect={user.can_collect}
         canManagePersonnel={user.can_manage_personnel}
         userLogin={user.login}
-        userRole={user.role}
         onRayonChange={collection.setRayon}
         onApplyDateFilterChange={collection.setApplyDateFilter}
         onCollect={handleCollect}
@@ -237,9 +236,7 @@ function App() {
             <span>
               Район: <strong>{taskResult.district_name}</strong>
             </span>
-            <span className="muted">
-              {user.login} ({user.role})
-            </span>
+            <span className="muted">{user.login}</span>
             <span className="muted">На карте: {taskFeatures.length}</span>
             <button type="button" className="btn" onClick={handleChangeDistrict}>
               Сменить район
@@ -336,6 +333,8 @@ function App() {
         feature={areaViewFeature}
         taskSource={taskSource}
         canManagePersonnel={user.can_manage_personnel}
+        canEditTaskNumber={user.can_create_users}
+        userRole={user.role}
         onClose={() => setAreaViewFeature(null)}
         onSaved={handleRefresh}
       />

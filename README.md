@@ -126,6 +126,8 @@ npm run dev
 | GET | `/api/personnel/tasks/active` | Активные задачи для управления (manager/admin) |
 | GET | `/api/personnel/tasks/clear` | Задачи «разрывие отсутствует» (manager/admin) |
 | GET | `/api/personnel/tasks/area` | Задачи tasks_area для назначения |
+| PATCH | `/api/personnel/tasks/area/{key}` | Назначить executor (площадная) |
+| PATCH | `/api/personnel/tasks/area/{key}/task-number` | Изменить task_number (только admin) |
 | POST | `/api/personnel/tasks/bulk-assign` | Массовое назначение executor |
 | POST | `/api/personnel/tasks/bulk-status` | Массовая смена статуса (active/field/clear) |
 | POST | `/api/tasks/{key}/return-to-active` | Вернуть задачу из «В поле» в активные |

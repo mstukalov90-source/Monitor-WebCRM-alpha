@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchDistricts } from '../api/client'
 import { DistrictPickerMap } from './DistrictPickerMap'
-import type { CollectProgress, UserRole } from '../types'
+import type { CollectProgress } from '../types'
 import { normalizeRayonName } from '../types'
 
 interface DistrictStartScreenProps {
@@ -13,7 +13,6 @@ interface DistrictStartScreenProps {
   canCollect: boolean
   canManagePersonnel?: boolean
   userLogin: string
-  userRole: UserRole
   onRayonChange: (v: string) => void
   onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
@@ -31,7 +30,6 @@ export function DistrictStartScreen({
   canCollect,
   canManagePersonnel,
   userLogin,
-  userRole,
   onRayonChange,
   onApplyDateFilterChange,
   onCollect,
@@ -60,9 +58,7 @@ export function DistrictStartScreen({
       <div className="district-layout">
         <div className="district-card">
           <div className="workspace-meta district-user-meta">
-            <span className="muted">
-              {userLogin} ({userRole})
-            </span>
+            <span className="muted">{userLogin}</span>
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
@@ -76,7 +72,7 @@ export function DistrictStartScreen({
           <h1>Monitor Web CRM</h1>
           <p className="district-hint">
             {canCollect
-              ? 'Выберите район для загрузки задач из crm.tasks'
+              ? 'Выберите район для загрузки задач'
               : 'Выберите район для загрузки задач в поле'}
           </p>
 

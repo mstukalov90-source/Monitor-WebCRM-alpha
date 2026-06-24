@@ -166,6 +166,31 @@ def complete_area_survey(conn: PgConnection, key: str, login: str) -> str:
     return _transition_area_status(conn, key, login=login, from_status="wip", to_status="done")
 
 
+def update_area_task_number(
+    conn: PgConnection,
+    key: str,
+    task_number: str | None,
+    login: str,
+) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    audit = make_user_audit(login)
+    value = task_number.strip() if task_number else None
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE crm.tasks_area SET
+                task_number = %s,
+                user_last_edit = %s::text[]
+            WHERE key = %s::uuid
+            RETURNING key
+            """,
+            (value, audit, key),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return "updated" if row else "not_found"
+
+
 def _transition_area_status(
     conn: PgConnection,
     key: str,

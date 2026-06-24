@@ -945,6 +945,14 @@ body,
   font-size: 0.9rem;
 }
 
+.personnel-task-number-input {
+  width: 100%;
+  min-width: 100px;
+  box-sizing: border-box;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+
 .personnel-table-wrap {
   overflow: auto;
   max-height: 420px;

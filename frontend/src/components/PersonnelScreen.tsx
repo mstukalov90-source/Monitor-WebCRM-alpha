@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AreaTaskNumberField } from './AreaTaskNumberField'
 import {
   bulkAssignPersonnelTasks,
   bulkChangePersonnelTaskStatus,
@@ -532,6 +533,7 @@ export function PersonnelScreen({
                     <th>Район</th>
                     {taskTab === 'field' && <th>Исполнитель</th>}
                     {taskTab === 'area' && <th>Статус</th>}
+                    {taskTab === 'area' && <th>Номер задачи</th>}
                     {taskTab === 'area' && <th>Исполнитель</th>}
                     {(taskTab === 'field' || taskTab === 'clear') && <th>Отправлено</th>}
                   </tr>
@@ -553,6 +555,20 @@ export function PersonnelScreen({
                       <td>{t.rayon ? normalizeRayonName(t.rayon) : '—'}</td>
                       {taskTab === 'field' && <td>{t.executor || '—'}</td>}
                       {taskTab === 'area' && <td>{t.status || '—'}</td>}
+                      {taskTab === 'area' && (
+                        <td>
+                          {canCreateUsers ? (
+                            <AreaTaskNumberField
+                              taskKey={t.key}
+                              value={t.task_number}
+                              onSaved={() => void loadTasks()}
+                              onError={setTasksError}
+                            />
+                          ) : (
+                            t.task_number || '—'
+                          )}
+                        </td>
+                      )}
                       {taskTab === 'area' && <td>{t.executor || '—'}</td>}
                       {(taskTab === 'field' || taskTab === 'clear') && (
                         <td>{t.sent_at ? t.sent_at.slice(0, 10) : '—'}</td>

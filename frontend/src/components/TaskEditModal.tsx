@@ -283,10 +283,10 @@ export function TaskEditModal({
   useEffect(() => {
     if (pickedValue && !isReadonly) {
       setForm((prev) => ({ ...prev, [pickedValue.column]: pickedValue.value }))
-      setMessage(`Выбрано: ${pickedValue.column} = ${pickedValue.value}`)
+      setMessage(`Выбрано: ${labels[pickedValue.column] ?? 'значение'} — ${pickedValue.value}`)
       onPickedConsumed()
     }
-  }, [pickedValue, onPickedConsumed, isReadonly])
+  }, [pickedValue, onPickedConsumed, isReadonly, labels])
 
   useEffect(() => {
     if (legalValidation.isValid) {
@@ -416,7 +416,9 @@ export function TaskEditModal({
         {loading && <p>Загрузка…</p>}
         {record && (
           <>
-            <p className="muted small">Ключ: {record.key}</p>
+            {userRole === 'admin' && (
+              <p className="muted small">Ключ: {record.key}</p>
+            )}
             <p className={fieldObservedBadgeClass(record.field_observed)}>
               Обследовано в поле: {formatFieldObserved(record.field_observed)}
             </p>

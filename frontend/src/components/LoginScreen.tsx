@@ -26,7 +26,7 @@ export function LoginScreen() {
     <div className="district-screen">
       <div className="district-card login-card">
         <h1>Monitor Web CRM</h1>
-        <p className="district-hint">Войдите с учётной записью из crm.users</p>
+        <p className="district-hint">Войдите в систему</p>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <label className="district-field">

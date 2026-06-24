@@ -437,6 +437,16 @@ export function assignAreaTaskExecutor(
   })
 }
 
+export function updateAreaTaskNumber(
+  key: string,
+  taskNumber: string | null,
+): Promise<{ status: string }> {
+  return request(`/api/personnel/tasks/area/${encodeURIComponent(key)}/task-number`, {
+    method: 'PATCH',
+    body: JSON.stringify({ task_number: taskNumber }),
+  })
+}
+
 export function lookupFieldSnapshot(
   taskKey: string,
 ): Promise<{ snapshot_key: string; executor: string | null }> {

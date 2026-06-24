@@ -161,10 +161,15 @@ class AssignableTaskOut(BaseModel):
     status: str | None = None
     area: float | None = None
     date_survey: str | None = None
+    task_number: str | None = None
 
 
 class TaskExecutorUpdate(BaseModel):
     executor: str | None = None
+
+
+class TaskNumberUpdate(BaseModel):
+    task_number: str | None = None
 
 
 class BulkAssignRequest(BaseModel):
