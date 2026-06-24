@@ -18,12 +18,10 @@
 ```
 MONITOR_WEBCRM/
 ├── shared/layers_config.json   # конфиг слоёв и CRM
-├── sql/01_crm_schema.sql       # схема crm.*
-├── sql/05_crm_users.sql        # пользователи crm.users
-├── sql/06_task_user_audit.sql  # user_created / user_last_edit
-├── sql/07_task_executor.sql    # executor в tasks_field / tasks_area
+├── sql/                        # миграции схемы crm.*
+├── deploy/                     # nginx, systemd, deploy.sh, документация по VPS
 ├── backend/                    # FastAPI :8080
-└── frontend/                   # Vite + React :5173
+└── frontend/                   # Vite + React :5173 (dev) / nginx (prod)
 ```
 
 ## Локальный запуск
@@ -37,10 +35,8 @@ ssh -i <path_to_key> -L 5432:127.0.0.1:5432 root@77.222.63.161
 ### 2. Миграция CRM (если схема ещё не создана)
 
 ```bash
-psql -h localhost -U monitor -d monitor -f sql/01_crm_schema.sql
-psql -h localhost -U monitor -d monitor -f sql/05_crm_users.sql
-psql -h localhost -U monitor -d monitor -f sql/06_task_user_audit.sql
-psql -h localhost -U monitor -d monitor -f sql/07_task_executor.sql
+export PGPASSWORD=<пароль>
+for f in sql/0*.sql; do psql -h localhost -U monitor -d monitor -f "$f"; done
 ```
 
 ### 3. Backend
@@ -156,3 +152,27 @@ SELECT * FROM crm.tasks_field ORDER BY sent_at DESC LIMIT 5;
 ## Совместимость
 
 WEBCRM и QGIS-плагин используют одну схему `crm` в БД `monitor`. Задачи, созданные в вебе, видны в QGIS и наоборот. Правила ролей совпадают с QGIS-плагином.
+
+## Деплой на VPS
+
+Продакшен: **http://77.222.63.161**
+
+На сервере nginx отдаёт статику фронтенда, `/api/*` проксируется на FastAPI. PostgreSQL и фотографии (`/opt/monitor/downloaded_photo`) находятся на том же VPS — SSH-туннель и SFTP не нужны.
+
+Полная документация: **[deploy/README.md](deploy/README.md)** — архитектура, первичная установка, обновление, устранение неполадок.
+
+Кратко:
+
+```bash
+# Первичная установка — см. deploy/README.md
+cd /opt/monitor/webcrm && ./deploy/deploy.sh   # обновление
+```
+
+Ключевые настройки production `.env` (шаблон: [`deploy/.env.production.example`](deploy/.env.production.example)):
+
+| Переменная | Production |
+|------------|------------|
+| `DB_HOST` | `localhost` |
+| `PHOTO_SFTP_ENABLED` | `false` |
+| `PHOTO_STORAGE_DIR` | `/opt/monitor/downloaded_photo` |
+| `CORS_ORIGINS` | `http://77.222.63.161` |

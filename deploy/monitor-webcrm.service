@@ -1,0 +1,15 @@
+[Unit]
+Description=MONITOR Web CRM API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/monitor/webcrm/backend
+EnvironmentFile=/opt/monitor/webcrm/backend/.env
+ExecStart=/opt/monitor/webcrm/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
