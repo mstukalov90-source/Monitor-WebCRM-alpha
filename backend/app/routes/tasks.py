@@ -32,6 +32,7 @@ from app.crm.snapshot_loader import collect_snapshot_tasks, snapshot_result_to_d
 from app.crm.schemas import (
     CollectLayerRequest,
     CollectTasksRequest,
+    FieldPhotosResultOut,
     SnapshotResultOut,
     TaskFormFieldsOut,
     TaskRecordOut,
@@ -53,6 +54,7 @@ from app.crm.store import (
     update_task_record,
 )
 from app.crm.link_resolver import resolve_link_layer_infos, resolve_linked_features
+from app.photos.field_photo import _field_image_url, fetch_field_photos
 from app.crm.tasks_area import (
     AREA_STATUSES,
     collect_tasks_area,
@@ -393,6 +395,18 @@ def get_task_form_fields(
         link_fields=link,
         labels=TASK_COLUMN_LABELS,
     )
+
+
+@router.get("/tasks/{key}/field-photos")
+def get_task_field_photos(key: str) -> FieldPhotosResultOut:
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        result = fetch_field_photos(conn, key)
+    data = result.to_dict(_field_image_url)
+    return FieldPhotosResultOut(**data)
 
 
 @router.get("/tasks/{key}/linked-features")

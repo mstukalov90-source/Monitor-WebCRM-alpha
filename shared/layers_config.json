@@ -604,6 +604,10 @@
           {
             "name": "Разрытия из полигонов ОГХ",
             "layers": ["Разрытия из паспортов ОГХ"]
+          },
+          {
+            "name": "Полевые данные",
+            "source": "field_data"
           }
         ]
       },
@@ -678,6 +682,13 @@
         "Аварийно-восстановительные работы": {
           "task_column": "avr_mos_id",
           "source_field": "em_call_reg_num"
+        },
+        "Полевые данные": {
+          "source": "field_data",
+          "reports_schema": "mggt_field",
+          "reports_table": "reports",
+          "reports_tasks_key": "tasks_key",
+          "reports_geometry": "point"
         }
       }
     }
@@ -698,6 +709,7 @@
     "stroymonitoring": "СтройМониторинг",
     "lens": "Данные Объектив",
     "genplan": "Данные ГенПлан (photo_meta, order)",
-    "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрывия (ogh-disruption)"
+    "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрывия (ogh-disruption)",
+    "mggt_field": "Полевые отчёты МГГТ Field (reports)"
   }
 }

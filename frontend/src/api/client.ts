@@ -11,6 +11,7 @@ import type {
   CollectLayerChunk,
   CollectProgress,
   AiPhotoMeta,
+  FieldPhotosResult,
   AssignableTask,
   AuthUser,
   DistrictOption,
@@ -334,6 +335,15 @@ export function fetchAiPhotoMeta(uuid: string): Promise<AiPhotoMeta> {
 
 export function aiPhotoImageUrl(uuid: string): string {
   return `/api/photos/ai/${encodeURIComponent(uuid)}/image`
+}
+
+export function fetchFieldPhotos(taskKey: string): Promise<FieldPhotosResult> {
+  return request(`/api/tasks/${encodeURIComponent(taskKey)}/field-photos`)
+}
+
+export function fieldPhotoImageUrl(filePath: string): string {
+  const name = filePath.split(/[/\\]/).pop() ?? filePath
+  return `/api/photos/field/${encodeURIComponent(name)}/image`
 }
 
 export function fetchPersonnelUsers(): Promise<PersonnelUser[]> {

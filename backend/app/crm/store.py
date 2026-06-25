@@ -32,6 +32,7 @@ TASK_ID_COLUMNS = (
 
 CRM_GROUP_DISRUPTIONS = "Разрытия"
 CRM_GROUP_ORDERS = "Новые ордера ОАТИ, АВР и земляные работы"
+FIELD_DATA_SUBGROUP = "Полевые данные"
 
 LINK_COLUMNS_BY_GROUP = {
     CRM_GROUP_DISRUPTIONS: (
@@ -49,7 +50,7 @@ _TASK_SELECT_COLUMNS = (
     ("key", "type")
     + TASK_ID_COLUMNS
     + STATION_COLUMNS
-    + ("field_observed",)
+    + ("field_observed", "is_field_data")
     + USER_AUDIT_COLUMNS
 )
 
@@ -71,6 +72,7 @@ TASK_COLUMN_LABELS = {
     "kgs": "КГС",
     "station_avr": "АВР",
     "field_observed": "Обследовано в поле",
+    "is_field_data": "Полевые данные",
     "user_created": "Создал",
     "user_last_edit": "Изменил",
 }
@@ -114,6 +116,9 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     ) + (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS field_observed BOOLEAN",
+    ) + (
+        f'ALTER TABLE "{schema}"."{table}" '
+        f"ADD COLUMN IF NOT EXISTS is_field_data BOOLEAN NOT NULL DEFAULT false",
     ) + user_audit_migration_statements(schema, table)
 
 
@@ -173,6 +178,7 @@ class TaskRecord:
     kgs: Optional[str] = None
     station_avr: Optional[str] = None
     field_observed: Optional[bool] = None
+    is_field_data: Optional[bool] = None
     user_created: Optional[List[str]] = None
     user_last_edit: Optional[List[str]] = None
 
@@ -191,6 +197,7 @@ class TaskRecord:
             "kgs": self.kgs,
             "station_avr": self.station_avr,
             "field_observed": self.field_observed,
+            "is_field_data": self.is_field_data,
             "user_created": self.user_created,
             "user_last_edit": self.user_last_edit,
         }
@@ -200,8 +207,11 @@ class TaskRecord:
         field_observed = None
         if len(row) > 12 and row[12] is not None:
             field_observed = bool(row[12])
-        user_created = list(row[13]) if len(row) > 13 and row[13] is not None else None
-        user_last_edit = list(row[14]) if len(row) > 14 and row[14] is not None else None
+        is_field_data = None
+        if len(row) > 13 and row[13] is not None:
+            is_field_data = bool(row[13])
+        user_created = list(row[14]) if len(row) > 14 and row[14] is not None else None
+        user_last_edit = list(row[15]) if len(row) > 15 and row[15] is not None else None
         return cls(
             key=str(row[0]),
             type=row[1] or "",
@@ -216,6 +226,7 @@ class TaskRecord:
             kgs=_normalize_id_value(row[10]) if len(row) > 10 else None,
             station_avr=_normalize_id_value(row[11]) if len(row) > 11 else None,
             field_observed=field_observed,
+            is_field_data=is_field_data,
             user_created=user_created,
             user_last_edit=user_last_edit,
         )
@@ -504,12 +515,14 @@ def filter_sent_tasks_from_result(task_result, conn: PgConnection, store_cfg: Di
         for subgroup in group.subgroups:
             kept = []
             for feat in subgroup.features:
-                lookup = resolve_task_lookup(subgroup.name, feat.attributes, store_cfg)
-                if lookup:
-                    task_key = task_index.get(lookup)
-                    if task_key and task_key in snapshot_keys:
-                        hidden += 1
-                        continue
+                task_key = feat.task_key
+                if not task_key:
+                    lookup = resolve_task_lookup(subgroup.name, feat.attributes, store_cfg)
+                    if lookup:
+                        task_key = task_index.get(lookup)
+                if task_key and task_key in snapshot_keys:
+                    hidden += 1
+                    continue
                 kept.append(feat)
             subgroup.features = kept
     return hidden
@@ -571,13 +584,14 @@ def send_task_snapshot(
         ["task_key", "type"]
         + list(TASK_ID_COLUMNS)
         + list(STATION_COLUMNS)
+        + ["is_field_data"]
         + list(USER_AUDIT_COLUMNS)
     )
     values = [record.key, task_type] + [
         _normalize_id_value(getattr(record, col)) for col in TASK_ID_COLUMNS
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
-    ] + [audit, audit]
+    ] + [bool(record.is_field_data)] + [audit, audit]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -822,7 +836,12 @@ def _find_subgroup_for_record(
     store_cfg: dict[str, Any],
 ) -> Optional[tuple[str, str, str]]:
     """Вернуть (subgroup_name, task_column, business_id)."""
+    if record.is_field_data:
+        return FIELD_DATA_SUBGROUP, "", ""
+
     for subgroup_name, mapping in store_cfg.get("subgroups", {}).items():
+        if mapping.get("source") == "field_data":
+            continue
         task_column = mapping.get("task_column")
         if task_column not in TASK_ID_COLUMNS:
             continue
@@ -891,9 +910,15 @@ def resolve_primary_task_column(
     store_cfg: Dict[str, Any],
     record: Optional[TaskRecord] = None,
 ) -> Optional[str]:
+    if subgroup_name == FIELD_DATA_SUBGROUP:
+        return None
+    if record is not None and record.is_field_data:
+        return None
     if subgroup_name:
         mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
         if mapping:
+            if mapping.get("source") == "field_data":
+                return None
             task_column = mapping.get("task_column")
             if task_column in TASK_ID_COLUMNS:
                 return task_column
@@ -910,6 +935,11 @@ def task_form_field_groups(
     store_cfg: Dict[str, Any],
     record: TaskRecord,
 ) -> Tuple[List[str], List[str]]:
+    if record.is_field_data or subgroup_name == FIELD_DATA_SUBGROUP:
+        readonly: List[str] = ["type", "is_field_data"]
+        link = list(LINK_COLUMNS_BY_GROUP.get(group_name or "", ()))
+        return readonly, link
+
     primary = resolve_primary_task_column(subgroup_name, store_cfg, record)
     readonly: List[str] = ["type"]
     if primary:

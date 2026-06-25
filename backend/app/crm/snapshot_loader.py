@@ -19,7 +19,14 @@ from app.crm.collector import (
     task_result_to_dict,
 )
 from app.crm.link_resolver import find_subgroup_cfg
+from app.crm.field_data_loader import (
+    FIELD_DATA_LAYER_KEY,
+    FIELD_DATA_LAYER_NAME,
+    fetch_field_report_row,
+    report_row_to_attributes,
+)
 from app.crm.store import (
+    FIELD_DATA_SUBGROUP,
     TASK_ID_COLUMNS,
     TaskRecord,
     _find_subgroup_for_record,
@@ -81,6 +88,7 @@ def _row_to_snapshot_row(
         sps=row.get("sps"),
         kgs=row.get("kgs"),
         station_avr=row.get("station_avr"),
+        is_field_data=bool(row.get("is_field_data")) if row.get("is_field_data") is not None else None,
     )
     resolved = _find_subgroup_for_record(record, store_cfg)
     if resolved is None:
@@ -101,7 +109,11 @@ def _row_to_snapshot_row(
 
 
 def _snapshot_select_columns(table: str) -> list[str]:
-    columns = ["key", "task_key", "sent_at", "type"] + list(TASK_ID_COLUMNS) + ["sps", "kgs", "station_avr"]
+    columns = (
+        ["key", "task_key", "sent_at", "type"]
+        + list(TASK_ID_COLUMNS)
+        + ["sps", "kgs", "station_avr", "is_field_data"]
+    )
     if table == "tasks_field":
         columns.append("executor")
     return columns
@@ -183,6 +195,54 @@ def _subgroup_cfg(subgroup_name: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _field_data_snapshot_to_feature(
+    conn: PgConnection,
+    snap: SnapshotRow,
+    store_cfg: dict[str, Any],
+    district_wkt: str,
+    metric_srid: int,
+) -> Optional[TaskFeature]:
+    import json
+
+    report_row = fetch_field_report_row(conn, snap.task_key, store_cfg)
+    if not report_row:
+        return None
+
+    geometry = report_row.pop("_geometry", None)
+    if isinstance(geometry, str):
+        geometry = json.loads(geometry)
+    if not geometry:
+        return None
+
+    from app.layers.geojson import geometry_in_district
+
+    if not geometry_in_district(conn, geometry, district_wkt, metric_srid):
+        return None
+
+    attrs = report_row_to_attributes(report_row)
+    attrs["_task_key"] = snap.task_key
+    attrs["_snapshot_key"] = snap.snapshot_key
+    attrs["field_observed"] = bool(snap.record.field_observed)
+    attrs["is_field_data"] = True
+    if snap.executor:
+        attrs["executor"] = snap.executor
+    if snap.sent_at:
+        attrs["_sent_at"] = snap.sent_at
+    for col in ("oati_id", "earthwork_id", "localwork_id", "avr_mos_id", "sps", "kgs", "station_avr"):
+        value = getattr(snap.record, col, None)
+        if value is not None and str(value).strip():
+            attrs[col] = str(value).strip()
+
+    return TaskFeature(
+        layer_name=FIELD_DATA_LAYER_NAME,
+        layer_key=FIELD_DATA_LAYER_KEY,
+        attributes=attrs,
+        geometry=geometry,
+        task_key=snap.task_key,
+        sent_at=snap.sent_at,
+    )
+
+
 def snapshot_row_to_feature(
     conn: PgConnection,
     snap: SnapshotRow,
@@ -190,6 +250,11 @@ def snapshot_row_to_feature(
     district_wkt: str,
     metric_srid: int,
 ) -> Optional[TaskFeature]:
+    if snap.record.is_field_data or snap.subgroup_name == FIELD_DATA_SUBGROUP:
+        return _field_data_snapshot_to_feature(
+            conn, snap, store_cfg, district_wkt, metric_srid
+        )
+
     registry = get_registry()
     mapping = store_cfg.get("subgroups", {}).get(snap.subgroup_name)
     if not mapping:

@@ -98,6 +98,7 @@ class TaskRecordOut(BaseModel):
     kgs: str | None = None
     station_avr: str | None = None
     field_observed: bool | None = None
+    is_field_data: bool | None = None
     user_created: list[str] | None = None
     user_last_edit: list[str] | None = None
 
@@ -203,3 +204,19 @@ class BulkStatusResultOut(BaseModel):
 class FieldSnapshotLookupOut(BaseModel):
     snapshot_key: str
     executor: str | None = None
+
+
+class FieldPhotoOut(BaseModel):
+    id: int
+    file_path: str
+    banner: bool
+    created_at: str | None = None
+    photo_key: str | None = None
+    username: str | None = None
+    label: str | None = None
+    image_url: str
+
+
+class FieldPhotosResultOut(BaseModel):
+    photos: list[FieldPhotoOut] = Field(default_factory=list)
+    banner_missing: bool = False

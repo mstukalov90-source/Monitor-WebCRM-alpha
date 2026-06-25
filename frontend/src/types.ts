@@ -255,10 +255,26 @@ export interface AiPhotoMeta {
   url: string
 }
 
+export interface FieldPhoto {
+  id: number
+  file_path: string
+  banner: boolean
+  created_at: string | null
+  label: string | null
+  image_url: string
+}
+
+export interface FieldPhotosResult {
+  photos: FieldPhoto[]
+  banner_missing: boolean
+}
+
 export const AI_PHOTO_SUBGROUP = 'Фото после обработки ИИ'
 export const AI_PHOTO_LAYER_KEY = 'фотографии_после_обработки_ии'
 export const LENS_PHOTO_SUBGROUP = 'Фото разрытий и строек'
 export const OGH_DISRUPTION_SUBGROUP = 'Разрытия из полигонов ОГХ'
+export const FIELD_DATA_SUBGROUP = 'Полевые данные'
+export const FIELD_DATA_LAYER_KEY = 'field_data'
 export const OATI_ORDERS_SUBGROUP = 'Ордера ОАТИ'
 export const EARTHWORK_SUBGROUP = 'Уведомления на земляные работы'
 export const AVR_SUBGROUP = 'Аварийно-восстановительные работы'
@@ -304,6 +320,9 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
   [LOCAL_REPAIR_SUBGROUP]: [
     { field: 'customer', label: 'Заказчик' },
     { field: 'global_id', label: 'Номер data.mos' },
+  ],
+  [FIELD_DATA_SUBGROUP]: [
+    { field: 'created_at', label: 'Дата обследования', format: 'date' },
   ],
 }
 
@@ -453,7 +472,11 @@ export function resolveTaskTableColumns(
           .map((field) => ({ field, label: field }))
       })()
 
-  if (!isArea && !cols.some((col) => col.field === 'field_observed')) {
+  if (
+    !isArea &&
+    subgroupName !== FIELD_DATA_SUBGROUP &&
+    !cols.some((col) => col.field === 'field_observed')
+  ) {
     return [FIELD_OBSERVED_COLUMN, ...cols]
   }
   return cols
@@ -529,6 +552,7 @@ export interface TaskRecord {
   kgs?: string | null
   station_avr?: string | null
   field_observed?: boolean | null
+  is_field_data?: boolean | null
   user_created?: string[] | null
   user_last_edit?: string[] | null
 }

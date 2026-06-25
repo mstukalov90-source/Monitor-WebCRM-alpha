@@ -4,6 +4,7 @@ import type { TaskFeatureOnMap } from './taskFeatures'
 import {
   AREA_STATUS_COLORS,
   AREA_TASK_STATUS_LABELS,
+  FIELD_DATA_LAYER_KEY,
   type AreaStatus,
   type LayerConfig,
   type Symbology,
@@ -111,11 +112,16 @@ export function buildMapLegendItems(
 
     const cfg = layerConfigByKey.get(feat.layer_key)
     const geometryType = cfg?.geometry_type ?? 'point'
+    const symbology =
+      cfg?.symbology ??
+      (feat.layer_key === FIELD_DATA_LAYER_KEY
+        ? { color: '#7B1FA2', size: 7, marker_type: 'circle' }
+        : {})
     items.push({
       id: feat.layer_key,
       label: cfg?.display_name ?? feat.layer_name,
       kind: geometryType === 'line' ? 'line' : geometryType === 'polygon' ? 'polygon' : 'point',
-      symbology: cfg?.symbology ?? {},
+      symbology,
     })
   }
 

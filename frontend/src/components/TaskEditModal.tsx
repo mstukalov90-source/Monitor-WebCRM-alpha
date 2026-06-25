@@ -13,6 +13,7 @@ import {
   updateTask,
 } from '../api/client'
 import { TaskExecutorAssign } from './TaskExecutorAssign'
+import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
 import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, isFieldObserved, TASK_SOURCE_LABELS } from '../types'
@@ -134,6 +135,7 @@ export function TaskEditModal({
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
   const [photoUuid, setPhotoUuid] = useState<string | null>(null)
+  const [fieldMaterialsKey, setFieldMaterialsKey] = useState<string | null>(null)
   const autoPhotoOpenedRef = useRef(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
@@ -159,6 +161,9 @@ export function TaskEditModal({
     canMarkDisruptionAbsent ||
     canReturnToActive
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
+  const showFieldMaterials =
+    isFieldObserved(record?.field_observed) ||
+    isFieldObserved(context?.feature.attributes.field_observed)
   const requiresLegalLink = context?.groupName !== CRM_GROUP_ORDERS
   const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
   const legalValidation = getLegalValidation(form, legalLinkFields, record)
@@ -175,6 +180,14 @@ export function TaskEditModal({
       return
     }
     setPhotoUuid(uuid)
+  }
+
+  const handleViewFieldMaterials = () => {
+    if (!record?.key) {
+      setMessage('Ключ задачи не найден')
+      return
+    }
+    setFieldMaterialsKey(record.key)
   }
 
   const openPhotoIfAvailable = () => {
@@ -216,6 +229,7 @@ export function TaskEditModal({
       setPendingStatusAction(null)
       setShowLegalRequirements(false)
       setPhotoUuid(null)
+      setFieldMaterialsKey(null)
       autoPhotoOpenedRef.current = false
       onPickModeChange(false, [])
       return
@@ -223,6 +237,7 @@ export function TaskEditModal({
 
     autoPhotoOpenedRef.current = false
     setPhotoUuid(null)
+    setFieldMaterialsKey(null)
     setPendingStatusAction(null)
     setShowLegalRequirements(false)
     let cancelled = false
@@ -551,6 +566,16 @@ export function TaskEditModal({
                       Просмотр фотографии
                     </button>
                   )}
+                  {showFieldMaterials && record && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleViewFieldMaterials}
+                      disabled={loading}
+                    >
+                      Просмотр полевых материалов
+                    </button>
+                  )}
                   {!isReadonly && (
                     <button type="button" className="btn" onClick={handleSave} disabled={loading}>
                       Сохранить
@@ -673,6 +698,12 @@ export function TaskEditModal({
                 }
               : undefined
           }
+        />
+      )}
+      {fieldMaterialsKey && (
+        <FieldMaterialsModal
+          taskKey={fieldMaterialsKey}
+          onClose={() => setFieldMaterialsKey(null)}
         />
       )}
     </>

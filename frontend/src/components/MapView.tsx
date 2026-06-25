@@ -9,6 +9,7 @@ import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapSty
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
+import { FIELD_DATA_LAYER_KEY } from '../types'
 import { MapResizeObserver } from './MapResizeObserver'
 import {
   DISTRICT_RAYON_FIELD,
@@ -332,8 +333,11 @@ function TaskFeaturesLayer({
     sortedFeatures.forEach((taskFeat) => {
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
       const isAreaLayer = taskFeat.layer_key === 'tasks_area'
+      const isFieldDataLayer = taskFeat.layer_key === FIELD_DATA_LAYER_KEY
       const geomType = layerCfg?.geometry_type ?? (isAreaLayer ? 'polygon' : 'point')
-      const symbology = layerCfg?.symbology ?? {}
+      const symbology =
+        layerCfg?.symbology ??
+        (isFieldDataLayer ? { color: '#7B1FA2', size: 7, marker_type: 'circle' } : {})
       const areaInteractive = isAreaLayer && showAreaPopups
 
       if (isAreaLayer && areaRenderer && taskFeat.geometry) {

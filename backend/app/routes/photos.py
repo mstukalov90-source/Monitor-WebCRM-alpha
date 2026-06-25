@@ -18,6 +18,7 @@ from app.photos.ai_photo import (
     read_local_photo,
     resolve_ai_photo,
 )
+from app.photos.field_photo import read_field_photo
 from app.photos.sftp_fetch import (
     SftpPhotoError,
     ensure_photo_cached,
@@ -105,6 +106,25 @@ def get_ai_photo_image(uuid: str) -> Response:
 
     return Response(
         content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/field/{file_name}/image")
+def get_field_photo_image(file_name: str) -> Response:
+    settings = get_settings()
+    safe_name = Path(file_name).name
+    if not safe_name or safe_name != file_name.strip():
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
+    try:
+        local_path, media_type = read_field_photo(safe_name, settings)
+    except SftpPhotoError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return FileResponse(
+        path=local_path,
         media_type=media_type,
         headers={"Cache-Control": "private, max-age=3600"},
     )
