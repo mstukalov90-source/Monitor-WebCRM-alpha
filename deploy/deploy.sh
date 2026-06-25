@@ -21,4 +21,4 @@ rm -rf /var/www/monitor-webcrm/*
 cp -r dist/* /var/www/monitor-webcrm/
 
 systemctl restart monitor-webcrm
-echo "Deploy complete. Check: curl http://127.0.0.1:8080/health"
+echo "Deploy complete. Check backend: curl http://127.0.0.1:8080/health"

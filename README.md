@@ -155,24 +155,30 @@ WEBCRM и QGIS-плагин используют одну схему `crm` в Б
 
 ## Деплой на VPS
 
-Продакшен: **http://77.222.63.161**
+Два независимых продакшен-сервера:
 
-На сервере nginx отдаёт статику фронтенда, `/api/*` проксируется на FastAPI. PostgreSQL и фотографии (`/opt/monitor/downloaded_photo`) находятся на том же VPS — SSH-туннель и SFTP не нужны.
+| Сервер | URL |
+|--------|-----|
+| Публичный | http://77.222.63.161 |
+| Внутренний (RED OS) | http://172.21.198.219 |
 
-Полная документация: **[deploy/README.md](deploy/README.md)** — архитектура, первичная установка, обновление, устранение неполадок.
+На каждом: nginx → FastAPI, PostgreSQL и фото (`/opt/monitor/downloaded_photo`) на том же хосте.
 
-Кратко:
+Полная документация: **[deploy/README.md](deploy/README.md)**
 
 ```bash
-# Первичная установка — см. deploy/README.md
-cd /opt/monitor/webcrm && ./deploy/deploy.sh   # обновление
+# Первичная установка на сервере
+./deploy/install.sh <SERVER_IP> <DB_PASSWORD>
+
+# Обновление
+cd /opt/monitor/webcrm && ./deploy/deploy.sh
 ```
 
-Ключевые настройки production `.env` (шаблон: [`deploy/.env.production.example`](deploy/.env.production.example)):
+Ключевые настройки production `.env` (шаблон: [`deploy/.env.production.template`](deploy/.env.production.template)):
 
 | Переменная | Production |
 |------------|------------|
 | `DB_HOST` | `localhost` |
 | `PHOTO_SFTP_ENABLED` | `false` |
 | `PHOTO_STORAGE_DIR` | `/opt/monitor/downloaded_photo` |
-| `CORS_ORIGINS` | `http://77.222.63.161` |
+| `CORS_ORIGINS` | `http://<SERVER_IP>` |
