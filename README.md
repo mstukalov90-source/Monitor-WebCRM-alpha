@@ -167,10 +167,10 @@ WEBCRM и QGIS-плагин используют одну схему `crm` в Б
 Полная документация: **[deploy/README.md](deploy/README.md)**
 
 ```bash
-# Первичная установка на сервере
-./deploy/install.sh <SERVER_IP> <DB_PASSWORD>
+# Обновление обоих серверов (VPN для 172.21.198.219)
+./deploy/update-both.sh
 
-# Обновление
+# Или на одном сервере
 cd /opt/monitor/webcrm && ./deploy/deploy.sh
 ```
 

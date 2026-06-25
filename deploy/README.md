@@ -42,7 +42,8 @@ nginx :80  ── GET /          ──► /var/www/monitor-webcrm/  (стати
 | Файл | Назначение |
 |------|------------|
 | `install.sh` | Первичная установка: `./deploy/install.sh <IP> [DB_PASSWORD]` |
-| `deploy.sh` | Обновление уже установленного сервера |
+| `deploy.sh` | Обновление: миграции SQL + pip + build + restart |
+| `update-both.sh` | rsync + deploy на оба VPS с локальной машины (нужен VPN для 172.21.198.219) |
 | `nginx.conf.template` | Шаблон nginx (`__SERVER_IP__`) |
 | `.env.production.template` | Шаблон `.env` (`__SERVER_IP__`, `__DB_PASSWORD__`, `__AUTH_SECRET_KEY__`) |
 | `monitor-webcrm.service` | systemd unit |
@@ -120,11 +121,24 @@ curl -s -X POST http://<SERVER_IP>/api/auth/login \
 
 ## Обновление
 
+На сервере:
+
 ```bash
 cd /opt/monitor/webcrm && ./deploy/deploy.sh
 ```
 
-Через rsync (без git на сервере):
+`deploy.sh` автоматически:
+- дописывает в `.env` недостающие ключи (`FIELD_PHOTO_*`)
+- прогоняет все `sql/0*.sql` (идемпотентно)
+- обновляет Python-зависимости, собирает frontend, перезапускает backend
+
+**Оба сервера с локальной машины** (VPN для 172.21.198.219):
+
+```bash
+./deploy/update-both.sh
+```
+
+Через rsync вручную (без git на сервере):
 
 ```bash
 rsync -avz ... ./ root@<SERVER_IP>:/opt/monitor/webcrm/
