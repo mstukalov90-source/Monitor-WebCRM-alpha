@@ -31,6 +31,16 @@ export function areaBasePathStyle(attrs: Record<string, unknown>): L.PathOptions
   }
 }
 
+export function areaOutlinePathStyle(attrs: Record<string, unknown>): L.PathOptions {
+  const color = AREA_STATUS_COLORS[areaStatusFromAttributes(attrs)]
+  return {
+    color,
+    weight: 2,
+    fillOpacity: 0,
+    fill: false,
+  }
+}
+
 export function areaHatchPathStyle(attrs: Record<string, unknown>): L.PathOptions {
   const hatchId = parseAreaAnalise(attrs.analise) ? HATCH_GREEN_ID : HATCH_RED_ID
   return {
@@ -96,6 +106,7 @@ export function addAreaGeometryToGroup(
   renderer: L.SVG,
   options?: {
     interactive?: boolean
+    outlineOnly?: boolean
     onEachFeature?: (layer: L.Layer) => void
   },
 ): void {
@@ -108,7 +119,7 @@ export function addAreaGeometryToGroup(
   const geoJsonOptions = {
     renderer,
     interactive: options?.interactive ?? false,
-    style: () => areaBasePathStyle(attrs),
+    style: () => (options?.outlineOnly ? areaOutlinePathStyle(attrs) : areaBasePathStyle(attrs)),
     onEachFeature: options?.onEachFeature
       ? (_f: GeoJSON.Feature, layer: L.Layer) => options.onEachFeature?.(layer)
       : undefined,
@@ -117,9 +128,11 @@ export function addAreaGeometryToGroup(
   const baseLayer = L.geoJSON(feature, geoJsonOptions)
   baseLayer.addTo(group)
 
-  L.geoJSON(feature, {
-    renderer,
-    interactive: false,
-    style: () => areaHatchPathStyle(attrs),
-  } as L.GeoJSONOptions).addTo(group)
+  if (!options?.outlineOnly) {
+    L.geoJSON(feature, {
+      renderer,
+      interactive: false,
+      style: () => areaHatchPathStyle(attrs),
+    } as L.GeoJSONOptions).addTo(group)
+  }
 }

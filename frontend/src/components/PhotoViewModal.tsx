@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { aiPhotoImageUrl, fetchAiPhotoMeta } from '../api/client'
-import type { AiPhotoMeta } from '../types'
+import { formatTaskTableCell, type AiPhotoMeta } from '../types'
 
 const CLEAR_CONFIRM_MESSAGE = 'Отметить задачу: разрытие отсутствует?'
 
@@ -72,7 +72,7 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
   if (!uuid) return null
 
   const titleParts = [
-    meta?.date ? `Дата: ${meta.date}` : null,
+    meta?.date ? `Дата: ${formatTaskTableCell(meta.date, 'date')}` : null,
     meta?.image_name ?? null,
   ].filter(Boolean)
 

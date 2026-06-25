@@ -64,6 +64,15 @@ def require_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
     return user
 
 
+def require_office_or_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
+    if user.role not in ("office", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступно только для роли office",
+        )
+    return user
+
+
 def check_rayon(user: UserSession, rayon: str) -> None:
     with get_connection() as conn:
         if not is_rayon_allowed(conn, user, rayon):

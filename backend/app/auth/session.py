@@ -32,7 +32,7 @@ DEFAULT_TASK_SOURCE: dict[str, TaskSource] = {
 ROLE_AREA_STATUSES: dict[str, list[str]] = {
     "admin": ["free", "wip", "done"],
     "field": ["wip"],
-    "office": ["wip", "done"],
+    "office": ["free", "wip", "done"],
     "manager": ["free", "wip", "done"],
 }
 

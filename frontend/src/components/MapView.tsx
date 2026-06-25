@@ -39,6 +39,8 @@ interface MapViewProps {
   showTasksAreaOverlay?: boolean
   showAreaPolygons?: boolean
   showAreaPopups?: boolean
+  areaOverlayOrder?: TaskFeature | null
+  areaOverlayFilled?: boolean
   taskHighlight?: TaskHighlight | null
   pickMode: boolean
   pickLayers: LinkLayerInfo[]
@@ -110,6 +112,52 @@ function DistrictBoundaryLayer({ districtName }: { districtName?: string | null 
       }
     }
   }, [map, layerKey, districtName])
+
+  return null
+}
+
+function SelectedAreaOrderLayer({ order, filled = false }: { order: TaskFeature; filled?: boolean }) {
+  const map = useMap()
+  const layerRef = useRef<L.FeatureGroup | null>(null)
+  const rendererRef = useRef<L.SVG | null>(null)
+
+  useEffect(() => {
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current)
+      layerRef.current = null
+    }
+    if (rendererRef.current) {
+      map.removeLayer(rendererRef.current)
+      rendererRef.current = null
+    }
+    if (!order.geometry) return
+
+    const renderer = createAreaSvgRenderer(map)
+    rendererRef.current = renderer
+    const group = L.featureGroup()
+    addAreaGeometryToGroup(group, order.geometry, order.attributes, renderer, {
+      interactive: false,
+      outlineOnly: !filled,
+    })
+    group.addTo(map)
+    layerRef.current = group
+
+    const bounds = group.getBounds()
+    if (bounds.isValid()) {
+      map.flyToBounds(bounds, { padding: [40, 40] })
+    }
+
+    return () => {
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current)
+        layerRef.current = null
+      }
+      if (rendererRef.current) {
+        map.removeLayer(rendererRef.current)
+        rendererRef.current = null
+      }
+    }
+  }, [map, order, filled])
 
   return null
 }
@@ -595,6 +643,8 @@ export function MapView({
   showTasksAreaOverlay = true,
   showAreaPolygons = true,
   showAreaPopups = false,
+  areaOverlayOrder = null,
+  areaOverlayFilled = false,
   taskHighlight,
   pickMode,
   pickLayers,
@@ -621,7 +671,12 @@ export function MapView({
       <DistrictBoundaryLayer districtName={districtName} />
       {!pickMode && (
         <>
-          {showTasksAreaOverlay && <TasksAreaLayer districtName={districtName} />}
+          {areaOverlayOrder && (
+            <SelectedAreaOrderLayer order={areaOverlayOrder} filled={areaOverlayFilled} />
+          )}
+          {showTasksAreaOverlay && !areaOverlayOrder && (
+            <TasksAreaLayer districtName={districtName} />
+          )}
           <TaskFeaturesLayer
             taskFeatures={taskFeatures}
             layerConfigByKey={layerConfigByKey}

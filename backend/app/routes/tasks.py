@@ -14,8 +14,10 @@ from app.auth.deps import (
     get_current_user,
     require_can_collect,
     require_manager_or_admin,
+    require_office_or_admin,
 )
 from app.auth.session import UserSession, allowed_area_statuses, districts_unrestricted
+from app.auth.service import fetch_allowed_rayons
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.collector import (
     build_collect_plan,
@@ -59,6 +61,10 @@ from app.crm.tasks_area import (
     send_area_to_survey,
     release_area_from_survey,
     complete_area_survey,
+    complete_area_analise,
+    pause_area_analise,
+    start_area_analise,
+    analise_lock_holder,
     tasks_area_result_to_dict,
 )
 from app.db import get_connection
@@ -88,6 +94,12 @@ def _field_executor_login(user: UserSession) -> str | None:
     if user.role == "field":
         return user.login
     return None
+
+
+def _area_rayons_filter(conn, user: UserSession) -> list[str] | None:
+    if districts_unrestricted(user):
+        return None
+    return fetch_allowed_rayons(conn, user)
 
 
 def _require_field_task_manager(user: UserSession, conn, store_cfg, task_key: str) -> None:
@@ -535,14 +547,63 @@ def post_area_complete_survey(
     return {"status": result_status}
 
 
+@router.post("/crm/tasks-area/{key}/start-analise")
+def post_area_start_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = start_area_analise(conn, key, user.login)
+        if result_status == "conflict":
+            holder = analise_lock_holder(conn, key) or "другой пользователь"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Заказ в работе у пользователя {holder}",
+            )
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return {"status": result_status}
+
+
+@router.post("/crm/tasks-area/{key}/pause-analise")
+def post_area_pause_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = pause_area_analise(conn, key, user.login)
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found or not in progress")
+    return {"status": result_status}
+
+
+@router.post("/crm/tasks-area/{key}/complete-analise")
+def post_area_complete_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = complete_area_analise(conn, key, user.login)
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return {"status": result_status}
+
+
 @router.get("/crm/tasks-area")
 def get_tasks_area(
     rayon: str = Query("", description="Filter by district name"),
     status: str = Query("", description="Optional status filter"),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
+    rayons_filter: list[str] | None = None
     if rayon:
         check_rayon(user, rayon)
+    else:
+        with get_connection() as conn:
+            rayons_filter = _area_rayons_filter(conn, user)
+        if rayons_filter is not None and not rayons_filter:
+            return {"type": "FeatureCollection", "features": []}
+
     statuses: list[str] | None = None
     if status:
         if status not in AREA_STATUSES:
@@ -561,6 +622,7 @@ def get_tasks_area(
             rayon=rayon or None,
             status=status or None,
             statuses=statuses,
+            rayons=rayons_filter if not rayon else None,
             field_executor_login=_field_executor_login(user),
         )
 

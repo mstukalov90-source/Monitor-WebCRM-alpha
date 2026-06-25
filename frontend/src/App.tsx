@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { collectTasksByLayers, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea } from './api/client'
+import { collectTasksByLayers, completeAreaAnalise, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea, pauseAreaAnalise, startAreaAnalise } from './api/client'
+import { AreaOrderPickerModal } from './components/AreaOrderPickerModal'
 import { AreaTaskViewModal } from './components/AreaTaskViewModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
@@ -15,6 +16,7 @@ import { useWorkspaceLayout } from './hooks/useWorkspaceLayout'
 import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
+import { countTaskResultFeatures, filterTaskResultByArea } from './lib/filterTasksByArea'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
 import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, TaskFilterSelection, AppView } from './types'
 import { isAreaSource, TASK_FILTER_NONE } from './types'
@@ -38,6 +40,12 @@ function App() {
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
   const [lastTaskSource, setLastTaskSource] = useState<TaskSource>('active')
   const [taskFilterSelection, setTaskFilterSelection] = useState<TaskFilterSelection>(TASK_FILTER_NONE)
+  const [officeAreaOrder, setOfficeAreaOrder] = useState<TaskFeature | null>(null)
+  const [officeOrderPickerOpen, setOfficeOrderPickerOpen] = useState(false)
+  const [areaOrders, setAreaOrders] = useState<TaskFeature[]>([])
+  const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
+
+  const isOfficeUser = user?.role === 'office'
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
@@ -68,21 +76,53 @@ function App() {
   const allLayers = useMemo(() => flattenLayers(layerGroups), [layerGroups])
   const layerConfigByKey = useMemo(() => layerConfigMap(allLayers), [allLayers])
 
+  const loadAreaOrders = useCallback(async (rayon: string) => {
+    setAreaOrdersLoading(true)
+    try {
+      const result = await fetchTasksArea(rayon)
+      setAreaOrders(
+        result.groups.flatMap((group) => group.subgroups.flatMap((subgroup) => subgroup.features)),
+      )
+    } catch (e) {
+      setLoadError(String(e))
+      setAreaOrders([])
+    } finally {
+      setAreaOrdersLoading(false)
+    }
+  }, [])
+
+  const officeFilteredTaskResult = useMemo((): TaskResult | null => {
+    if (!taskResult || !officeAreaOrder) return null
+    return filterTaskResultByArea(taskResult, officeAreaOrder)
+  }, [taskResult, officeAreaOrder])
+
+  const officeRemainingCount = useMemo(
+    () => countTaskResultFeatures(officeFilteredTaskResult),
+    [officeFilteredTaskResult],
+  )
+
   const taskFeatures = useMemo(() => {
     if (!taskResult) return []
     if (isAreaSource(taskSource)) return allTaskFeaturesOnMap(taskResult.groups)
     if (taskFilterSelection === TASK_FILTER_NONE) return []
+    if (isOfficeUser) {
+      if (!officeAreaOrder || !officeFilteredTaskResult) return []
+      return allTaskFeaturesOnMap(officeFilteredTaskResult.groups)
+    }
     return allTaskFeaturesOnMap(taskResult.groups)
-  }, [taskResult, taskSource, taskFilterSelection])
+  }, [taskResult, taskSource, taskFilterSelection, isOfficeUser, officeAreaOrder, officeFilteredTaskResult])
 
   const panelTaskResult = useMemo((): TaskResult | null => {
     if (!taskResult) return null
     if (isAreaSource(taskSource)) return taskResult
+    if (isOfficeUser && officeAreaOrder && officeFilteredTaskResult) {
+      return officeFilteredTaskResult
+    }
     if (taskFilterSelection === TASK_FILTER_NONE) {
       return { ...taskResult, groups: [] }
     }
     return taskResult
-  }, [taskResult, taskSource, taskFilterSelection])
+  }, [taskResult, taskSource, taskFilterSelection, isOfficeUser, officeAreaOrder, officeFilteredTaskResult])
 
   const loadTasks = useCallback(
     async (rayon: string, source: TaskSource, applyDateFilter: boolean) => {
@@ -124,11 +164,20 @@ function App() {
     if (result) {
       setTaskResult(result)
       setTaskSource('active')
-      setTaskFilterSelection(TASK_FILTER_NONE)
       setAreaPolygonsOnMap(false)
       setPanelHighlight(null)
       setModalHighlight(null)
       setLoadError(null)
+      setOfficeAreaOrder(null)
+
+      if (isOfficeUser && collection.rayon) {
+        setTaskFilterSelection('active')
+        setOfficeOrderPickerOpen(true)
+        void loadAreaOrders(collection.rayon)
+      } else {
+        setTaskFilterSelection(TASK_FILTER_NONE)
+        setOfficeOrderPickerOpen(false)
+      }
     }
   }
 
@@ -181,6 +230,9 @@ function App() {
     setPickMode(false)
     setPickLayers([])
     setLoadError(null)
+    setOfficeAreaOrder(null)
+    setOfficeOrderPickerOpen(false)
+    setAreaOrders([])
   }
 
   const handlePickModeChange = useCallback((active: boolean, layers: LinkLayerInfo[]) => {
@@ -244,6 +296,7 @@ function App() {
         progress={collection.progress}
         canCollect={user.can_collect}
         canManagePersonnel={user.can_manage_personnel}
+        showAreaOrders={user.allowed_task_sources.includes('area')}
         userLogin={user.login}
         onRayonChange={collection.setRayon}
         onApplyDateFilterChange={collection.setApplyDateFilter}
@@ -274,6 +327,11 @@ function App() {
   }
 
   const handleOrdersToggle = async () => {
+    if (isOfficeUser && officeAreaOrder) {
+      setAreaPolygonsOnMap((value) => !value)
+      return
+    }
+
     if (areaPolygonsOnMap) {
       setAreaPolygonsOnMap(false)
       if (isAreaSource(taskSource)) {
@@ -284,10 +342,100 @@ function App() {
         }
       }
     } else {
+      setTaskFilterSelection(TASK_FILTER_NONE)
       setAreaPolygonsOnMap(true)
+      setPanelHighlight(null)
+      setModalHighlight(null)
       await handleSourceChange('area')
     }
   }
+
+  const handleOfficeOrderSelect = async (order: TaskFeature) => {
+    const key = order.task_key ?? String(order.attributes.key ?? '')
+    if (!key) return
+
+    setSourceLoading(true)
+    setLoadError(null)
+    try {
+      await startAreaAnalise(key)
+      setOfficeAreaOrder(order)
+      setOfficeOrderPickerOpen(false)
+      setAreaPolygonsOnMap(false)
+      setTaskFilterSelection('active')
+      setTaskSource('active')
+      setPanelHighlight(null)
+      setModalHighlight(null)
+      setEditContext(null)
+      if (taskResult?.district_name) {
+        await loadAreaOrders(taskResult.district_name)
+      }
+    } catch (e) {
+      const message = String(e)
+      setLoadError(message)
+      alert(message)
+      if (taskResult?.district_name) {
+        await loadAreaOrders(taskResult.district_name)
+      }
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
+  const handlePauseOfficeOrder = async () => {
+    if (!officeAreaOrder || !taskResult?.district_name) return
+    const key = officeAreaOrder.task_key ?? String(officeAreaOrder.attributes.key ?? '')
+    if (!key) return
+
+    setSourceLoading(true)
+    setLoadError(null)
+    try {
+      await pauseAreaAnalise(key)
+      await loadAreaOrders(taskResult.district_name)
+      setOfficeAreaOrder(null)
+      setAreaPolygonsOnMap(false)
+      setOfficeOrderPickerOpen(true)
+      setPanelHighlight(null)
+      setModalHighlight(null)
+      setEditContext(null)
+    } catch (e) {
+      setLoadError(String(e))
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
+  const handleCompleteOfficeOrder = async () => {
+    if (!officeAreaOrder || !taskResult?.district_name) return
+    const key = officeAreaOrder.task_key ?? String(officeAreaOrder.attributes.key ?? '')
+    if (!key) return
+
+    setSourceLoading(true)
+    setLoadError(null)
+    try {
+      await completeAreaAnalise(key)
+      await loadTasks(taskResult.district_name, 'active', collection.applyDateFilter)
+      await loadAreaOrders(taskResult.district_name)
+      setOfficeAreaOrder(null)
+      setAreaPolygonsOnMap(false)
+      setOfficeOrderPickerOpen(true)
+      setPanelHighlight(null)
+      setModalHighlight(null)
+      setEditContext(null)
+    } catch (e) {
+      setLoadError(String(e))
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
+  const handleRefreshAreaOrders = () => {
+    if (taskResult?.district_name) {
+      void loadAreaOrders(taskResult.district_name)
+    }
+  }
+
+  const officeAwaitingOrder = isOfficeUser && !officeAreaOrder
+  const officeWorking = isOfficeUser && officeAreaOrder != null
 
   return (
     <div className="app">
@@ -323,6 +471,16 @@ function App() {
           ordersOnMap={areaPolygonsOnMap}
           onOrdersToggle={() => void handleOrdersToggle()}
           loading={loading}
+          showPauseOrder={officeWorking}
+          onPauseOrder={() => void handlePauseOfficeOrder()}
+          showCompleteOrder={officeWorking}
+          canCompleteOrder={officeRemainingCount === 0}
+          completeOrderTitle={
+            officeRemainingCount > 0
+              ? `В полигоне остались активные задачи: ${officeRemainingCount}`
+              : 'Завершить анализ заказа'
+          }
+          onCompleteOrder={() => void handleCompleteOfficeOrder()}
         />
         {loadError && <div className="error-banner">{loadError}</div>}
       </header>
@@ -336,7 +494,10 @@ function App() {
           <TaskPanel
             taskResult={panelTaskResult}
             taskSource={taskSource}
-            tasksHidden={taskFilterSelection === TASK_FILTER_NONE && !isAreaSource(taskSource)}
+            tasksHidden={
+              (taskFilterSelection === TASK_FILTER_NONE && !isAreaSource(taskSource)) ||
+              officeAwaitingOrder
+            }
             onExecute={handleExecuteTask}
             onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}
@@ -366,6 +527,8 @@ function App() {
                 showTasksAreaOverlay={areaPolygonsOnMap && !isAreaSource(taskSource)}
                 showAreaPolygons={areaPolygonsOnMap}
                 showAreaPopups={isAreaSource(taskSource)}
+                areaOverlayOrder={officeWorking ? officeAreaOrder : null}
+                areaOverlayFilled={officeWorking && areaPolygonsOnMap}
                 taskHighlight={activeHighlight}
                 pickMode={pickMode}
                 pickLayers={pickLayers}
@@ -405,6 +568,16 @@ function App() {
         onClose={() => setAreaViewFeature(null)}
         onSaved={handleRefresh}
       />
+
+      {isOfficeUser && officeOrderPickerOpen && (
+        <AreaOrderPickerModal
+          orders={areaOrders}
+          currentUserLogin={user.login}
+          loading={areaOrdersLoading || loading}
+          onSelect={(order) => void handleOfficeOrderSelect(order)}
+          onRefresh={handleRefreshAreaOrders}
+        />
+      )}
 
     </div>
   )

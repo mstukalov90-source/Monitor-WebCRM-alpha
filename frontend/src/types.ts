@@ -337,6 +337,62 @@ export function formatAreaHectares(value: unknown): string {
   return `${hectares.toLocaleString('ru-RU', { maximumFractionDigits: 2 })} га`
 }
 
+export function isAnaliseComplete(value: unknown): boolean {
+  if (value == null) return false
+  if (typeof value === 'boolean') return value
+  const text = String(value).trim().toLowerCase()
+  return ['true', 't', '1', 'yes', 'да'].includes(text)
+}
+
+export function formatAnaliseStatus(value: unknown): 'Обработан' | 'Не обработан' {
+  return isAnaliseComplete(value) ? 'Обработан' : 'Не обработан'
+}
+
+export type AnaliseWorkflowStatus = 'idle' | 'in_progress' | 'paused' | 'done'
+
+function hasAnaliseTimestamp(value: unknown): boolean {
+  return value != null && String(value).trim() !== ''
+}
+
+export function analiseWorkflowStatus(attrs: Record<string, unknown>): AnaliseWorkflowStatus {
+  if (isAnaliseComplete(attrs.analise)) return 'done'
+  if (hasAnaliseTimestamp(attrs.analise_paused_at)) return 'paused'
+  if (hasAnaliseTimestamp(attrs.analise_started_at)) return 'in_progress'
+  return 'idle'
+}
+
+export function canStartAnalise(attrs: Record<string, unknown>, currentLogin: string): boolean {
+  const status = analiseWorkflowStatus(attrs)
+  const login = currentLogin.trim()
+  const startedBy = String(attrs.analise_started_by ?? '').trim()
+  if (status === 'idle') return true
+  if (status === 'paused') return startedBy === login
+  if (status === 'in_progress') return startedBy === login
+  return false
+}
+
+export function formatAnaliseWorkflowStatus(attrs: Record<string, unknown>): string {
+  const status = analiseWorkflowStatus(attrs)
+  if (status === 'done') return 'Обработан'
+  if (status === 'idle') return 'Не обработан'
+  if (status === 'paused') return 'Приостановлен'
+  const by = String(attrs.analise_started_by ?? '').trim()
+  return by ? `В работе (${by})` : 'В работе'
+}
+
+export function analiseWorkflowStatusClass(status: AnaliseWorkflowStatus): string {
+  switch (status) {
+    case 'done':
+      return 'area-analise-status-done'
+    case 'in_progress':
+      return 'area-analise-status-progress'
+    case 'paused':
+      return 'area-analise-status-paused'
+    default:
+      return 'area-analise-status-pending'
+  }
+}
+
 export function formatFieldObserved(value: unknown): string {
   if (value == null || value === '') return ''
   if (typeof value === 'boolean') return value ? 'Да' : 'Нет'
@@ -344,6 +400,13 @@ export function formatFieldObserved(value: unknown): string {
   if (['true', 't', '1', 'yes', 'да'].includes(text)) return 'Да'
   if (['false', 'f', '0', 'no', 'нет'].includes(text)) return 'Нет'
   return String(value)
+}
+
+export function isFieldObserved(value: unknown): boolean {
+  if (value == null || value === '') return false
+  if (typeof value === 'boolean') return value
+  const text = String(value).trim().toLowerCase()
+  return ['true', 't', '1', 'yes', 'да'].includes(text)
 }
 
 export function formatTaskTableCell(value: unknown, format?: TaskTableColumn['format']): string {

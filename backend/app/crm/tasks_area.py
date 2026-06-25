@@ -27,6 +27,16 @@ AREA_STATUS_LABELS = {
 TASKS_AREA_SCHEMA = "crm"
 TASKS_AREA_TABLE = "tasks_area"
 _tasks_area_audit_ready = False
+_analise_audit_ready = False
+
+ANALISE_AUDIT_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("analise_started_by", "TEXT"),
+    ("analise_started_at", "TIMESTAMPTZ"),
+    ("analise_finished_by", "TEXT"),
+    ("analise_finished_at", "TIMESTAMPTZ"),
+    ("analise_paused_by", "TEXT"),
+    ("analise_paused_at", "TIMESTAMPTZ"),
+)
 
 
 def ensure_tasks_area_audit_columns(conn: PgConnection) -> bool:
@@ -50,6 +60,7 @@ def fetch_tasks_area_geojson(
     rayon: str | None = None,
     status: str | None = None,
     statuses: list[str] | None = None,
+    rayons: list[str] | None = None,
     limit: int = 5000,
     *,
     field_executor_login: str | None = None,
@@ -60,6 +71,9 @@ def fetch_tasks_area_geojson(
     if rayon:
         filters.append('"rayon" = %s')
         params.append(rayon)
+    elif rayons:
+        filters.append('"rayon" = ANY(%s)')
+        params.append(rayons)
     if status:
         filters.append('"status" = %s')
         params.append(status)
@@ -216,6 +230,196 @@ def release_area_from_survey(conn: PgConnection, key: str, login: str) -> str:
 
 def complete_area_survey(conn: PgConnection, key: str, login: str) -> str:
     return _transition_area_status(conn, key, login=login, from_status="wip", to_status="done")
+
+
+def ensure_analise_audit_columns(conn: PgConnection) -> bool:
+    global _analise_audit_ready
+    if _analise_audit_ready:
+        return True
+    try:
+        with conn.cursor() as cur:
+            for col_name, col_type in ANALISE_AUDIT_COLUMNS:
+                cur.execute(
+                    f'ALTER TABLE "{TASKS_AREA_SCHEMA}"."{TASKS_AREA_TABLE}" '
+                    f'ADD COLUMN IF NOT EXISTS "{col_name}" {col_type}'
+                )
+        conn.commit()
+        _analise_audit_ready = True
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+
+
+def _fetch_analise_state(conn: PgConnection, key: str) -> dict[str, Any] | None:
+    ensure_analise_audit_columns(conn)
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                analise,
+                analise_started_by,
+                analise_started_at,
+                analise_paused_by,
+                analise_paused_at
+            FROM crm.tasks_area
+            WHERE key = %s::uuid
+            """,
+            (key,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    ensure_analise_audit_columns(conn)
+    state = _fetch_analise_state(conn, key)
+    if state is None:
+        return "not_found"
+    if state.get("analise") is True:
+        return "skipped"
+
+    started_at = state.get("analise_started_at")
+    started_by = (state.get("analise_started_by") or "").strip()
+    paused_at = state.get("analise_paused_at")
+    login = login.strip()
+
+    if started_at is None:
+        audit = make_user_audit(login)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE crm.tasks_area SET
+                    analise_started_by = %s,
+                    analise_started_at = NOW(),
+                    analise_paused_by = NULL,
+                    analise_paused_at = NULL,
+                    user_last_edit = %s::text[]
+                WHERE key = %s::uuid
+                  AND COALESCE(analise, FALSE) = FALSE
+                  AND analise_started_at IS NULL
+                RETURNING key
+                """,
+                (login, audit, key),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return "updated" if row else "not_found"
+
+    if paused_at is not None:
+        if started_by != login:
+            return "conflict"
+        audit = make_user_audit(login)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE crm.tasks_area SET
+                    analise_paused_by = NULL,
+                    analise_paused_at = NULL,
+                    user_last_edit = %s::text[]
+                WHERE key = %s::uuid
+                  AND COALESCE(analise, FALSE) = FALSE
+                  AND analise_paused_at IS NOT NULL
+                  AND analise_started_by = %s
+                RETURNING key
+                """,
+                (audit, key, login),
+            )
+            row = cur.fetchone()
+        conn.commit()
+        return "updated" if row else "not_found"
+
+    if started_by == login:
+        return "skipped"
+    return "conflict"
+
+
+def pause_area_analise(conn: PgConnection, key: str, login: str) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    ensure_analise_audit_columns(conn)
+    audit = make_user_audit(login.strip())
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE crm.tasks_area SET
+                analise_paused_by = %s,
+                analise_paused_at = NOW(),
+                user_last_edit = %s::text[]
+            WHERE key = %s::uuid
+              AND COALESCE(analise, FALSE) = FALSE
+              AND analise_started_at IS NOT NULL
+              AND analise_paused_at IS NULL
+              AND analise_started_by = %s
+            RETURNING key
+            """,
+            (login.strip(), audit, key, login.strip()),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    if row:
+        return "updated"
+
+    state = _fetch_analise_state(conn, key)
+    if state is None:
+        return "not_found"
+    if state.get("analise") is True:
+        return "skipped"
+    if state.get("analise_paused_at") is not None:
+        return "skipped"
+    return "not_found"
+
+
+def analise_lock_holder(conn: PgConnection, key: str) -> str | None:
+    state = _fetch_analise_state(conn, key)
+    if state is None:
+        return None
+    if state.get("analise") is True:
+        return None
+    if state.get("analise_started_at") is None:
+        return None
+    if state.get("analise_paused_at") is not None:
+        holder = (state.get("analise_started_by") or "").strip()
+        return holder or None
+    holder = (state.get("analise_started_by") or "").strip()
+    return holder or None
+
+
+def complete_area_analise(conn: PgConnection, key: str, login: str) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    ensure_analise_audit_columns(conn)
+    audit = make_user_audit(login)
+    login = login.strip()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE crm.tasks_area SET
+                analise = TRUE,
+                analise_finished_by = %s,
+                analise_finished_at = NOW(),
+                analise_paused_by = NULL,
+                analise_paused_at = NULL,
+                user_last_edit = %s::text[]
+            WHERE key = %s::uuid
+              AND COALESCE(analise, FALSE) = FALSE
+              AND analise_started_by = %s
+              AND analise_started_at IS NOT NULL
+              AND analise_paused_at IS NULL
+            RETURNING key
+            """,
+            (login, audit, key, login),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    if row:
+        return "updated"
+
+    state = _fetch_analise_state(conn, key)
+    if state is None:
+        return "not_found"
+    if state.get("analise") is True:
+        return "skipped"
+    return "not_found"
 
 
 def update_area_task_number(

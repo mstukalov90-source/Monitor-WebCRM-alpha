@@ -217,6 +217,24 @@ export function completeAreaSurvey(key: string): Promise<{ status: string }> {
   })
 }
 
+export function startAreaAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/start-analise`, {
+    method: 'POST',
+  })
+}
+
+export function pauseAreaAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/pause-analise`, {
+    method: 'POST',
+  })
+}
+
+export function completeAreaAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/complete-analise`, {
+    method: 'POST',
+  })
+}
+
 export function fetchTask(key: string): Promise<TaskRecord> {
   return request(`/api/tasks/${key}`)
 }
@@ -273,6 +291,13 @@ export function lookupFeature(
     business_id: businessId,
   })
   return request(`/api/features/lookup?${params}`)
+}
+
+export function fetchAllTasksAreaGeoJson(status?: AreaStatus): Promise<GeoJSON.FeatureCollection> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  const qs = params.toString()
+  return request(`/api/crm/tasks-area${qs ? `?${qs}` : ''}`)
 }
 
 export function fetchTasksAreaGeoJson(

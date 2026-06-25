@@ -15,7 +15,7 @@ import {
 import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { PhotoViewModal } from './PhotoViewModal'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
-import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
+import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, isFieldObserved, TASK_SOURCE_LABELS } from '../types'
 
 type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active'
 
@@ -179,6 +179,12 @@ export function TaskEditModal({
 
   const openPhotoIfAvailable = () => {
     if (!context || !isAiPhoto || autoPhotoOpenedRef.current) return
+    if (
+      isFieldObserved(record?.field_observed) ||
+      isFieldObserved(context.feature.attributes.field_observed)
+    ) {
+      return
+    }
     const uuid =
       record?.photo_uuid?.trim() ||
       aiPhotoUuidFromAttributes(context.feature.attributes) ||
@@ -251,7 +257,7 @@ export function TaskEditModal({
 
   useEffect(() => {
     openPhotoIfAvailable()
-  }, [context, isAiPhoto, record?.key, record?.photo_uuid])
+  }, [context, isAiPhoto, record?.key, record?.photo_uuid, record?.field_observed])
 
   useEffect(() => {
     if (!context || taskSource !== 'field' || !record) {

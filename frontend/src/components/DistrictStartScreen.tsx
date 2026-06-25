@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react'
-import { fetchDistricts } from '../api/client'
+import { useEffect, useMemo, useState } from 'react'
+import { fetchAllTasksAreaGeoJson, fetchDistricts } from '../api/client'
 import { DistrictPickerMap } from './DistrictPickerMap'
+import {
+  areaOrderDisplayName,
+  geoJsonToAreaTaskFeatures,
+  groupAreaOrdersByRayon,
+} from '../lib/areaOrders'
 import type { CollectProgress } from '../types'
-import { normalizeRayonName } from '../types'
+import { formatAnaliseWorkflowStatus, analiseWorkflowStatus, analiseWorkflowStatusClass, normalizeRayonName } from '../types'
 
 interface DistrictStartScreenProps {
   rayon: string
@@ -12,6 +17,7 @@ interface DistrictStartScreenProps {
   progress: CollectProgress | null
   canCollect: boolean
   canManagePersonnel?: boolean
+  showAreaOrders?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
   onApplyDateFilterChange: (v: boolean) => void
@@ -29,6 +35,7 @@ export function DistrictStartScreen({
   progress,
   canCollect,
   canManagePersonnel,
+  showAreaOrders = false,
   userLogin,
   onRayonChange,
   onApplyDateFilterChange,
@@ -38,12 +45,51 @@ export function DistrictStartScreen({
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
+  const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
+  const [areaOrdersError, setAreaOrdersError] = useState<string | null>(null)
+  const [areaOrdersByRayon, setAreaOrdersByRayon] = useState<ReturnType<typeof groupAreaOrdersByRayon>>([])
 
   useEffect(() => {
     fetchDistricts()
       .then((d) => setDistricts(d.districts))
       .catch(() => setDistricts([]))
   }, [])
+
+  useEffect(() => {
+    if (!showAreaOrders) {
+      setAreaOrdersByRayon([])
+      setAreaOrdersError(null)
+      return
+    }
+
+    let cancelled = false
+    setAreaOrdersLoading(true)
+    setAreaOrdersError(null)
+
+    fetchAllTasksAreaGeoJson()
+      .then((geojson) => {
+        if (cancelled) return
+        const orders = geoJsonToAreaTaskFeatures(geojson)
+        setAreaOrdersByRayon(groupAreaOrdersByRayon(orders))
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setAreaOrdersByRayon([])
+        setAreaOrdersError(String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setAreaOrdersLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [showAreaOrders])
+
+  const totalOrdersCount = useMemo(
+    () => areaOrdersByRayon.reduce((sum, group) => sum + group.orders.length, 0),
+    [areaOrdersByRayon],
+  )
 
   const handleSubmit = () => {
     if (canCollect) {
@@ -118,6 +164,49 @@ export function DistrictStartScreen({
                 ? 'Получить задачу'
                 : 'Загрузить задачи'}
           </button>
+
+          {showAreaOrders && (
+            <div className="district-orders-list">
+              <h3 className="district-orders-title">Площадные заказы</h3>
+              {areaOrdersLoading ? (
+                <p className="muted small">Загрузка заказов…</p>
+              ) : areaOrdersError ? (
+                <p className="error-banner small">{areaOrdersError}</p>
+              ) : totalOrdersCount === 0 ? (
+                <p className="muted small">Нет площадных заказов</p>
+              ) : (
+                <div className="district-orders-groups">
+                  {areaOrdersByRayon.map((group) => (
+                    <section key={group.rayon} className="district-orders-group">
+                      <h4 className="district-orders-group-title">{group.rayon}</h4>
+                      <ul className="district-orders-items">
+                        {group.orders.map((order) => {
+                          const attrs = order.attributes
+                          const key = order.task_key ?? String(attrs.key ?? '')
+                          const name = areaOrderDisplayName(attrs)
+                          const workflow = analiseWorkflowStatus(attrs)
+                          const statusLabel = formatAnaliseWorkflowStatus(attrs)
+                          return (
+                            <li key={key} className="district-orders-item">
+                              <span className="district-orders-name" title={name}>
+                                {name}
+                              </span>
+                              <span
+                                className={`area-analise-status ${analiseWorkflowStatusClass(workflow)}`}
+                                title={statusLabel}
+                              >
+                                {statusLabel}
+                              </span>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {loading && progress && (
             <div className="collect-progress">
