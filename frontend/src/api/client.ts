@@ -193,8 +193,9 @@ export function fetchSnapshotTasks(
   return request(`/api/tasks/snapshot?${params}`)
 }
 
-export function fetchTasksArea(rayon: string, status: AreaStatus): Promise<TaskResult> {
-  const params = new URLSearchParams({ rayon, status })
+export function fetchTasksArea(rayon: string, status?: AreaStatus): Promise<TaskResult> {
+  const params = new URLSearchParams({ rayon })
+  if (status) params.set('status', status)
   return request(`/api/tasks/area?${params}`)
 }
 

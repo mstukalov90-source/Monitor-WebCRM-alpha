@@ -49,6 +49,7 @@ def fetch_tasks_area_geojson(
     conn: PgConnection,
     rayon: str | None = None,
     status: str | None = None,
+    statuses: list[str] | None = None,
     limit: int = 5000,
     *,
     field_executor_login: str | None = None,
@@ -62,6 +63,10 @@ def fetch_tasks_area_geojson(
     if status:
         filters.append('"status" = %s')
         params.append(status)
+    elif statuses:
+        placeholders = ", ".join("%s" for _ in statuses)
+        filters.append(f'"status" IN ({placeholders})')
+        params.extend(statuses)
     if field_executor_login is not None:
         ensure_executor_column(conn, TASKS_AREA_SCHEMA, TASKS_AREA_TABLE)
         filters.append('(executor IS NULL OR executor = %s)')
@@ -144,11 +149,58 @@ def collect_tasks_area(
     )
 
 
-def tasks_area_result_to_dict(result: TaskResult, status: str) -> dict[str, Any]:
+def collect_tasks_area_all(
+    conn: PgConnection,
+    rayon: str,
+    statuses: list[str],
+    *,
+    field_executor_login: str | None = None,
+) -> TaskResult:
+    if not statuses:
+        raise ValueError("At least one area status is required")
+
+    for status in statuses:
+        if status not in AREA_STATUSES:
+            raise ValueError(f"Unknown area status: {status}")
+
+    today = date.today()
+    geojson = fetch_tasks_area_geojson(
+        conn,
+        rayon=rayon,
+        statuses=statuses,
+        field_executor_login=field_executor_login,
+    )
+    features: list[TaskFeature] = []
+
+    for item in geojson.get("features", []):
+        props = dict(item.get("properties") or {})
+        features.append(
+            TaskFeature(
+                layer_name=AREA_LAYER_NAME,
+                layer_key=AREA_LAYER_KEY,
+                attributes=props,
+                geometry=item.get("geometry"),
+                task_key=str(props.get("key", item.get("id", ""))),
+            )
+        )
+
+    subgroup = TaskSubgroup(name="Заказы", features=features)
+    group = TaskGroup(name=AREA_GROUP_NAME, subgroups=[subgroup])
+
+    return TaskResult(
+        district_name=rayon,
+        filter_date_from=today - timedelta(days=3),
+        filter_date_to=today,
+        apply_date_filter=False,
+        groups=[group],
+    )
+
+
+def tasks_area_result_to_dict(result: TaskResult, task_source: str = "area") -> dict[str, Any]:
     from app.crm.collector import task_result_to_dict
 
     data = task_result_to_dict(result)
-    data["task_source"] = f"area_{status}"
+    data["task_source"] = task_source
     return data
 
 

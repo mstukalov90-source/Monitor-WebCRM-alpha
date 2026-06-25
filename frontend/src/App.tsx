@@ -7,7 +7,6 @@ import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { flattenLayers } from './components/LayerControl'
-import { PhotoViewModal } from './components/PhotoViewModal'
 import { TaskEditModal } from './components/TaskEditModal'
 import { ResizeHandle } from './components/ResizeHandle'
 import { TaskPanel } from './components/TaskPanel'
@@ -17,8 +16,8 @@ import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
-import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, AppView } from './types'
-import { areaStatusFromSource, isAreaSource } from './types'
+import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, TaskFilterSelection, AppView } from './types'
+import { isAreaSource, TASK_FILTER_NONE } from './types'
 import './App.css'
 
 function App() {
@@ -34,9 +33,11 @@ function App() {
   const [pickMode, setPickMode] = useState(false)
   const [pickLayers, setPickLayers] = useState<LinkLayerInfo[]>([])
   const [pickedValue, setPickedValue] = useState<{ column: string; value: string } | null>(null)
-  const [photoViewUuid, setPhotoViewUuid] = useState<string | null>(null)
   const [appView, setAppView] = useState<AppView>('workspace')
   const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
+  const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
+  const [lastTaskSource, setLastTaskSource] = useState<TaskSource>('active')
+  const [taskFilterSelection, setTaskFilterSelection] = useState<TaskFilterSelection>(TASK_FILTER_NONE)
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
@@ -52,16 +53,36 @@ function App() {
   useEffect(() => {
     if (user?.default_task_source) {
       setTaskSource(user.default_task_source)
+      if (!isAreaSource(user.default_task_source)) {
+        setLastTaskSource(user.default_task_source)
+      }
     }
   }, [user?.default_task_source, user?.login])
+
+  useEffect(() => {
+    if (!isAreaSource(taskSource)) {
+      setLastTaskSource(taskSource)
+    }
+  }, [taskSource])
 
   const allLayers = useMemo(() => flattenLayers(layerGroups), [layerGroups])
   const layerConfigByKey = useMemo(() => layerConfigMap(allLayers), [allLayers])
 
-  const taskFeatures = useMemo(
-    () => (taskResult ? allTaskFeaturesOnMap(taskResult.groups) : []),
-    [taskResult],
-  )
+  const taskFeatures = useMemo(() => {
+    if (!taskResult) return []
+    if (isAreaSource(taskSource)) return allTaskFeaturesOnMap(taskResult.groups)
+    if (taskFilterSelection === TASK_FILTER_NONE) return []
+    return allTaskFeaturesOnMap(taskResult.groups)
+  }, [taskResult, taskSource, taskFilterSelection])
+
+  const panelTaskResult = useMemo((): TaskResult | null => {
+    if (!taskResult) return null
+    if (isAreaSource(taskSource)) return taskResult
+    if (taskFilterSelection === TASK_FILTER_NONE) {
+      return { ...taskResult, groups: [] }
+    }
+    return taskResult
+  }, [taskResult, taskSource, taskFilterSelection])
 
   const loadTasks = useCallback(
     async (rayon: string, source: TaskSource, applyDateFilter: boolean) => {
@@ -72,9 +93,7 @@ function App() {
           const result = await collectTasksByLayers(rayon, applyDateFilter)
           setTaskResult(result)
         } else if (isAreaSource(source)) {
-          const status = areaStatusFromSource(source)
-          if (!status) throw new Error('Неизвестный статус площадного заказа')
-          const result = await fetchTasksArea(rayon, status)
+          const result = await fetchTasksArea(rayon)
           setTaskResult(result)
         } else if (
           source === 'field' ||
@@ -105,6 +124,8 @@ function App() {
     if (result) {
       setTaskResult(result)
       setTaskSource('active')
+      setTaskFilterSelection(TASK_FILTER_NONE)
+      setAreaPolygonsOnMap(false)
       setPanelHighlight(null)
       setModalHighlight(null)
       setLoadError(null)
@@ -119,6 +140,8 @@ function App() {
       const result = await fetchSnapshotTasks(collection.rayon, 'field')
       setTaskResult(result)
       setTaskSource('field')
+      setTaskFilterSelection('field')
+      setAreaPolygonsOnMap(false)
       setPanelHighlight(null)
       setModalHighlight(null)
     } catch (e) {
@@ -139,12 +162,19 @@ function App() {
 
   const handleRefresh = async () => {
     if (!taskResult?.district_name) return
-    await handleSourceChange(taskSource)
+    if (isAreaSource(taskSource)) {
+      await handleSourceChange('area')
+      return
+    }
+    if (taskFilterSelection === TASK_FILTER_NONE) return
+    await handleSourceChange(taskFilterSelection)
   }
 
   const handleChangeDistrict = () => {
     setTaskResult(null)
     setTaskSource(user?.default_task_source ?? 'active')
+    setTaskFilterSelection(TASK_FILTER_NONE)
+    setAreaPolygonsOnMap(false)
     setPanelHighlight(null)
     setModalHighlight(null)
     setEditContext(null)
@@ -227,6 +257,38 @@ function App() {
 
   const loading = collection.loading || sourceLoading
 
+  const handleTaskFilterChange = async (source: TaskFilterSelection) => {
+    setTaskFilterSelection(source)
+    setAreaPolygonsOnMap(false)
+    setPanelHighlight(null)
+    setModalHighlight(null)
+
+    if (source === TASK_FILTER_NONE) {
+      if (isAreaSource(taskSource)) {
+        setTaskSource(lastTaskSource)
+      }
+      return
+    }
+
+    await handleSourceChange(source)
+  }
+
+  const handleOrdersToggle = async () => {
+    if (areaPolygonsOnMap) {
+      setAreaPolygonsOnMap(false)
+      if (isAreaSource(taskSource)) {
+        setTaskSource(lastTaskSource)
+        setPanelHighlight(null)
+        if (taskFilterSelection !== TASK_FILTER_NONE) {
+          await handleSourceChange(taskFilterSelection)
+        }
+      }
+    } else {
+      setAreaPolygonsOnMap(true)
+      await handleSourceChange('area')
+    }
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -255,9 +317,11 @@ function App() {
           </div>
         </div>
         <TaskSourceTabs
-          value={taskSource}
+          taskFilterValue={taskFilterSelection}
           allowedSources={user.allowed_task_sources}
-          onChange={handleSourceChange}
+          onTaskFilterChange={handleTaskFilterChange}
+          ordersOnMap={areaPolygonsOnMap}
+          onOrdersToggle={() => void handleOrdersToggle()}
           loading={loading}
         />
         {loadError && <div className="error-banner">{loadError}</div>}
@@ -270,8 +334,9 @@ function App() {
       >
         <aside className="sidebar">
           <TaskPanel
-            taskResult={taskResult}
+            taskResult={panelTaskResult}
             taskSource={taskSource}
+            tasksHidden={taskFilterSelection === TASK_FILTER_NONE && !isAreaSource(taskSource)}
             onExecute={handleExecuteTask}
             onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}
@@ -298,19 +363,22 @@ function App() {
                 layerConfigByKey={layerConfigByKey}
                 districtName={taskResult.district_name}
                 taskSource={taskSource}
-                showTasksAreaOverlay={!isAreaSource(taskSource)}
+                showTasksAreaOverlay={areaPolygonsOnMap && !isAreaSource(taskSource)}
+                showAreaPolygons={areaPolygonsOnMap}
                 showAreaPopups={isAreaSource(taskSource)}
                 taskHighlight={activeHighlight}
                 pickMode={pickMode}
                 pickLayers={pickLayers}
                 onFeaturePicked={handleFeaturePicked}
                 onExecuteTask={handleExecuteTask}
+                onViewArea={setAreaViewFeature}
               />
             </div>
             <MapLegend
               taskFeatures={taskFeatures}
               layerConfigByKey={layerConfigByKey}
-              showAreaOverlay={!isAreaSource(taskSource)}
+              showAreaOverlay={areaPolygonsOnMap && !isAreaSource(taskSource)}
+              isAreaMode={isAreaSource(taskSource) && areaPolygonsOnMap}
             />
           </div>
         </main>
@@ -326,7 +394,6 @@ function App() {
         onPickModeChange={handlePickModeChange}
         pickedValue={pickedValue}
         onPickedConsumed={() => setPickedValue(null)}
-        onViewPhoto={setPhotoViewUuid}
       />
 
       <AreaTaskViewModal
@@ -339,7 +406,6 @@ function App() {
         onSaved={handleRefresh}
       />
 
-      <PhotoViewModal uuid={photoViewUuid} onClose={() => setPhotoViewUuid(null)} />
     </div>
   )
 }

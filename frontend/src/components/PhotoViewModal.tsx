@@ -2,22 +2,34 @@ import { useEffect, useState } from 'react'
 import { aiPhotoImageUrl, fetchAiPhotoMeta } from '../api/client'
 import type { AiPhotoMeta } from '../types'
 
+const CLEAR_CONFIRM_MESSAGE = 'Отметить задачу: разрытие отсутствует?'
+
+export interface PhotoViewModalTaskActions {
+  canMarkDisruptionAbsent: boolean
+  onMarkDisruptionAbsent: () => Promise<void>
+}
+
 interface PhotoViewModalProps {
   uuid: string | null
   onClose: () => void
+  taskActions?: PhotoViewModalTaskActions
 }
 
-export function PhotoViewModal({ uuid, onClose }: PhotoViewModalProps) {
+export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalProps) {
   const [meta, setMeta] = useState<AiPhotoMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [imageError, setImageError] = useState(false)
+  const [pendingClear, setPendingClear] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
 
   useEffect(() => {
     if (!uuid) {
       setMeta(null)
       setError(null)
       setImageError(false)
+      setPendingClear(false)
+      setActionBusy(false)
       return
     }
 
@@ -26,6 +38,8 @@ export function PhotoViewModal({ uuid, onClose }: PhotoViewModalProps) {
     setError(null)
     setImageError(false)
     setMeta(null)
+    setPendingClear(false)
+    setActionBusy(false)
 
     fetchAiPhotoMeta(uuid)
       .then((data) => {
@@ -59,9 +73,21 @@ export function PhotoViewModal({ uuid, onClose }: PhotoViewModalProps) {
 
   const titleParts = [
     meta?.date ? `Дата: ${meta.date}` : null,
-    meta?.order_id ? `Ордер: ${meta.order_id}` : null,
     meta?.image_name ?? null,
   ].filter(Boolean)
+
+  const showTaskActions = Boolean(taskActions?.canMarkDisruptionAbsent)
+
+  const handleConfirmClear = async () => {
+    if (!taskActions?.onMarkDisruptionAbsent) return
+    setActionBusy(true)
+    try {
+      await taskActions.onMarkDisruptionAbsent()
+    } finally {
+      setActionBusy(false)
+      setPendingClear(false)
+    }
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -95,6 +121,48 @@ export function PhotoViewModal({ uuid, onClose }: PhotoViewModalProps) {
               )}
             </div>
           </>
+        )}
+
+        {showTaskActions && (
+          <div className="photo-modal-footer">
+            {pendingClear ? (
+              <div className="status-confirm">
+                <p>{CLEAR_CONFIRM_MESSAGE}</p>
+                <div className="modal-action-buttons">
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={actionBusy}
+                    onClick={() => void handleConfirmClear()}
+                  >
+                    Подтвердить
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={actionBusy}
+                    onClick={() => setPendingClear(false)}
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="modal-action-buttons">
+                <button
+                  type="button"
+                  className="btn btn-status-clear"
+                  disabled={actionBusy}
+                  onClick={() => setPendingClear(true)}
+                >
+                  Разрытие отсутствует
+                </button>
+                <button type="button" className="btn" disabled={actionBusy} onClick={onClose}>
+                  Продолжить работу с задачей
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

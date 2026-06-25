@@ -1,9 +1,21 @@
 import type { CSSProperties } from 'react'
 import { lineStyle, pointStyle, polygonStyle } from './symbology'
 import type { TaskFeatureOnMap } from './taskFeatures'
-import type { LayerConfig, Symbology } from '../types'
+import {
+  AREA_STATUS_COLORS,
+  AREA_TASK_STATUS_LABELS,
+  type AreaStatus,
+  type LayerConfig,
+  type Symbology,
+} from '../types'
 
-export type LegendSwatchKind = 'point' | 'line' | 'polygon' | 'highlight-primary' | 'highlight-linked'
+export type LegendSwatchKind =
+  | 'point'
+  | 'line'
+  | 'polygon'
+  | 'highlight-primary'
+  | 'highlight-linked'
+  | 'area-hatch'
 
 export interface MapLegendItem {
   id: string
@@ -12,17 +24,7 @@ export interface MapLegendItem {
   symbology?: Symbology
 }
 
-const AREA_OVERLAY_ITEM: MapLegendItem = {
-  id: 'tasks_area_overlay',
-  label: 'Площадные заказы',
-  kind: 'polygon',
-  symbology: {
-    color: '#0066cc',
-    fill_color: '#0066cc',
-    fill_opacity: 0.125,
-    outline_width: 2,
-  },
-}
+const AREA_STATUS_ORDER: AreaStatus[] = ['free', 'wip', 'done']
 
 const DISTRICT_BOUNDARY_ITEM: MapLegendItem = {
   id: 'district_boundary',
@@ -47,6 +49,35 @@ const HIGHLIGHT_LINKED_ITEM: MapLegendItem = {
   kind: 'highlight-linked',
 }
 
+function areaStatusLegendItems(): MapLegendItem[] {
+  return AREA_STATUS_ORDER.map((status) => ({
+    id: `area_status_${status}`,
+    label: AREA_TASK_STATUS_LABELS[status],
+    kind: 'polygon' as const,
+    symbology: {
+      color: AREA_STATUS_COLORS[status],
+      fill_color: AREA_STATUS_COLORS[status],
+      fill_opacity: 0.35,
+      outline_width: 2,
+    },
+  }))
+}
+
+const AREA_HATCH_LEGEND: MapLegendItem[] = [
+  {
+    id: 'area_hatch_green',
+    label: 'Анализ: да',
+    kind: 'area-hatch',
+    symbology: { color: '#2e7d32' },
+  },
+  {
+    id: 'area_hatch_red',
+    label: 'Анализ: нет',
+    kind: 'area-hatch',
+    symbology: { color: '#c62828' },
+  },
+]
+
 function cssRgba(hex: string, alpha: number): string {
   const normalized = hex.replace('#', '')
   if (normalized.length !== 6) return hex
@@ -59,10 +90,11 @@ function cssRgba(hex: string, alpha: number): string {
 export function buildMapLegendItems(
   taskFeatures: TaskFeatureOnMap[],
   layerConfigByKey: Map<string, LayerConfig>,
-  options: { showAreaOverlay: boolean; showDistrictBoundary?: boolean },
+  options: { showAreaOverlay: boolean; isAreaMode?: boolean; showDistrictBoundary?: boolean },
 ): MapLegendItem[] {
   const items: MapLegendItem[] = []
   const seen = new Set<string>()
+  const showAreaStyleLegend = Boolean(options.showAreaOverlay || options.isAreaMode)
 
   if (options.showDistrictBoundary) {
     items.push(DISTRICT_BOUNDARY_ITEM)
@@ -73,17 +105,11 @@ export function buildMapLegendItems(
     if (seen.has(feat.layer_key)) continue
     seen.add(feat.layer_key)
 
-    const cfg = layerConfigByKey.get(feat.layer_key)
-    if (feat.layer_key === 'tasks_area') {
-      items.push({
-        id: 'tasks_area',
-        label: feat.layer_name || 'Площадные заказы',
-        kind: 'polygon',
-        symbology: AREA_OVERLAY_ITEM.symbology,
-      })
+    if (feat.layer_key === 'tasks_area' && showAreaStyleLegend) {
       continue
     }
 
+    const cfg = layerConfigByKey.get(feat.layer_key)
     const geometryType = cfg?.geometry_type ?? 'point'
     items.push({
       id: feat.layer_key,
@@ -95,8 +121,8 @@ export function buildMapLegendItems(
 
   items.sort((a, b) => a.label.localeCompare(b.label, 'ru'))
 
-  if (options.showAreaOverlay && !seen.has('tasks_area')) {
-    items.push(AREA_OVERLAY_ITEM)
+  if (showAreaStyleLegend) {
+    items.push(...areaStatusLegendItems(), ...AREA_HATCH_LEGEND)
     items.sort((a, b) => a.label.localeCompare(b.label, 'ru'))
   }
 
@@ -109,6 +135,17 @@ export function swatchStyles(item: MapLegendItem): {
   line?: CSSProperties
   polygon?: CSSProperties
 } {
+  if (item.kind === 'area-hatch') {
+    const color = String(item.symbology?.color ?? '#2e7d32')
+    return {
+      polygon: {
+        backgroundColor: `repeating-linear-gradient(45deg, ${color} 0 2px, transparent 2px 6px)`,
+        borderColor: color,
+        borderWidth: 1,
+      },
+    }
+  }
+
   if (item.kind === 'highlight-primary') {
     return {
       point: {

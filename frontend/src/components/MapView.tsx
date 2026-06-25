@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
 import { fetchTasksAreaGeoJson } from '../api/client'
 import { findHoodLayerKey } from '../lib/hoodLayer'
+import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapStyle'
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
@@ -36,19 +37,14 @@ interface MapViewProps {
   districtName?: string | null
   taskSource: TaskSource
   showTasksAreaOverlay?: boolean
+  showAreaPolygons?: boolean
   showAreaPopups?: boolean
   taskHighlight?: TaskHighlight | null
   pickMode: boolean
   pickLayers: LinkLayerInfo[]
   onFeaturePicked?: (taskColumn: string, value: string) => void
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
-}
-
-const TASKS_AREA_STYLE: L.PathOptions = {
-  color: '#0066cc',
-  weight: 2,
-  fillColor: '#0066cc',
-  fillOpacity: 0.125,
+  onViewArea?: (feature: TaskFeature) => void
 }
 
 const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
@@ -98,6 +94,11 @@ function DistrictBoundaryLayer({ districtName }: { districtName?: string | null 
         )
         gj.addTo(map)
         layerRef.current = gj
+
+        const bounds = gj.getBounds()
+        if (bounds.isValid()) {
+          map.flyToBounds(bounds, { padding: [40, 40] })
+        }
       })
       .catch(() => {})
 
@@ -115,25 +116,36 @@ function DistrictBoundaryLayer({ districtName }: { districtName?: string | null 
 
 function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
   const map = useMap()
-  const layerRef = useRef<L.GeoJSON | null>(null)
+  const layerRef = useRef<L.FeatureGroup | null>(null)
+  const rendererRef = useRef<L.SVG | null>(null)
 
   useEffect(() => {
     if (layerRef.current) {
       map.removeLayer(layerRef.current)
       layerRef.current = null
     }
+    if (rendererRef.current) {
+      map.removeLayer(rendererRef.current)
+      rendererRef.current = null
+    }
     if (!districtName) return
 
     let cancelled = false
+    const renderer = createAreaSvgRenderer(map)
+    rendererRef.current = renderer
+
     fetchTasksAreaGeoJson(districtName)
       .then((geojson) => {
         if (cancelled) return
-        const gj = L.geoJSON(geojson, {
-          style: () => TASKS_AREA_STYLE,
-          interactive: false,
-        })
-        gj.addTo(map)
-        layerRef.current = gj
+        const group = L.featureGroup()
+        for (const item of geojson.features ?? []) {
+          const geometry = item.geometry
+          if (!geometry) continue
+          const attrs = { ...(item.properties ?? {}) }
+          addAreaGeometryToGroup(group, geometry, attrs, renderer, { interactive: false })
+        }
+        group.addTo(map)
+        layerRef.current = group
       })
       .catch(() => {})
 
@@ -143,49 +155,81 @@ function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
         map.removeLayer(layerRef.current)
         layerRef.current = null
       }
+      if (rendererRef.current) {
+        map.removeLayer(rendererRef.current)
+        rendererRef.current = null
+      }
     }
   }, [map, districtName])
 
   return null
 }
 
+function bindMapPopup(
+  layer: L.Layer,
+  popupHtml: string,
+  ctx: SelectedTaskContext,
+  options?: {
+    onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+    onViewArea?: (feature: TaskFeature) => void
+  },
+) {
+  layer.bindPopup(popupHtml)
+
+  layer.on('popupopen', () => {
+    const popupEl = layer.getPopup()?.getElement()
+    if (!popupEl) return
+
+    const executeBtn = popupEl.querySelector<HTMLButtonElement>('[data-map-action="execute-task"]')
+    if (executeBtn && options?.onExecuteTask) {
+      const handleExecute = (event: Event) => {
+        L.DomEvent.stopPropagation(event)
+        L.DomEvent.preventDefault(event)
+        executeBtn.disabled = true
+        void Promise.resolve(options.onExecuteTask!(ctx))
+          .then(() => layer.closePopup())
+          .catch(() => {
+            executeBtn.disabled = false
+          })
+      }
+      executeBtn.addEventListener('click', handleExecute, { once: true })
+    }
+
+    const viewAreaBtn = popupEl.querySelector<HTMLButtonElement>('[data-map-action="view-area-order"]')
+    if (viewAreaBtn && options?.onViewArea) {
+      const handleViewArea = (event: Event) => {
+        L.DomEvent.stopPropagation(event)
+        L.DomEvent.preventDefault(event)
+        options.onViewArea!(ctx.feature)
+        layer.closePopup()
+      }
+      viewAreaBtn.addEventListener('click', handleViewArea, { once: true })
+    }
+  })
+}
+
 function bindTaskPopup(
   layer: L.Layer,
   taskFeat: TaskFeatureOnMap,
   taskSource: TaskSource,
-  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>,
+  options?: {
+    onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+    onViewArea?: (feature: TaskFeature) => void
+  },
 ) {
   const popupHtml = buildTaskPopupHtml(taskFeat, taskFeat.subgroupName, taskSource)
-  layer.bindPopup(popupHtml)
-
-  if (!onExecuteTask) return
-
-  layer.on('popupopen', () => {
-    const popupEl = layer.getPopup()?.getElement()
-    const btn = popupEl?.querySelector<HTMLButtonElement>('[data-map-action="execute-task"]')
-    if (!btn) return
-
-    const handleClick = (event: Event) => {
-      L.DomEvent.stopPropagation(event)
-      L.DomEvent.preventDefault(event)
-      btn.disabled = true
-      void Promise.resolve(
-        onExecuteTask({
-          groupName: taskFeat.groupName,
-          subgroupName: taskFeat.subgroupName,
-          feature: taskFeat,
-          taskKey: taskFeat.task_key ?? undefined,
-          taskSource,
-        }),
-      )
-        .then(() => layer.closePopup())
-        .catch(() => {
-          btn.disabled = false
-        })
-    }
-
-    btn.addEventListener('click', handleClick, { once: true })
-  })
+  bindMapPopup(
+    layer,
+    popupHtml,
+    {
+      groupName: taskFeat.groupName,
+      subgroupName: taskFeat.subgroupName,
+      feature: taskFeat,
+      taskKey: taskFeat.task_key ?? undefined,
+      taskSource,
+    },
+    options,
+  )
 }
 
 function TaskFeaturesLayer({
@@ -193,37 +237,73 @@ function TaskFeaturesLayer({
   layerConfigByKey,
   taskSource,
   showAreaPopups,
+  showAreaPolygons = true,
   onExecuteTask,
+  onViewArea,
 }: {
   taskFeatures: TaskFeatureOnMap[]
   layerConfigByKey: Map<string, LayerConfig>
   taskSource: TaskSource
   showAreaPopups: boolean
+  showAreaPolygons?: boolean
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+  onViewArea?: (feature: TaskFeature) => void
 }) {
   const map = useMap()
   const groupRef = useRef<L.FeatureGroup | null>(null)
+  const rendererRef = useRef<L.SVG | null>(null)
 
   useEffect(() => {
     if (groupRef.current) {
       map.removeLayer(groupRef.current)
       groupRef.current = null
     }
+    if (rendererRef.current) {
+      map.removeLayer(rendererRef.current)
+      rendererRef.current = null
+    }
 
     const withGeom = taskFeatures.filter((f) => f.geometry)
     if (!withGeom.length) return
 
-    const areaFeatures = withGeom.filter((f) => f.layer_key === 'tasks_area')
+    const areaFeatures = showAreaPolygons
+      ? withGeom.filter((f) => f.layer_key === 'tasks_area')
+      : []
     const otherFeatures = withGeom.filter((f) => f.layer_key !== 'tasks_area')
     const sortedFeatures = [...areaFeatures, ...otherFeatures]
 
+    if (!sortedFeatures.length) return
+
     const group = L.featureGroup()
+    let areaRenderer: L.SVG | null = null
+    if (areaFeatures.length) {
+      areaRenderer = createAreaSvgRenderer(map)
+      rendererRef.current = areaRenderer
+    }
+
     sortedFeatures.forEach((taskFeat) => {
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
       const isAreaLayer = taskFeat.layer_key === 'tasks_area'
       const geomType = layerCfg?.geometry_type ?? (isAreaLayer ? 'polygon' : 'point')
       const symbology = layerCfg?.symbology ?? {}
       const areaInteractive = isAreaLayer && showAreaPopups
+
+      if (isAreaLayer && areaRenderer && taskFeat.geometry) {
+        addAreaGeometryToGroup(
+          group,
+          taskFeat.geometry as GeoJSON.Geometry,
+          taskFeat.attributes,
+          areaRenderer,
+          {
+            interactive: areaInteractive,
+            onEachFeature: (layer) => {
+              if (!showAreaPopups) return
+              bindTaskPopup(layer, taskFeat, taskSource, { onExecuteTask, onViewArea })
+            },
+          },
+        )
+        return
+      }
 
       const gj = L.geoJSON(
         {
@@ -238,13 +318,10 @@ function TaskFeaturesLayer({
               radius: pointRadius(symbology),
               ...styleForGeometryType(geomType, symbology),
             }),
-          style: () =>
-            isAreaLayer
-              ? TASKS_AREA_STYLE
-              : styleForGeometryType(geomType, symbology),
+          style: () => styleForGeometryType(geomType, symbology),
           onEachFeature: (_feature, layer) => {
             if (isAreaLayer && !showAreaPopups) return
-            bindTaskPopup(layer, taskFeat, taskSource, onExecuteTask)
+            bindTaskPopup(layer, taskFeat, taskSource, { onExecuteTask, onViewArea })
           },
         },
       )
@@ -261,8 +338,9 @@ function TaskFeaturesLayer({
 
     return () => {
       if (groupRef.current) map.removeLayer(groupRef.current)
+      if (rendererRef.current) map.removeLayer(rendererRef.current)
     }
-  }, [map, taskFeatures, layerConfigByKey, taskSource, showAreaPopups, onExecuteTask])
+  }, [map, taskFeatures, layerConfigByKey, taskSource, showAreaPopups, showAreaPolygons, onExecuteTask, onViewArea])
 
   return null
 }
@@ -385,8 +463,14 @@ function addHighlightFeature(
   group: L.FeatureGroup,
   geometry: GeoJSON.Geometry,
   palette: typeof HIGHLIGHT_PRIMARY | typeof HIGHLIGHT_LINKED,
-  popupHtml?: string,
-) {
+  options?: {
+    popupHtml?: string
+    popupCtx?: SelectedTaskContext
+    onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+    onViewArea?: (feature: TaskFeature) => void
+  },
+): L.GeoJSON | null {
+  let primaryLayer: L.GeoJSON | null = null
   const layer = L.geoJSON(
     { type: 'Feature', geometry, properties: {} } as GeoJSON.Feature,
     {
@@ -404,17 +488,36 @@ function addHighlightFeature(
         }
         return highlightPathStyle(feature.geometry, palette)
       },
-      onEachFeature: popupHtml
+      onEachFeature: options?.popupHtml
         ? (_feature, pathLayer) => {
-            pathLayer.bindPopup(popupHtml)
+            if (options.popupCtx) {
+              bindMapPopup(pathLayer, options.popupHtml!, options.popupCtx, {
+                onExecuteTask: options.onExecuteTask,
+                onViewArea: options.onViewArea,
+              })
+            } else {
+              pathLayer.bindPopup(options.popupHtml!)
+            }
           }
         : undefined,
     },
   )
   layer.addTo(group)
+  if (palette === HIGHLIGHT_PRIMARY) primaryLayer = layer
+  return primaryLayer
 }
 
-function TaskHighlightLayer({ highlight }: { highlight?: TaskHighlight | null }) {
+function TaskHighlightLayer({
+  highlight,
+  taskSource,
+  onExecuteTask,
+  onViewArea,
+}: {
+  highlight?: TaskHighlight | null
+  taskSource: TaskSource
+  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+  onViewArea?: (feature: TaskFeature) => void
+}) {
   const map = useMap()
   const groupRef = useRef<L.FeatureGroup | null>(null)
 
@@ -426,9 +529,28 @@ function TaskHighlightLayer({ highlight }: { highlight?: TaskHighlight | null })
     if (!highlight?.primary && !highlight?.linked.length) return
 
     const group = L.featureGroup()
+    let primaryLayer: L.GeoJSON | null = null
 
     if (highlight.primary) {
-      addHighlightFeature(group, highlight.primary, HIGHLIGHT_PRIMARY)
+      const popup = highlight.popup
+      const popupHtml = popup
+        ? buildTaskPopupHtml(popup.feature, popup.subgroupName, taskSource)
+        : undefined
+      const popupCtx: SelectedTaskContext | undefined = popup
+        ? {
+            groupName: popup.groupName,
+            subgroupName: popup.subgroupName,
+            feature: popup.feature,
+            taskKey: popup.taskKey,
+            taskSource,
+          }
+        : undefined
+      primaryLayer = addHighlightFeature(group, highlight.primary, HIGHLIGHT_PRIMARY, {
+        popupHtml,
+        popupCtx,
+        onExecuteTask,
+        onViewArea,
+      })
     }
 
     highlight.linked.forEach((linked) => {
@@ -437,7 +559,9 @@ function TaskHighlightLayer({ highlight }: { highlight?: TaskHighlight | null })
         group,
         linked.geometry,
         HIGHLIGHT_LINKED,
-        `<b>Привязка: ${linked.link_column}</b><br/>${linked.layer_name}`,
+        {
+          popupHtml: `<b>Привязка: ${linked.link_column}</b><br/>${linked.layer_name}`,
+        },
       )
     })
 
@@ -449,10 +573,16 @@ function TaskHighlightLayer({ highlight }: { highlight?: TaskHighlight | null })
       map.flyToBounds(bounds, { padding: [40, 40] })
     }
 
+    if (primaryLayer && highlight.popup) {
+      primaryLayer.eachLayer((layer) => {
+        layer.openPopup()
+      })
+    }
+
     return () => {
       if (groupRef.current) map.removeLayer(groupRef.current)
     }
-  }, [highlight, map])
+  }, [highlight, map, taskSource, onExecuteTask, onViewArea])
 
   return null
 }
@@ -463,12 +593,14 @@ export function MapView({
   districtName,
   taskSource,
   showTasksAreaOverlay = true,
+  showAreaPolygons = true,
   showAreaPopups = false,
   taskHighlight,
   pickMode,
   pickLayers,
   onFeaturePicked,
   onExecuteTask,
+  onViewArea,
 }: MapViewProps) {
   return (
     <MapContainer
@@ -495,7 +627,9 @@ export function MapView({
             layerConfigByKey={layerConfigByKey}
             taskSource={taskSource}
             showAreaPopups={showAreaPopups}
+            showAreaPolygons={showAreaPolygons}
             onExecuteTask={onExecuteTask}
+            onViewArea={onViewArea}
           />
         </>
       )}
@@ -504,7 +638,12 @@ export function MapView({
         pickLayers={pickLayers}
         onFeaturePicked={onFeaturePicked}
       />
-      <TaskHighlightLayer highlight={taskHighlight} />
+      <TaskHighlightLayer
+        highlight={taskHighlight}
+        taskSource={taskSource}
+        onExecuteTask={onExecuteTask}
+        onViewArea={onViewArea}
+      />
     </MapContainer>
   )
 }

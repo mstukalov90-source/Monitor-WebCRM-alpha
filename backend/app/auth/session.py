@@ -12,15 +12,13 @@ ALL_TASK_SOURCES: tuple[TaskSource, ...] = (
     "done_legal",
     "done_illegal",
     "clear",
-    "area_free",
-    "area_wip",
-    "area_done",
+    "area",
 )
 
 ROLE_TASK_SOURCES: dict[str, list[TaskSource]] = {
     "admin": list(ALL_TASK_SOURCES),
-    "field": ["field", "area_wip"],
-    "office": ["active", "area_wip", "area_done"],
+    "field": ["field", "area"],
+    "office": ["active", "area"],
     "manager": list(ALL_TASK_SOURCES),
 }
 

@@ -126,11 +126,30 @@ export type TaskSource =
   | 'done_legal'
   | 'done_illegal'
   | 'clear'
-  | 'area_free'
-  | 'area_wip'
-  | 'area_done'
+  | 'area'
+
+export type TaskFilterSelection = '' | TaskSource
+
+export const TASK_FILTER_NONE = '' as const
+export const TASK_FILTER_LABEL = 'Задачи'
 
 export type AreaStatus = 'free' | 'wip' | 'done'
+
+export const AREA_STATUS_COLORS: Record<AreaStatus, string> = {
+  free: '#ff9800',
+  wip: '#fdd835',
+  done: '#43a047',
+}
+
+export const TASK_SECTION_TASK_SOURCES: TaskSource[] = [
+  'active',
+  'field',
+  'done_legal',
+  'done_illegal',
+  'clear',
+]
+
+export const TASK_SECTION_ORDER_SOURCES: TaskSource[] = ['area']
 
 export interface LinkedTaskFeature {
   link_column: string
@@ -146,10 +165,18 @@ export interface MissingLink {
   business_id: string
 }
 
+export interface TaskHighlightPopup {
+  groupName: string
+  subgroupName: string
+  feature: TaskFeature
+  taskKey?: string
+}
+
 export interface TaskHighlight {
   primary?: GeoJSON.Geometry | null
   linked: LinkedTaskFeature[]
   missingLinks?: MissingLink[]
+  popup?: TaskHighlightPopup
 }
 
 export interface TaskFeature {
@@ -286,6 +313,7 @@ export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
   { field: 'area', label: 'Площадь', format: 'area_hectares' },
   { field: 'date_survey', label: 'Дата обследования', format: 'date' },
   { field: 'executor', label: 'Исполнитель' },
+  { field: 'analise', label: 'Анализ', format: 'field_observed' },
 ]
 
 export const AREA_TASK_STATUS_LABELS: Record<AreaStatus, string> = {
@@ -404,6 +432,10 @@ export function buildTaskPopupHtml(
     lines.push(
       `<button type="button" class="btn primary map-popup-execute" data-map-action="execute-task">${escapePopupHtml(label)}</button>`,
     )
+  } else {
+    lines.push(
+      `<button type="button" class="btn map-popup-view-area" data-map-action="view-area-order">Просмотр заказа</button>`,
+    )
   }
 
   return `<div class="map-popup">${lines.join('<br/>')}</div>`
@@ -466,18 +498,15 @@ export const TASK_SOURCE_LABELS: Record<TaskSource, string> = {
   done_legal: 'Закрыты легальные',
   done_illegal: 'Закрыты нелегальные',
   clear: 'Разрытие отсутствует',
-  area_free: 'Площадные — свободные',
-  area_wip: 'Площадные — на обследовании',
-  area_done: 'Площадные — завершённые',
+  area: 'Заказы',
 }
 
 export function isAreaSource(source: TaskSource): boolean {
-  return source.startsWith('area_')
+  return source === 'area'
 }
 
-export function areaStatusFromSource(source: TaskSource): AreaStatus | null {
-  if (source === 'area_free') return 'free'
-  if (source === 'area_wip') return 'wip'
-  if (source === 'area_done') return 'done'
-  return null
+export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaStatus {
+  const key = String(attrs.status ?? '').trim().toLowerCase()
+  if (key === 'free' || key === 'wip' || key === 'done') return key
+  return 'free'
 }

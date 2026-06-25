@@ -68,6 +68,9 @@ export function AreaTaskViewModal({
           Дата обследования:{' '}
           {formatTaskTableCell(attrs.date_survey, 'date') || '—'}
         </p>
+        <p className="muted small">
+          Анализ: {formatTaskTableCell(attrs.analise, 'field_observed') || '—'}
+        </p>
 
         {assignmentKey && (
           <TaskExecutorAssign

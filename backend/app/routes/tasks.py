@@ -15,7 +15,7 @@ from app.auth.deps import (
     require_can_collect,
     require_manager_or_admin,
 )
-from app.auth.session import UserSession, districts_unrestricted
+from app.auth.session import UserSession, allowed_area_statuses, districts_unrestricted
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.collector import (
     build_collect_plan,
@@ -54,6 +54,7 @@ from app.crm.link_resolver import resolve_link_layer_infos, resolve_linked_featu
 from app.crm.tasks_area import (
     AREA_STATUSES,
     collect_tasks_area,
+    collect_tasks_area_all,
     fetch_tasks_area_geojson,
     send_area_to_survey,
     release_area_from_survey,
@@ -320,21 +321,37 @@ def get_snapshot_tasks(
 @router.get("/tasks/area")
 def get_tasks_area_list(
     rayon: str = Query(...),
-    status: str = Query(..., description="free | wip | done"),
+    status: str = Query("", description="Optional: free | wip | done"),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
-    if status not in AREA_STATUSES:
-        raise HTTPException(status_code=400, detail="status must be free, wip, or done")
-    check_area_status(user, status)
     check_rayon(user, rayon)
+    if status:
+        if status not in AREA_STATUSES:
+            raise HTTPException(status_code=400, detail="status must be free, wip, or done")
+        check_area_status(user, status)
+        with get_connection() as conn:
+            result = collect_tasks_area(
+                conn,
+                rayon,
+                status,
+                field_executor_login=_field_executor_login(user),
+            )
+        return tasks_area_result_to_dict(result, "area")
+
+    statuses = allowed_area_statuses(user.role)
+    if not statuses:
+        raise HTTPException(
+            status_code=403,
+            detail="Статус площадного заказа недоступен для вашей роли",
+        )
     with get_connection() as conn:
-        result = collect_tasks_area(
+        result = collect_tasks_area_all(
             conn,
             rayon,
-            status,
+            statuses,
             field_executor_login=_field_executor_login(user),
         )
-    return tasks_area_result_to_dict(result, status)
+    return tasks_area_result_to_dict(result, "area")
 
 
 @router.get("/tasks/{key}")
@@ -526,13 +543,24 @@ def get_tasks_area(
 ) -> dict:
     if rayon:
         check_rayon(user, rayon)
+    statuses: list[str] | None = None
     if status:
+        if status not in AREA_STATUSES:
+            raise HTTPException(status_code=400, detail="status must be free, wip, or done")
         check_area_status(user, status)
+    else:
+        statuses = allowed_area_statuses(user.role)
+        if not statuses:
+            raise HTTPException(
+                status_code=403,
+                detail="Статус площадного заказа недоступен для вашей роли",
+            )
     with get_connection() as conn:
         return fetch_tasks_area_geojson(
             conn,
             rayon=rayon or None,
             status=status or None,
+            statuses=statuses,
             field_executor_login=_field_executor_login(user),
         )
 

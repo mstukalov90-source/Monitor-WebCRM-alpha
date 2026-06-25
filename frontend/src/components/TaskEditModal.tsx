@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   closeTaskIllegal,
   closeTaskLegal,
@@ -13,6 +13,7 @@ import {
   updateTask,
 } from '../api/client'
 import { TaskExecutorAssign } from './TaskExecutorAssign'
+import { PhotoViewModal } from './PhotoViewModal'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
 import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, TASK_SOURCE_LABELS } from '../types'
 
@@ -108,7 +109,6 @@ interface TaskEditModalProps {
   onPickModeChange: (active: boolean, layers: LinkLayerInfo[]) => void
   pickedValue: { column: string; value: string } | null
   onPickedConsumed: () => void
-  onViewPhoto: (uuid: string) => void
 }
 
 export function TaskEditModal({
@@ -121,7 +121,6 @@ export function TaskEditModal({
   onPickModeChange,
   pickedValue,
   onPickedConsumed,
-  onViewPhoto,
 }: TaskEditModalProps) {
   const [record, setRecord] = useState<TaskRecord | null>(null)
   const [readonlyFields, setReadonlyFields] = useState<string[]>([])
@@ -134,6 +133,8 @@ export function TaskEditModal({
   const [showLegalRequirements, setShowLegalRequirements] = useState(false)
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
+  const [photoUuid, setPhotoUuid] = useState<string | null>(null)
+  const autoPhotoOpenedRef = useRef(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
   const isReadonly = taskSource !== 'active'
@@ -173,7 +174,18 @@ export function TaskEditModal({
       setMessage('UUID фотографии не найден')
       return
     }
-    onViewPhoto(uuid)
+    setPhotoUuid(uuid)
+  }
+
+  const openPhotoIfAvailable = () => {
+    if (!context || !isAiPhoto || autoPhotoOpenedRef.current) return
+    const uuid =
+      record?.photo_uuid?.trim() ||
+      aiPhotoUuidFromAttributes(context.feature.attributes) ||
+      null
+    if (!uuid) return
+    autoPhotoOpenedRef.current = true
+    setPhotoUuid(uuid)
   }
 
   async function refreshHighlight(ctx: SelectedTaskContext, recordKey: string) {
@@ -197,10 +209,14 @@ export function TaskEditModal({
       setRecord(null)
       setPendingStatusAction(null)
       setShowLegalRequirements(false)
+      setPhotoUuid(null)
+      autoPhotoOpenedRef.current = false
       onPickModeChange(false, [])
       return
     }
 
+    autoPhotoOpenedRef.current = false
+    setPhotoUuid(null)
     setPendingStatusAction(null)
     setShowLegalRequirements(false)
     let cancelled = false
@@ -232,6 +248,10 @@ export function TaskEditModal({
       onPickModeChange(false, [])
     }
   }, [context, isReadonly])
+
+  useEffect(() => {
+    openPhotoIfAvailable()
+  }, [context, isAiPhoto, record?.key, record?.photo_uuid])
 
   useEffect(() => {
     if (!context || taskSource !== 'field' || !record) {
@@ -409,7 +429,8 @@ export function TaskEditModal({
   if (!context) return null
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <>
+      <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>{isReadonly ? 'Просмотр задачи' : 'Исполнить задачу'}</h2>
         <p className="muted small">Источник: {TASK_SOURCE_LABELS[taskSource]}</p>
@@ -632,7 +653,23 @@ export function TaskEditModal({
           </>
         )}
       </div>
-    </div>
+      </div>
+
+      {photoUuid && (
+        <PhotoViewModal
+          uuid={photoUuid}
+          onClose={() => setPhotoUuid(null)}
+          taskActions={
+            isAiPhoto && canMarkDisruptionAbsent
+              ? {
+                  canMarkDisruptionAbsent: true,
+                  onMarkDisruptionAbsent: () => handleAction('clear'),
+                }
+              : undefined
+          }
+        />
+      )}
+    </>
   )
 }
 

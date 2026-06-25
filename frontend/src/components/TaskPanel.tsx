@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
 import type { SelectedTaskContext, TaskFeature, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
-import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel } from '../types'
+import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS } from '../types'
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
   taskSource: TaskSource
+  tasksHidden?: boolean
   onExecute: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
   onSelectHighlight: (highlight: TaskHighlight | null) => void
@@ -15,6 +16,7 @@ interface TaskPanelProps {
 export function TaskPanel({
   taskResult,
   taskSource,
+  tasksHidden = false,
   onExecute,
   onViewArea,
   onSelectHighlight,
@@ -27,6 +29,14 @@ export function TaskPanel({
   const [linkLoading, setLinkLoading] = useState(false)
   const [linkInfo, setLinkInfo] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSelectedGroup(0)
+    setSelectedSub(0)
+    setSelectedRow(null)
+    setLinkInfo(null)
+    setActionMessage(null)
+  }, [taskSource])
 
   const isArea = isAreaSource(taskSource)
   const groups = taskResult?.groups ?? []
@@ -58,7 +68,13 @@ export function TaskPanel({
     }
 
     const primary = feat.geometry ?? null
-    onSelectHighlight({ primary, linked: [] })
+    const popup = {
+      groupName,
+      subgroupName: subgroup.name,
+      feature: feat,
+      taskKey: feat.task_key ?? undefined,
+    }
+    onSelectHighlight({ primary, linked: [], popup })
     setLinkInfo(null)
 
     if (isArea) return
@@ -76,6 +92,7 @@ export function TaskPanel({
         primary,
         linked: linked_features,
         missingLinks: missing_links,
+        popup,
       })
 
       const parts: string[] = []
@@ -189,6 +206,15 @@ export function TaskPanel({
     )
   }
 
+  if (tasksHidden) {
+    return (
+      <div className="task-panel empty">
+        <p className="muted">Район: <strong>{taskResult.district_name}</strong></p>
+        <p>Выберите тип задач в фильтре или включите «Заказы»</p>
+      </div>
+    )
+  }
+
   return (
     <div className="task-panel">
       <div className="task-panel-header">
@@ -213,33 +239,35 @@ export function TaskPanel({
         {actionMessage && <div className="muted small">{actionMessage}</div>}
       </div>
 
-      <div className="task-tree">
-        {groups.map((group: TaskGroup, gi) => (
-          <div key={group.name} className="task-tree-group">
-            <div className="task-tree-group-name">
-              {group.name} (
-              {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
+      {!isArea && (
+        <div className="task-tree">
+          {groups.map((group: TaskGroup, gi) => (
+            <div key={group.name} className="task-tree-group">
+              <div className="task-tree-group-name">
+                {group.name} (
+                {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
+              </div>
+              {group.subgroups.map((sub, si) => (
+                <button
+                  key={sub.name}
+                  type="button"
+                  className={`task-tree-item ${gi === selectedGroup && si === selectedSub ? 'active' : ''}`}
+                  onClick={() => {
+                    setSelectedGroup(gi)
+                    setSelectedSub(si)
+                    setSelectedRow(null)
+                    onSelectHighlight(null)
+                    setLinkInfo(null)
+                    setActionMessage(null)
+                  }}
+                >
+                  {sub.name} ({sub.features.length})
+                </button>
+              ))}
             </div>
-            {group.subgroups.map((sub, si) => (
-              <button
-                key={sub.name}
-                type="button"
-                className={`task-tree-item ${gi === selectedGroup && si === selectedSub ? 'active' : ''}`}
-                onClick={() => {
-                  setSelectedGroup(gi)
-                  setSelectedSub(si)
-                  setSelectedRow(null)
-                  onSelectHighlight(null)
-                  setLinkInfo(null)
-                  setActionMessage(null)
-                }}
-              >
-                {sub.name} ({sub.features.length})
-              </button>
-            ))}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       <div className="task-table-wrap">
         <table className="task-table">
@@ -253,10 +281,17 @@ export function TaskPanel({
             </tr>
           </thead>
           <tbody>
-            {features.map((feat, row) => (
+            {features.map((feat, row) => {
+              const areaStatus = isArea ? areaStatusFromAttributes(feat.attributes) : null
+              const rowStyle =
+                areaStatus != null
+                  ? { borderLeftColor: AREA_STATUS_COLORS[areaStatus] }
+                  : undefined
+              return (
               <tr
                 key={row}
-                className={selectedRow === row ? 'selected' : ''}
+                className={`${selectedRow === row ? 'selected' : ''}${areaStatus != null ? ' area-order-row' : ''}`}
+                style={rowStyle}
                 onClick={() => handleRowClick(row)}
               >
                 <td>{feat.layer_name}</td>
@@ -269,7 +304,8 @@ export function TaskPanel({
                   </td>
                 ))}
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
