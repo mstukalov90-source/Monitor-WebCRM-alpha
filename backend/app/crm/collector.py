@@ -284,11 +284,16 @@ def collect_layer_tasks(
     snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     features: list[TaskFeature] = []
     for item in raw_features:
-        if date_field and not attribute_matches_date_range(
-            item["attributes"],
-            date_field,
-            date_from,
-            date_to,
+        field_observed = bool(item.get("attributes", {}).get("field_observed"))
+        if (
+            date_field
+            and not field_observed
+            and not attribute_matches_date_range(
+                item["attributes"],
+                date_field,
+                date_from,
+                date_to,
+            )
         ):
             continue
         task_key = item.get("task_key")
