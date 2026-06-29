@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.auth.deps import require_admin, require_manager_or_admin
-from app.auth.session import UserSession
+from app.auth.deps import get_current_user, require_admin, require_manager_or_admin
+from app.auth.session import UserSession, can_manage_personnel
 from app.crm.personnel import (
     PersonnelError,
     assign_task_executor,
@@ -31,16 +33,94 @@ from app.crm.schemas import (
     BulkStatusResultOut,
     DistrictOptionOut,
     FieldSnapshotLookupOut,
+    FieldStatisticsSummaryOut,
+    OfficeStatisticsBreakdownOut,
+    PersonnelStatisticsOut,
     PersonnelUserOut,
     PersonnelUserCreate,
     PersonnelUserUpdate,
     TaskExecutorUpdate,
     TaskNumberUpdate,
 )
+from app.crm.statistics import fetch_field_statistics_summary, fetch_office_statistics_breakdown
 from app.crm.tasks_area import update_area_task_number
 from app.db import get_connection
 
 router = APIRouter(prefix="/api/personnel", tags=["personnel"])
+
+
+@router.get("/statistics", response_model=PersonnelStatisticsOut)
+def get_personnel_statistics(
+    date_from: date = Query(..., description="Start date (inclusive)"),
+    date_to: date = Query(..., description="End date (inclusive)"),
+    user_role: str | None = Query(None, description="Filter by field or office"),
+    object_type: str | None = Query(None, description="Filter by task or order"),
+    user_login: str | None = Query(None, description="Filter by user login"),
+    user: UserSession = Depends(get_current_user),
+) -> PersonnelStatisticsOut:
+    if date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from must be on or before date_to",
+        )
+    if object_type is not None and object_type not in ("task", "order"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="object_type must be task or order",
+        )
+
+    org_view = can_manage_personnel(user.role)
+    if org_view:
+        if user_role is not None and user_role not in ("field", "office"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="user_role must be field or office",
+            )
+        effective_login = user_login.strip() if user_login else None
+        effective_role = user_role
+        scope: Literal["all", "self"] = "all"
+    else:
+        if user.role not in ("field", "office"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Статистика недоступна для вашей роли",
+            )
+        if user_login and user_login.strip() != user.login:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Доступ только к своей статистике",
+            )
+        effective_login = user.login
+        effective_role = "field" if user.role == "field" else "office"
+        scope = "self"
+
+    with get_connection() as conn:
+        field_summary: list[dict] = []
+        office_breakdown: list[dict] = []
+        if effective_role in (None, "field"):
+            field_summary = fetch_field_statistics_summary(
+                conn,
+                date_from=date_from,
+                date_to=date_to,
+                object_type=object_type if org_view else None,
+                user_login=effective_login,
+            )
+        if effective_role in (None, "office"):
+            office_breakdown = fetch_office_statistics_breakdown(
+                conn,
+                date_from=date_from,
+                date_to=date_to,
+                object_type=object_type if org_view else None,
+                user_login=effective_login,
+            )
+
+    return PersonnelStatisticsOut(
+        field_summary=[FieldStatisticsSummaryOut(**row) for row in field_summary],
+        office_breakdown=[OfficeStatisticsBreakdownOut(**row) for row in office_breakdown],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+        scope=scope,
+    )
 
 
 @router.get("/users", response_model=list[PersonnelUserOut])

@@ -7,6 +7,7 @@ import { LoginScreen } from './components/LoginScreen'
 import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
 import { PersonnelScreen } from './components/PersonnelScreen'
+import { StatisticsScreen } from './components/StatisticsScreen'
 import { flattenLayers } from './components/LayerControl'
 import { TaskEditModal } from './components/TaskEditModal'
 import { ResizeHandle } from './components/ResizeHandle'
@@ -286,6 +287,18 @@ function App() {
     )
   }
 
+  if (appView === 'statistics') {
+    return (
+      <StatisticsScreen
+        userLogin={user.login}
+        userRole={user.role}
+        canViewAll={user.can_manage_personnel}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
   if (!taskResult) {
     return (
       <DistrictStartScreen
@@ -303,6 +316,7 @@ function App() {
         onCollect={handleCollect}
         onLoadFieldTasks={handleLoadFieldTasks}
         onOpenPersonnel={() => setAppView('personnel')}
+        onOpenStatistics={() => setAppView('statistics')}
         onLogout={logout}
       />
     )
@@ -456,6 +470,9 @@ function App() {
                 Персонал
               </button>
             )}
+            <button type="button" className="btn" onClick={() => setAppView('statistics')}>
+              Статистика
+            </button>
             <button type="button" className="btn" onClick={() => void logout()}>
               Выйти
             </button>

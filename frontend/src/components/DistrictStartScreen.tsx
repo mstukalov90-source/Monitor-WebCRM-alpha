@@ -24,6 +24,7 @@ interface DistrictStartScreenProps {
   onCollect: () => void
   onLoadFieldTasks: () => void
   onOpenPersonnel?: () => void
+  onOpenStatistics?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -42,6 +43,7 @@ export function DistrictStartScreen({
   onCollect,
   onLoadFieldTasks,
   onOpenPersonnel,
+  onOpenStatistics,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -108,6 +110,11 @@ export function DistrictStartScreen({
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
+              </button>
+            )}
+            {onOpenStatistics && (
+              <button type="button" className="btn" onClick={onOpenStatistics}>
+                Статистика
               </button>
             )}
             <button type="button" className="btn" onClick={() => void onLogout()}>

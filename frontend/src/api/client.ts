@@ -17,6 +17,7 @@ import type {
   DistrictOption,
   PersonnelUser,
   PersonnelUserCreate,
+  PersonnelStatistics,
   WorkflowTargetStatus,
   BulkStatusResult,
 } from '../types'
@@ -488,4 +489,21 @@ export function lookupFieldSnapshot(
 ): Promise<{ snapshot_key: string; executor: string | null }> {
   const params = new URLSearchParams({ task_key: taskKey })
   return request(`/api/personnel/tasks/field/lookup?${params}`)
+}
+
+export function fetchPersonnelStatistics(params: {
+  dateFrom: string
+  dateTo: string
+  userRole?: 'field' | 'office'
+  objectType?: 'task' | 'order'
+  userLogin?: string
+}): Promise<PersonnelStatistics> {
+  const qs = new URLSearchParams({
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+  })
+  if (params.userRole) qs.set('user_role', params.userRole)
+  if (params.objectType) qs.set('object_type', params.objectType)
+  if (params.userLogin) qs.set('user_login', params.userLogin)
+  return request(`/api/personnel/statistics?${qs}`)
 }

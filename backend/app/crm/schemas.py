@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -220,3 +220,31 @@ class FieldPhotoOut(BaseModel):
 class FieldPhotosResultOut(BaseModel):
     photos: list[FieldPhotoOut] = Field(default_factory=list)
     banner_missing: bool = False
+
+
+class FieldStatisticsSummaryOut(BaseModel):
+    user_login: str
+    user_role: str
+    tasks_completed: int
+    orders_completed: int
+    tasks_created: int
+    period_from: str | None = None
+    period_to: str | None = None
+
+
+class OfficeStatisticsBreakdownOut(BaseModel):
+    user_login: str
+    user_role: str
+    object_type: str
+    action: str
+    action_count: int
+    period_from: str | None = None
+    period_to: str | None = None
+
+
+class PersonnelStatisticsOut(BaseModel):
+    field_summary: list[FieldStatisticsSummaryOut] = Field(default_factory=list)
+    office_breakdown: list[OfficeStatisticsBreakdownOut] = Field(default_factory=list)
+    date_from: str
+    date_to: str
+    scope: Literal["all", "self"] = "all"

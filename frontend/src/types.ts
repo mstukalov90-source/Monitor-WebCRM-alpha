@@ -54,7 +54,35 @@ export interface BulkStatusResult {
   failed: { task_key: string; error: string }[]
 }
 
-export type AppView = 'workspace' | 'personnel'
+export interface FieldStatisticsSummary {
+  user_login: string
+  user_role: string
+  tasks_completed: number
+  orders_completed: number
+  tasks_created: number
+  period_from: string | null
+  period_to: string | null
+}
+
+export interface OfficeStatisticsBreakdown {
+  user_login: string
+  user_role: string
+  object_type: string
+  action: string
+  action_count: number
+  period_from: string | null
+  period_to: string | null
+}
+
+export interface PersonnelStatistics {
+  field_summary: FieldStatisticsSummary[]
+  office_breakdown: OfficeStatisticsBreakdown[]
+  date_from: string
+  date_to: string
+  scope: 'all' | 'self'
+}
+
+export type AppView = 'workspace' | 'personnel' | 'statistics'
 
 export const HOOD_BOUNDARIES_DISPLAY_NAME = 'Границы районов'
 export const DISTRICT_RAYON_FIELD = 'rayon'

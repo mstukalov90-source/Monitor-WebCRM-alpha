@@ -11,6 +11,7 @@ from app.auth.session import HOOD_SCHEMA, HOOD_TABLE
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.executor import ensure_all_executor_columns
 from app.crm.user_audit import make_user_audit
+from app.crm.statistics import log_statistic
 from app.crm.store import (
     ensure_task_snapshot_table,
     fetch_active_task_summaries,
@@ -570,6 +571,27 @@ def assign_task_executor(
             (exec_value, audit, key),
         )
         row = cur.fetchone()
+        if row:
+            action = "task_executor_assigned" if table == "field" else "order_executor_assigned"
+            object_type = "task" if table == "field" else "order"
+            object_key = key if table == "area" else None
+            if table == "field":
+                with conn.cursor() as key_cur:
+                    key_cur.execute(
+                        f'SELECT task_key::text FROM "{schema}"."{tbl}" WHERE key = %s::uuid',
+                        (key,),
+                    )
+                    task_row = key_cur.fetchone()
+                object_key = str(task_row[0]) if task_row else key
+            log_statistic(
+                conn,
+                login=login,
+                object_type=object_type,
+                action=action,
+                object_key=object_key or key,
+                metadata={"executor": exec_value},
+                skip_if_exists=False,
+            )
     conn.commit()
     return "updated" if row else "not_found"
 
@@ -601,5 +623,34 @@ def bulk_assign_task_executor(
             (exec_value, audit, keys),
         )
         updated = cur.rowcount
+        if updated:
+            action = "task_executor_assigned" if table == "field" else "order_executor_assigned"
+            object_type = "task" if table == "field" else "order"
+            if table == "field":
+                cur.execute(
+                    f'SELECT task_key::text FROM "{schema}"."{tbl}" WHERE key = ANY(%s::uuid[])',
+                    (keys,),
+                )
+                for task_row in cur.fetchall():
+                    log_statistic(
+                        conn,
+                        login=login,
+                        object_type=object_type,
+                        action=action,
+                        object_key=str(task_row[0]),
+                        metadata={"executor": exec_value},
+                        skip_if_exists=False,
+                    )
+            else:
+                for area_key in keys:
+                    log_statistic(
+                        conn,
+                        login=login,
+                        object_type=object_type,
+                        action=action,
+                        object_key=area_key,
+                        metadata={"executor": exec_value},
+                        skip_if_exists=False,
+                    )
     conn.commit()
     return {"updated": updated, "not_found": len(keys) - updated}

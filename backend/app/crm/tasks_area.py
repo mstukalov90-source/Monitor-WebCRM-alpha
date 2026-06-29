@@ -10,6 +10,7 @@ from psycopg2.extras import RealDictCursor
 
 from app.crm.collector import TaskFeature, TaskGroup, TaskResult, TaskSubgroup
 from app.crm.executor import ensure_executor_column
+from app.crm.statistics import log_statistic, resolve_role_from_login, skip_area_complete_trigger
 from app.crm.user_audit import make_user_audit, user_audit_migration_statements
 
 AREA_LAYER_KEY = "tasks_area"
@@ -218,6 +219,42 @@ def tasks_area_result_to_dict(result: TaskResult, task_source: str = "area") -> 
     return data
 
 
+_AREA_STATUS_ACTIONS: dict[tuple[str | None, str], str] = {
+    (None, "wip"): "order_sent_to_survey",
+    ("wip", "free"): "order_released_from_survey",
+    ("wip", "done"): "order_completed_survey",
+}
+
+
+def _log_area_status_change(
+    conn: PgConnection,
+    *,
+    key: str,
+    login: str,
+    from_status: str | None,
+    to_status: str,
+) -> None:
+    default_action = _AREA_STATUS_ACTIONS.get((from_status, to_status))
+    if not default_action:
+        return
+
+    role = resolve_role_from_login(conn, login)
+    if to_status == "done" and from_status == "wip":
+        action = "order_completed" if role == "field" else "order_completed_survey"
+    else:
+        action = default_action
+
+    log_statistic(
+        conn,
+        login=login,
+        object_type="order",
+        action=action,
+        object_key=key,
+        metadata={"from_status": from_status, "to_status": to_status},
+        skip_if_exists=action in ("order_completed", "order_completed_survey"),
+    )
+
+
 def send_area_to_survey(conn: PgConnection, key: str, login: str) -> str:
     return _transition_area_status(
         conn, key, login=login, from_status=None, to_status="wip", skip_if="wip"
@@ -305,6 +342,16 @@ def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
             )
             row = cur.fetchone()
         conn.commit()
+        if row:
+            log_statistic(
+                conn,
+                login=login,
+                object_type="order",
+                action="order_analise_started",
+                object_key=key,
+                skip_if_exists=False,
+            )
+            conn.commit()
         return "updated" if row else "not_found"
 
     if paused_at is not None:
@@ -328,6 +375,17 @@ def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
             )
             row = cur.fetchone()
         conn.commit()
+        if row:
+            log_statistic(
+                conn,
+                login=login,
+                object_type="order",
+                action="order_analise_started",
+                object_key=key,
+                metadata={"resumed": True},
+                skip_if_exists=False,
+            )
+            conn.commit()
         return "updated" if row else "not_found"
 
     if started_by == login:
@@ -358,6 +416,15 @@ def pause_area_analise(conn: PgConnection, key: str, login: str) -> str:
         row = cur.fetchone()
     conn.commit()
     if row:
+        log_statistic(
+            conn,
+            login=login.strip(),
+            object_type="order",
+            action="order_analise_paused",
+            object_key=key,
+            skip_if_exists=False,
+        )
+        conn.commit()
         return "updated"
 
     state = _fetch_analise_state(conn, key)
@@ -412,6 +479,14 @@ def complete_area_analise(conn: PgConnection, key: str, login: str) -> str:
         row = cur.fetchone()
     conn.commit()
     if row:
+        log_statistic(
+            conn,
+            login=login,
+            object_type="order",
+            action="order_analise_completed",
+            object_key=key,
+        )
+        conn.commit()
         return "updated"
 
     state = _fetch_analise_state(conn, key)
@@ -444,6 +519,17 @@ def update_area_task_number(
         )
         row = cur.fetchone()
     conn.commit()
+    if row:
+        log_statistic(
+            conn,
+            login=login,
+            object_type="order",
+            action="order_task_number_updated",
+            object_key=key,
+            metadata={"task_number": value},
+            skip_if_exists=False,
+        )
+        conn.commit()
     return "updated" if row else "not_found"
 
 
@@ -482,9 +568,18 @@ def _transition_area_status(
             RETURNING key
         """
 
-    with conn.cursor() as cur:
-        cur.execute(sql, params)
-        row = cur.fetchone()
+    with skip_area_complete_trigger(conn):
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if row:
+            _log_area_status_change(
+                conn,
+                key=key,
+                login=login,
+                from_status=from_status,
+                to_status=to_status,
+            )
     conn.commit()
     if row:
         return "updated"
