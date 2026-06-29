@@ -684,6 +684,24 @@ body,
   font-size: 0.85rem;
 }
 
+.place-point-banner {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: #e65100;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.map-container--place-point,
+.map-container--place-point .leaflet-container {
+  cursor: crosshair;
+}
+
 .btn {
   padding: 6px 12px;
   border: 1px solid #ccc;

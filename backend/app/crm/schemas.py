@@ -99,8 +99,15 @@ class TaskRecordOut(BaseModel):
     station_avr: str | None = None
     field_observed: bool | None = None
     is_field_data: bool | None = None
+    is_office_task: bool | None = None
     user_created: list[str] | None = None
     user_last_edit: list[str] | None = None
+
+
+class CreateOfficeTaskRequest(BaseModel):
+    geometry: dict[str, Any]
+    area_task_key: str
+    link_prefill: dict[str, str] | None = None
 
 
 class TaskRecordUpdate(BaseModel):

@@ -17,6 +17,7 @@ import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
 import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, isFieldObserved, TASK_SOURCE_LABELS } from '../types'
+import { officeTaskLinkPrefill } from '../lib/officeTaskLinkPrefill'
 
 type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active'
 
@@ -104,6 +105,8 @@ interface TaskEditModalProps {
   context: SelectedTaskContext | null
   canManagePersonnel: boolean
   userRole: UserRole
+  officeWorking?: boolean
+  onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
   onClose: () => void
   onSaved: () => void
   onHighlightChange: (highlight: TaskHighlight | null) => void
@@ -116,6 +119,8 @@ export function TaskEditModal({
   context,
   canManagePersonnel,
   userRole,
+  officeWorking = false,
+  onStartPlaceOfficePoint,
   onClose,
   onSaved,
   onHighlightChange,
@@ -168,6 +173,17 @@ export function TaskEditModal({
   const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
   const legalValidation = getLegalValidation(form, legalLinkFields, record)
   const showLegalFieldHints = canCloseLegal && canPerformStatusActions
+  const canAddOfficePoint =
+    userRole === 'office' &&
+    officeWorking &&
+    context?.groupName === CRM_GROUP_ORDERS &&
+    Boolean(onStartPlaceOfficePoint)
+
+  const handleAddOfficePoint = () => {
+    if (!context || !onStartPlaceOfficePoint) return
+    const prefill = officeTaskLinkPrefill(context.subgroupName, context.feature.attributes)
+    onStartPlaceOfficePoint(prefill)
+  }
 
   const handleViewPhoto = () => {
     if (!context) return
@@ -574,6 +590,16 @@ export function TaskEditModal({
                       disabled={loading}
                     >
                       Просмотр полевых материалов
+                    </button>
+                  )}
+                  {canAddOfficePoint && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleAddOfficePoint}
+                      disabled={loading}
+                    >
+                      Добавить точку камерального анализа
                     </button>
                   )}
                   {!isReadonly && (

@@ -1,5 +1,6 @@
 export const STATISTICS_ACTION_LABELS: Record<string, string> = {
   task_created: 'Создано задач',
+  task_created_office_analysis: 'Созданы камеральным анализом',
   task_completed: 'Выполнено задач',
   task_updated: 'Обновлено задач',
   task_sent_to_field: 'Отправлено в поле',

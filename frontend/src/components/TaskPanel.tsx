@@ -7,6 +7,10 @@ interface TaskPanelProps {
   taskResult: TaskResult | null
   taskSource: TaskSource
   tasksHidden?: boolean
+  officeWorking?: boolean
+  placePointMode?: boolean
+  placePointDisabled?: boolean
+  onTogglePlacePoint?: () => void
   onExecute: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
   onSelectHighlight: (highlight: TaskHighlight | null) => void
@@ -17,6 +21,10 @@ export function TaskPanel({
   taskResult,
   taskSource,
   tasksHidden = false,
+  officeWorking = false,
+  placePointMode = false,
+  placePointDisabled = false,
+  onTogglePlacePoint,
   onExecute,
   onViewArea,
   onSelectHighlight,
@@ -362,6 +370,16 @@ export function TaskPanel({
           >
             {taskExecuteButtonLabel(taskSource)}
           </button>
+          {officeWorking && onTogglePlacePoint && (
+            <button
+              type="button"
+              className={`btn${placePointMode ? ' primary' : ''}`}
+              disabled={placePointDisabled || busy}
+              onClick={onTogglePlacePoint}
+            >
+              {placePointMode ? 'Отменить добавление' : 'Добавить разрытие на карте'}
+            </button>
+          )}
         </div>
       )}
     </div>

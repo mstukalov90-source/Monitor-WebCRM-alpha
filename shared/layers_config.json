@@ -608,6 +608,10 @@
           {
             "name": "Полевые данные",
             "source": "field_data"
+          },
+          {
+            "name": "Задачи из камерального анализа",
+            "source": "office_data"
           }
         ]
       },
@@ -689,6 +693,12 @@
           "reports_table": "reports",
           "reports_tasks_key": "tasks_key",
           "reports_geometry": "point"
+        },
+        "Задачи из камерального анализа": {
+          "source": "office_data",
+          "points_schema": "crm",
+          "points_table": "office_task_points",
+          "points_geometry": "point"
         }
       }
     }

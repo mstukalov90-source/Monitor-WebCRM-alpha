@@ -16,9 +16,15 @@ from app.crm.field_data_loader import (
     FIELD_DATA_LAYER_NAME,
     collect_field_data_tasks,
 )
+from app.crm.office_data_loader import (
+    OFFICE_DATA_LAYER_KEY,
+    OFFICE_DATA_LAYER_NAME,
+    collect_office_data_tasks,
+)
 from app.crm.store import (
     CRM_GROUP_DISRUPTIONS,
     FIELD_DATA_SUBGROUP,
+    OFFICE_DATA_SUBGROUP,
     PersistStats,
     _table_ref,
     enrich_features_field_observed,
@@ -201,6 +207,20 @@ def build_collect_plan(
                 )
                 continue
 
+            if sub_cfg.get("source") == "office_data":
+                group.subgroups.append(
+                    TaskSubgroup(name=subgroup_name, date_field=date_field)
+                )
+                layers.append(
+                    CollectLayerPlanItem(
+                        group_name=group_name,
+                        subgroup_name=subgroup_name,
+                        layer_key=OFFICE_DATA_LAYER_KEY,
+                        layer_name=OFFICE_DATA_LAYER_NAME,
+                    )
+                )
+                continue
+
             layer_names = sub_cfg.get("layers", [])
             group_names = sub_cfg.get("groups", [])
             resolved_layers, missing = registry.resolve_subgroup_layers(layer_names, group_names)
@@ -242,6 +262,9 @@ def collect_layer_tasks(
 
     if layer_key == FIELD_DATA_LAYER_KEY:
         return collect_field_data_tasks(conn, rayon, apply_date_filter)
+
+    if layer_key == OFFICE_DATA_LAYER_KEY:
+        return collect_office_data_tasks(conn, rayon, apply_date_filter)
 
     sub_cfg = find_subgroup_cfg(cfg, subgroup_name)
     if sub_cfg is None:
@@ -351,6 +374,12 @@ def collect_tasks(
     field_subgroup = subgroup_index.get((CRM_GROUP_DISRUPTIONS, FIELD_DATA_SUBGROUP))
     if field_subgroup is not None:
         field_subgroup.features.extend(field_features)
+
+    office_features, office_errors = collect_office_data_tasks(conn, rayon, apply_date_filter)
+    result.errors.extend(office_errors)
+    office_subgroup = subgroup_index.get((CRM_GROUP_DISRUPTIONS, OFFICE_DATA_SUBGROUP))
+    if office_subgroup is not None:
+        office_subgroup.features.extend(office_features)
 
     if filter_sent:
         store_cfg = crm_task_store_config()

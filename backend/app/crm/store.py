@@ -41,6 +41,7 @@ TASK_ID_COLUMNS = (
 CRM_GROUP_DISRUPTIONS = "Разрытия"
 CRM_GROUP_ORDERS = "Новые ордера ОАТИ, АВР и земляные работы"
 FIELD_DATA_SUBGROUP = "Полевые данные"
+OFFICE_DATA_SUBGROUP = "Задачи из камерального анализа"
 
 LINK_COLUMNS_BY_GROUP = {
     CRM_GROUP_DISRUPTIONS: (
@@ -58,7 +59,7 @@ _TASK_SELECT_COLUMNS = (
     ("key", "type")
     + TASK_ID_COLUMNS
     + STATION_COLUMNS
-    + ("field_observed", "is_field_data")
+    + ("field_observed", "is_field_data", "is_office_task")
     + USER_AUDIT_COLUMNS
 )
 
@@ -81,6 +82,7 @@ TASK_COLUMN_LABELS = {
     "station_avr": "АВР",
     "field_observed": "Обследовано в поле",
     "is_field_data": "Полевые данные",
+    "is_office_task": "Камеральный анализ",
     "user_created": "Создал",
     "user_last_edit": "Изменил",
 }
@@ -127,6 +129,8 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     ) + (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS is_field_data BOOLEAN NOT NULL DEFAULT false",
+        f'ALTER TABLE "{schema}"."{table}" '
+        f"ADD COLUMN IF NOT EXISTS is_office_task BOOLEAN NOT NULL DEFAULT false",
     ) + user_audit_migration_statements(schema, table)
 
 
@@ -187,6 +191,7 @@ class TaskRecord:
     station_avr: Optional[str] = None
     field_observed: Optional[bool] = None
     is_field_data: Optional[bool] = None
+    is_office_task: Optional[bool] = None
     user_created: Optional[List[str]] = None
     user_last_edit: Optional[List[str]] = None
 
@@ -206,6 +211,7 @@ class TaskRecord:
             "station_avr": self.station_avr,
             "field_observed": self.field_observed,
             "is_field_data": self.is_field_data,
+            "is_office_task": self.is_office_task,
             "user_created": self.user_created,
             "user_last_edit": self.user_last_edit,
         }
@@ -218,8 +224,11 @@ class TaskRecord:
         is_field_data = None
         if len(row) > 13 and row[13] is not None:
             is_field_data = bool(row[13])
-        user_created = list(row[14]) if len(row) > 14 and row[14] is not None else None
-        user_last_edit = list(row[15]) if len(row) > 15 and row[15] is not None else None
+        is_office_task = None
+        if len(row) > 14 and row[14] is not None:
+            is_office_task = bool(row[14])
+        user_created = list(row[15]) if len(row) > 15 and row[15] is not None else None
+        user_last_edit = list(row[16]) if len(row) > 16 and row[16] is not None else None
         return cls(
             key=str(row[0]),
             type=row[1] or "",
@@ -235,6 +244,7 @@ class TaskRecord:
             station_avr=_normalize_id_value(row[11]) if len(row) > 11 else None,
             field_observed=field_observed,
             is_field_data=is_field_data,
+            is_office_task=is_office_task,
             user_created=user_created,
             user_last_edit=user_last_edit,
         )
@@ -592,14 +602,14 @@ def send_task_snapshot(
         ["task_key", "type"]
         + list(TASK_ID_COLUMNS)
         + list(STATION_COLUMNS)
-        + ["is_field_data"]
+        + ["is_field_data", "is_office_task"]
         + list(USER_AUDIT_COLUMNS)
     )
     values = [record.key, task_type] + [
         _normalize_id_value(getattr(record, col)) for col in TASK_ID_COLUMNS
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
-    ] + [bool(record.is_field_data)] + [audit, audit]
+    ] + [bool(record.is_field_data), bool(record.is_office_task)] + [audit, audit]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -892,9 +902,11 @@ def _find_subgroup_for_record(
     """Вернуть (subgroup_name, task_column, business_id)."""
     if record.is_field_data:
         return FIELD_DATA_SUBGROUP, "", ""
+    if record.is_office_task:
+        return OFFICE_DATA_SUBGROUP, "", ""
 
     for subgroup_name, mapping in store_cfg.get("subgroups", {}).items():
-        if mapping.get("source") == "field_data":
+        if mapping.get("source") in ("field_data", "office_data"):
             continue
         task_column = mapping.get("task_column")
         if task_column not in TASK_ID_COLUMNS:
@@ -968,10 +980,12 @@ def resolve_primary_task_column(
         return None
     if record is not None and record.is_field_data:
         return None
+    if record is not None and record.is_office_task:
+        return None
     if subgroup_name:
         mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
         if mapping:
-            if mapping.get("source") == "field_data":
+            if mapping.get("source") in ("field_data", "office_data"):
                 return None
             task_column = mapping.get("task_column")
             if task_column in TASK_ID_COLUMNS:
@@ -991,6 +1005,10 @@ def task_form_field_groups(
 ) -> Tuple[List[str], List[str]]:
     if record.is_field_data or subgroup_name == FIELD_DATA_SUBGROUP:
         readonly: List[str] = ["type", "is_field_data"]
+        link = list(LINK_COLUMNS_BY_GROUP.get(group_name or "", ()))
+        return readonly, link
+    if record.is_office_task or subgroup_name == OFFICE_DATA_SUBGROUP:
+        readonly = ["type", "is_office_task"]
         link = list(LINK_COLUMNS_BY_GROUP.get(group_name or "", ()))
         return readonly, link
 

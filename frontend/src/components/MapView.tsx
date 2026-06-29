@@ -9,7 +9,7 @@ import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapSty
 import { pointRadius, styleForGeometryType } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
-import { FIELD_DATA_LAYER_KEY } from '../types'
+import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
 import { MapResizeObserver } from './MapResizeObserver'
 import {
   DISTRICT_RAYON_FIELD,
@@ -46,6 +46,8 @@ interface MapViewProps {
   pickMode: boolean
   pickLayers: LinkLayerInfo[]
   onFeaturePicked?: (taskColumn: string, value: string) => void
+  placePointMode?: boolean
+  onPointPlaced?: (lng: number, lat: number) => void
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
 }
@@ -334,10 +336,15 @@ function TaskFeaturesLayer({
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
       const isAreaLayer = taskFeat.layer_key === 'tasks_area'
       const isFieldDataLayer = taskFeat.layer_key === FIELD_DATA_LAYER_KEY
+      const isOfficeDataLayer = taskFeat.layer_key === OFFICE_DATA_LAYER_KEY
       const geomType = layerCfg?.geometry_type ?? (isAreaLayer ? 'polygon' : 'point')
       const symbology =
         layerCfg?.symbology ??
-        (isFieldDataLayer ? { color: '#7B1FA2', size: 7, marker_type: 'circle' } : {})
+        (isFieldDataLayer
+          ? { color: '#7B1FA2', size: 7, marker_type: 'circle' }
+          : isOfficeDataLayer
+            ? { color: '#E65100', size: 7, marker_type: 'circle' }
+            : {})
       const areaInteractive = isAreaLayer && showAreaPopups
 
       if (isAreaLayer && areaRenderer && taskFeat.geometry) {
@@ -480,6 +487,22 @@ function PickLayerLoader({
     loadPickLayers()
   }, [loadPickLayers])
 
+  return null
+}
+
+function PlacePointHandler({
+  active,
+  onPointPlaced,
+}: {
+  active: boolean
+  onPointPlaced?: (lng: number, lat: number) => void
+}) {
+  useMapEvents({
+    click(e) {
+      if (!active || !onPointPlaced) return
+      onPointPlaced(e.latlng.lng, e.latlng.lat)
+    },
+  })
   return null
 }
 
@@ -653,6 +676,8 @@ export function MapView({
   pickMode,
   pickLayers,
   onFeaturePicked,
+  placePointMode = false,
+  onPointPlaced,
   onExecuteTask,
   onViewArea,
 }: MapViewProps) {
@@ -662,7 +687,7 @@ export function MapView({
       zoom={11}
       maxZoom={MAP_MAX_ZOOM}
       attributionControl={false}
-      className="map-container"
+      className={`map-container${placePointMode ? ' map-container--place-point' : ''}`}
       style={{ height: '100%', width: '100%' }}
     >
       <MapResizeObserver />
@@ -697,6 +722,7 @@ export function MapView({
         pickLayers={pickLayers}
         onFeaturePicked={onFeaturePicked}
       />
+      <PlacePointHandler active={placePointMode && !pickMode} onPointPlaced={onPointPlaced} />
       <TaskHighlightLayer
         highlight={taskHighlight}
         taskSource={taskSource}

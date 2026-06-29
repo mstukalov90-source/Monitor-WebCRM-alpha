@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { collectTasksByLayers, completeAreaAnalise, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea, pauseAreaAnalise, startAreaAnalise } from './api/client'
+import { collectTasksByLayers, completeAreaAnalise, createOfficeTask, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea, pauseAreaAnalise, startAreaAnalise } from './api/client'
 import { AreaOrderPickerModal } from './components/AreaOrderPickerModal'
 import { AreaTaskViewModal } from './components/AreaTaskViewModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
@@ -18,6 +18,7 @@ import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import { countTaskResultFeatures, filterTaskResultByArea } from './lib/filterTasksByArea'
+import { geometryInsideArea } from './lib/geometry'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
 import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, TaskFilterSelection, AppView } from './types'
 import { isAreaSource, TASK_FILTER_NONE } from './types'
@@ -36,6 +37,9 @@ function App() {
   const [pickMode, setPickMode] = useState(false)
   const [pickLayers, setPickLayers] = useState<LinkLayerInfo[]>([])
   const [pickedValue, setPickedValue] = useState<{ column: string; value: string } | null>(null)
+  const [placePointMode, setPlacePointMode] = useState(false)
+  const [pendingOfficeLinkPrefill, setPendingOfficeLinkPrefill] = useState<Record<string, string> | null>(null)
+  const [placePointBusy, setPlacePointBusy] = useState(false)
   const [appView, setAppView] = useState<AppView>('workspace')
   const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
@@ -230,6 +234,8 @@ function App() {
     setEditContext(null)
     setPickMode(false)
     setPickLayers([])
+    setPlacePointMode(false)
+    setPendingOfficeLinkPrefill(null)
     setLoadError(null)
     setOfficeAreaOrder(null)
     setOfficeOrderPickerOpen(false)
@@ -246,6 +252,76 @@ function App() {
     setPickMode(false)
     setPickLayers([])
   }, [])
+
+  const resetPlacePointMode = useCallback(() => {
+    setPlacePointMode(false)
+    setPendingOfficeLinkPrefill(null)
+  }, [])
+
+  const handleStartPlaceOfficePoint = useCallback((linkPrefill: Record<string, string> | null) => {
+    setEditContext(null)
+    setModalHighlight(null)
+    setPickMode(false)
+    setPickLayers([])
+    setPendingOfficeLinkPrefill(linkPrefill)
+    setPlacePointMode(true)
+  }, [])
+
+  const handleTogglePlacePointMode = useCallback(() => {
+    if (placePointMode) {
+      resetPlacePointMode()
+      return
+    }
+    setEditContext(null)
+    setModalHighlight(null)
+    setPickMode(false)
+    setPickLayers([])
+    setPendingOfficeLinkPrefill(null)
+    setPlacePointMode(true)
+  }, [placePointMode, resetPlacePointMode])
+
+  const handleMapPointPlaced = useCallback(
+    async (lng: number, lat: number) => {
+      if (!officeAreaOrder || placePointBusy) return
+      const areaKey = officeAreaOrder.task_key ?? String(officeAreaOrder.attributes.key ?? '')
+      if (!areaKey) return
+
+      const point: GeoJSON.Point = { type: 'Point', coordinates: [lng, lat] }
+      if (
+        officeAreaOrder.geometry &&
+        !geometryInsideArea(point, officeAreaOrder.geometry)
+      ) {
+        alert('Точка должна находиться внутри полигона площадного заказа.')
+        return
+      }
+
+      setPlacePointBusy(true)
+      try {
+        await createOfficeTask({
+          geometry: point,
+          area_task_key: areaKey,
+          link_prefill: pendingOfficeLinkPrefill,
+        })
+        resetPlacePointMode()
+        if (taskResult?.district_name) {
+          await loadTasks(taskResult.district_name, 'active', collection.applyDateFilter)
+        }
+      } catch (e) {
+        alert(String(e))
+      } finally {
+        setPlacePointBusy(false)
+      }
+    },
+    [
+      officeAreaOrder,
+      placePointBusy,
+      pendingOfficeLinkPrefill,
+      resetPlacePointMode,
+      taskResult?.district_name,
+      loadTasks,
+      collection.applyDateFilter,
+    ],
+  )
 
   const handleExecuteTask = useCallback(async (ctx: SelectedTaskContext) => {
     try {
@@ -515,6 +591,10 @@ function App() {
               (taskFilterSelection === TASK_FILTER_NONE && !isAreaSource(taskSource)) ||
               officeAwaitingOrder
             }
+            officeWorking={officeWorking}
+            placePointMode={placePointMode}
+            placePointDisabled={loading || placePointBusy || pickMode}
+            onTogglePlacePoint={handleTogglePlacePointMode}
             onExecute={handleExecuteTask}
             onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}
@@ -536,6 +616,11 @@ function App() {
                 </div>
               )}
               {pickMode && <div className="pick-banner">Режим выбора на карте — кликните объект</div>}
+              {placePointMode && (
+                <div className="place-point-banner">
+                  Кликните на карте для добавления точки камерального анализа
+                </div>
+              )}
               <MapView
                 taskFeatures={taskFeatures}
                 layerConfigByKey={layerConfigByKey}
@@ -550,6 +635,8 @@ function App() {
                 pickMode={pickMode}
                 pickLayers={pickLayers}
                 onFeaturePicked={handleFeaturePicked}
+                placePointMode={placePointMode}
+                onPointPlaced={(lng, lat) => void handleMapPointPlaced(lng, lat)}
                 onExecuteTask={handleExecuteTask}
                 onViewArea={setAreaViewFeature}
               />
@@ -568,6 +655,8 @@ function App() {
         context={editContext}
         canManagePersonnel={user.can_manage_personnel}
         userRole={user.role}
+        officeWorking={officeWorking}
+        onStartPlaceOfficePoint={handleStartPlaceOfficePoint}
         onClose={() => setEditContext(null)}
         onSaved={handleRefresh}
         onHighlightChange={setModalHighlight}

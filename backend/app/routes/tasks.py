@@ -32,6 +32,7 @@ from app.crm.snapshot_loader import collect_snapshot_tasks, snapshot_result_to_d
 from app.crm.schemas import (
     CollectLayerRequest,
     CollectTasksRequest,
+    CreateOfficeTaskRequest,
     FieldPhotosResultOut,
     SnapshotResultOut,
     TaskFormFieldsOut,
@@ -54,6 +55,7 @@ from app.crm.store import (
     update_task_record,
 )
 from app.crm.link_resolver import resolve_link_layer_infos, resolve_linked_features
+from app.crm.office_tasks import create_office_task
 from app.photos.field_photo import _field_image_url, fetch_field_photos
 from app.crm.tasks_area import (
     AREA_STATUSES,
@@ -424,6 +426,25 @@ def get_linked_features(
             conn, record, group_name, store_cfg, registry
         )
     return {"linked_features": linked, "missing_links": missing}
+
+
+@router.post("/tasks/office")
+def post_create_office_task(
+    body: CreateOfficeTaskRequest,
+    user: UserSession = Depends(require_office_or_admin),
+) -> TaskRecordOut:
+    with get_connection() as conn:
+        try:
+            record = create_office_task(
+                conn,
+                user.login,
+                body.geometry,
+                body.area_task_key,
+                body.link_prefill,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _record_to_out(record)
 
 
 @router.patch("/tasks/{key}")

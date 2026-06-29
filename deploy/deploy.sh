@@ -32,7 +32,7 @@ set -a
 source .env
 set +a
 export PGPASSWORD="${DB_PASSWORD:-}"
-for f in "$ROOT"/sql/0*.sql; do
+for f in "$ROOT"/sql/[0-9]*.sql; do
   echo "  $(basename "$f")"
   psql -h "${DB_HOST:-localhost}" -U "${DB_USER:-monitor}" -d "${DB_NAME:-monitor}" -f "$f" >/dev/null
 done

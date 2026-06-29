@@ -257,6 +257,19 @@ export function updateTask(key: string, data: Partial<TaskRecord>): Promise<Task
   })
 }
 
+export interface CreateOfficeTaskPayload {
+  geometry: GeoJSON.Point
+  area_task_key: string
+  link_prefill?: Record<string, string> | null
+}
+
+export function createOfficeTask(payload: CreateOfficeTaskPayload): Promise<TaskRecord> {
+  return request('/api/tasks/office', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function sendTaskToField(key: string): Promise<{ status: string }> {
   return request(`/api/tasks/${key}/send-to-field`, { method: 'POST' })
 }

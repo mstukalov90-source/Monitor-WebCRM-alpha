@@ -303,6 +303,8 @@ export const LENS_PHOTO_SUBGROUP = 'Фото разрытий и строек'
 export const OGH_DISRUPTION_SUBGROUP = 'Разрытия из полигонов ОГХ'
 export const FIELD_DATA_SUBGROUP = 'Полевые данные'
 export const FIELD_DATA_LAYER_KEY = 'field_data'
+export const OFFICE_ANALYSIS_SUBGROUP = 'Задачи из камерального анализа'
+export const OFFICE_DATA_LAYER_KEY = 'office_data'
 export const OATI_ORDERS_SUBGROUP = 'Ордера ОАТИ'
 export const EARTHWORK_SUBGROUP = 'Уведомления на земляные работы'
 export const AVR_SUBGROUP = 'Аварийно-восстановительные работы'
@@ -351,6 +353,12 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
   ],
   [FIELD_DATA_SUBGROUP]: [
     { field: 'created_at', label: 'Дата обследования', format: 'date' },
+  ],
+  [OFFICE_ANALYSIS_SUBGROUP]: [
+    { field: 'created_at', label: 'Дата создания', format: 'date' },
+    { field: 'oati_id', label: 'ОАТИ' },
+    { field: 'earthwork_id', label: 'Земляные работы' },
+    { field: 'avr_mos_id', label: 'АВР' },
   ],
 }
 
@@ -503,6 +511,7 @@ export function resolveTaskTableColumns(
   if (
     !isArea &&
     subgroupName !== FIELD_DATA_SUBGROUP &&
+    subgroupName !== OFFICE_ANALYSIS_SUBGROUP &&
     !cols.some((col) => col.field === 'field_observed')
   ) {
     return [FIELD_OBSERVED_COLUMN, ...cols]
@@ -581,6 +590,7 @@ export interface TaskRecord {
   station_avr?: string | null
   field_observed?: boolean | null
   is_field_data?: boolean | null
+  is_office_task?: boolean | null
   user_created?: string[] | null
   user_last_edit?: string[] | null
 }
