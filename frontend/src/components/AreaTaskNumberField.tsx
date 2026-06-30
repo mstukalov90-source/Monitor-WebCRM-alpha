@@ -4,7 +4,7 @@ import { updateAreaTaskNumber } from '../api/client'
 interface AreaTaskNumberFieldProps {
   taskKey: string
   value: string | null | undefined
-  onSaved?: () => void
+  onSaved?: (value: string | null) => void
   onError?: (message: string) => void
   className?: string
 }
@@ -31,7 +31,7 @@ export function AreaTaskNumberField({
     setSaving(true)
     try {
       await updateAreaTaskNumber(taskKey, normalized || null)
-      onSaved?.()
+      onSaved?.(normalized || null)
     } catch (e) {
       onError?.(String(e))
       setDraft(value ?? '')

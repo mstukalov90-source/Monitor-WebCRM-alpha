@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { collectTasksByLayers, completeAreaAnalise, createOfficeTask, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea, pauseAreaAnalise, startAreaAnalise } from './api/client'
+import { completeAreaAnalise, createOfficeTask, fetchActiveTasks, fetchLayersConfig, fetchSnapshotTasks, fetchTasksArea, pauseAreaAnalise, startAreaAnalise } from './api/client'
 import { AreaOrderPickerModal } from './components/AreaOrderPickerModal'
 import { AreaTaskViewModal } from './components/AreaTaskViewModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
@@ -20,6 +20,11 @@ import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import { countTaskResultFeatures, filterTaskResultByArea } from './lib/filterTasksByArea'
 import { geometryInsideArea } from './lib/geometry'
 import { buildTaskExecutionContext } from './lib/openTaskExecution'
+import {
+  patchAreaViewFeature,
+  patchTaskAttributes,
+  removeTaskByKey,
+} from './lib/taskResultMutations'
 import type { LayerGroupConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskResult, TaskSource, TaskFilterSelection, AppView } from './types'
 import { isAreaSource, TASK_FILTER_NONE } from './types'
 import './App.css'
@@ -135,7 +140,7 @@ function App() {
       setLoadError(null)
       try {
         if (source === 'active') {
-          const result = await collectTasksByLayers(rayon, applyDateFilter)
+          const result = await fetchActiveTasks(rayon, applyDateFilter)
           setTaskResult(result)
         } else if (isAreaSource(source)) {
           const result = await fetchTasksArea(rayon)
@@ -223,6 +228,38 @@ function App() {
     if (taskFilterSelection === TASK_FILTER_NONE) return
     await handleSourceChange(taskFilterSelection)
   }
+
+  const clearHighlightForTask = useCallback((taskKey: string) => {
+    const clearIfMatches = (highlight: TaskHighlight | null) => {
+      if (!highlight) return highlight
+      const popupKey = highlight.popup?.taskKey
+      if (popupKey === taskKey) return null
+      return highlight
+    }
+    setPanelHighlight((prev) => clearIfMatches(prev))
+    setModalHighlight((prev) => clearIfMatches(prev))
+  }, [])
+
+  const handleTaskRemoved = useCallback(
+    (taskKey: string) => {
+      setTaskResult((prev) => (prev ? removeTaskByKey(prev, taskKey) : prev))
+      clearHighlightForTask(taskKey)
+    },
+    [clearHighlightForTask],
+  )
+
+  const handleTaskAttributesPatched = useCallback(
+    (taskKey: string, patch: Record<string, unknown>) => {
+      setTaskResult((prev) => (prev ? patchTaskAttributes(prev, taskKey, patch) : prev))
+      setAreaViewFeature((prev) => {
+        if (!prev) return prev
+        const key = prev.task_key ?? String(prev.attributes.key ?? '')
+        if (key !== taskKey) return prev
+        return patchAreaViewFeature(prev, patch)
+      })
+    },
+    [],
+  )
 
   const handleChangeDistrict = () => {
     setTaskResult(null)
@@ -658,7 +695,8 @@ function App() {
         officeWorking={officeWorking}
         onStartPlaceOfficePoint={handleStartPlaceOfficePoint}
         onClose={() => setEditContext(null)}
-        onSaved={handleRefresh}
+        onTaskRemoved={handleTaskRemoved}
+        onTaskAttributesPatched={handleTaskAttributesPatched}
         onHighlightChange={setModalHighlight}
         onPickModeChange={handlePickModeChange}
         pickedValue={pickedValue}
@@ -672,7 +710,7 @@ function App() {
         canEditTaskNumber={user.can_create_users}
         userRole={user.role}
         onClose={() => setAreaViewFeature(null)}
-        onSaved={handleRefresh}
+        onAttributesPatched={handleTaskAttributesPatched}
       />
 
       {isOfficeUser && officeOrderPickerOpen && (

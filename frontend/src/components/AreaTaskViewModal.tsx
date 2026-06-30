@@ -10,7 +10,7 @@ interface AreaTaskViewModalProps {
   canEditTaskNumber: boolean
   userRole: UserRole
   onClose: () => void
-  onSaved: () => void
+  onAttributesPatched: (taskKey: string, patch: Record<string, unknown>) => void
 }
 
 function attrString(attrs: Record<string, unknown>, field: string): string {
@@ -26,7 +26,7 @@ export function AreaTaskViewModal({
   canEditTaskNumber,
   userRole,
   onClose,
-  onSaved,
+  onAttributesPatched,
 }: AreaTaskViewModalProps) {
   if (!feature) return null
 
@@ -55,7 +55,9 @@ export function AreaTaskViewModal({
             <AreaTaskNumberField
               taskKey={assignmentKey}
               value={attrs.task_number != null ? String(attrs.task_number) : null}
-              onSaved={onSaved}
+              onSaved={(value) => {
+                onAttributesPatched(assignmentKey, { task_number: value })
+              }}
             />
           </label>
         ) : (
@@ -78,7 +80,9 @@ export function AreaTaskViewModal({
             assignmentKey={assignmentKey}
             initialExecutor={initialExecutor}
             canManage={canManagePersonnel}
-            onAssigned={() => onSaved()}
+            onAssigned={(executor) => {
+              onAttributesPatched(assignmentKey, { executor: executor ?? '' })
+            }}
           />
         )}
 

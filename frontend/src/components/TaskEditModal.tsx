@@ -108,7 +108,8 @@ interface TaskEditModalProps {
   officeWorking?: boolean
   onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
   onClose: () => void
-  onSaved: () => void
+  onTaskRemoved: (taskKey: string) => void
+  onTaskAttributesPatched?: (taskKey: string, patch: Record<string, unknown>) => void
   onHighlightChange: (highlight: TaskHighlight | null) => void
   onPickModeChange: (active: boolean, layers: LinkLayerInfo[]) => void
   pickedValue: { column: string; value: string } | null
@@ -122,7 +123,8 @@ export function TaskEditModal({
   officeWorking = false,
   onStartPlaceOfficePoint,
   onClose,
-  onSaved,
+  onTaskRemoved,
+  onTaskAttributesPatched,
   onHighlightChange,
   onPickModeChange,
   pickedValue,
@@ -382,7 +384,6 @@ export function TaskEditModal({
       setRecord(updated)
       setMessage('Сохранено')
       if (context) await refreshHighlight(context, updated.key)
-      onSaved()
     } catch (e) {
       setMessage(String(e))
     } finally {
@@ -432,7 +433,7 @@ export function TaskEditModal({
       } else {
         setMessage(`Статус: ${result.status}`)
       }
-      onSaved()
+      onTaskRemoved(record.key)
       onClose()
     } catch (e) {
       setMessage(String(e))
@@ -568,7 +569,9 @@ export function TaskEditModal({
                 canManage={canManagePersonnel}
                 onAssigned={(executor) => {
                   setFieldExecutor(executor)
-                  onSaved()
+                  if (record) {
+                    onTaskAttributesPatched?.(record.key, { executor: executor ?? '' })
+                  }
                 }}
               />
             )}
