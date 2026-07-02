@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { aiPhotoImageUrl, fetchAiPhotoMeta } from '../api/client'
+import { PhotoLightboxImage } from './PhotoLightboxImage'
 import { formatTaskTableCell, type AiPhotoMeta } from '../types'
 
 const CLEAR_CONFIRM_MESSAGE = 'Отметить задачу: разрытие отсутствует?'
@@ -112,7 +113,7 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
               {imageError ? (
                 <p className="error-banner">Не удалось загрузить изображение</p>
               ) : (
-                <img
+                <PhotoLightboxImage
                   src={aiPhotoImageUrl(meta.uuid)}
                   alt={meta.image_name}
                   className="photo-modal-image"

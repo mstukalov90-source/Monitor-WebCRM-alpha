@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchFieldPhotos } from '../api/client'
+import { PhotoLightboxImage } from './PhotoLightboxImage'
 import { formatTaskTableCell, type FieldPhoto, type FieldPhotosResult } from '../types'
 
 interface FieldMaterialsModalProps {
@@ -114,7 +115,7 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
                       .join(' · ')}
                   </p>
                   <div className="photo-modal-body">
-                    <img
+                    <PhotoLightboxImage
                       src={bannerPhoto.image_url}
                       alt={bannerPhoto.label ?? bannerPhoto.file_path}
                       className="photo-modal-image"
@@ -166,7 +167,7 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
                       {imageError ? (
                         <p className="error-banner">Не удалось загрузить изображение</p>
                       ) : (
-                        <img
+                        <PhotoLightboxImage
                           src={currentGalleryPhoto.image_url}
                           alt={currentGalleryPhoto.file_path}
                           className="photo-modal-image"

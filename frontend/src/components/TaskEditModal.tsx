@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   closeTaskIllegal,
   closeTaskLegal,
@@ -16,7 +16,16 @@ import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
 import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
-import { aiPhotoUuidFromAttributes, formatFieldObserved, isAiPhotoContext, isFieldObserved, TASK_SOURCE_LABELS } from '../types'
+import {
+  aiPhotoUuidFromAttributes,
+  CRM_GROUP_ORDERS,
+  formatFieldObserved,
+  formatTaskTableCell,
+  isAiPhotoContext,
+  isFieldObserved,
+  TASK_SOURCE_LABELS,
+  taskTableColumnsForSubgroup,
+} from '../types'
 import { officeTaskLinkPrefill } from '../lib/officeTaskLinkPrefill'
 
 type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active'
@@ -30,7 +39,6 @@ type LegalValidation = {
 
 const LEGAL_STATION_FIELDS = ['sps', 'station_avr'] as const
 const LEGAL_LINK_EXCLUDED_INDEX = 2
-const CRM_GROUP_ORDERS = 'Новые ордера ОАТИ, АВР и земляные работы'
 const ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY = 'Не проведено полевое обследование.'
 
 const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
@@ -175,6 +183,10 @@ export function TaskEditModal({
   const legalLinkFields = requiresLegalLink ? getLegalLinkFields(linkFields) : []
   const legalValidation = getLegalValidation(form, legalLinkFields, record)
   const showLegalFieldHints = canCloseLegal && canPerformStatusActions
+  const sourceContextColumns = useMemo(() => {
+    if (!context || context.groupName !== CRM_GROUP_ORDERS) return []
+    return taskTableColumnsForSubgroup(context.subgroupName) ?? []
+  }, [context])
   const canAddOfficePoint =
     userRole === 'office' &&
     officeWorking &&
@@ -494,6 +506,15 @@ export function TaskEditModal({
                 <label key={f} className="form-row">
                   <span>{labels[f] || f}</span>
                   <input value={form[f] ?? ''} readOnly />
+                </label>
+              ))}
+              {sourceContextColumns.map((col) => (
+                <label key={col.field} className="form-row">
+                  <span>{col.label}</span>
+                  <input
+                    readOnly
+                    value={formatTaskTableCell(context.feature.attributes[col.field], col.format)}
+                  />
                 </label>
               ))}
             </div>

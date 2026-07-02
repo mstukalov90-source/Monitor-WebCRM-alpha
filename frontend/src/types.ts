@@ -309,6 +309,7 @@ export const OATI_ORDERS_SUBGROUP = 'Ордера ОАТИ'
 export const EARTHWORK_SUBGROUP = 'Уведомления на земляные работы'
 export const AVR_SUBGROUP = 'Аварийно-восстановительные работы'
 export const LOCAL_REPAIR_SUBGROUP = 'Текущие локальные ремонты'
+export const CRM_GROUP_ORDERS = 'Новые ордера ОАТИ, АВР и земляные работы'
 
 export interface TaskTableColumn {
   field: string
@@ -335,21 +336,31 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
     { field: 'loaded_at', label: 'Дата загрузки', format: 'date' },
   ],
   [OATI_ORDERS_SUBGROUP]: [
-    { field: 'customer_construction', label: 'Заказчик' },
     { field: 'order_number', label: 'Номер ордера' },
+    { field: 'work_start_date', label: 'Дата начала работ', format: 'date' },
+    { field: 'work_end_date', label: 'Дата окончания работ', format: 'date' },
+    { field: 'general_contractor', label: 'Исполнитель' },
+    { field: 'customer_construction', label: 'Заказчик' },
   ],
   [EARTHWORK_SUBGROUP]: [
-    { field: 'executor', label: 'Заказчик' },
+    { field: 'executor', label: 'Исполнитель' },
     { field: 'registration_number_notifications', label: 'Номер уведомления' },
+    { field: 'work_start_date', label: 'Дата начала работ', format: 'date' },
+    { field: 'work_end_date', label: 'Дата окончания работ', format: 'date' },
   ],
   [AVR_SUBGROUP]: [
     { field: 'balanceholder', label: 'Заказчик' },
     { field: 'lead_of_work', label: 'Исполнитель' },
     { field: 'em_call_reg_num', label: 'Номер аварийного вызова' },
+    { field: 'work_start_date', label: 'Дата начала работ', format: 'date' },
+    { field: 'work_end_date', label: 'Дата окончания работ', format: 'date' },
+    { field: 'engineering_net_obj', label: 'Тип коммуникаций' },
   ],
   [LOCAL_REPAIR_SUBGROUP]: [
     { field: 'customer', label: 'Заказчик' },
     { field: 'global_id', label: 'Номер data.mos' },
+    { field: 'actual_start_date', label: 'Дата начала работ', format: 'date' },
+    { field: 'actual_end_date', label: 'Дата окончания работ', format: 'date' },
   ],
   [FIELD_DATA_SUBGROUP]: [
     { field: 'created_at', label: 'Дата обследования', format: 'date' },

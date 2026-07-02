@@ -983,9 +983,19 @@ body,
 }
 
 .map-popup {
-  max-height: 200px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   font-size: 0.85rem;
+}
+
+.leaflet-popup-content-wrapper {
+  max-height: min(80vh, 560px);
+}
+
+.leaflet-popup-content {
+  margin: 12px 16px;
+  max-height: none;
+  overflow: visible;
 }
 
 .map-popup-execute,
@@ -1068,6 +1078,106 @@ body,
   max-height: calc(90vh - 140px);
   object-fit: contain;
   display: block;
+  cursor: zoom-in;
+}
+
+.photo-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.photo-lightbox-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+
+.photo-lightbox-toolbar .btn {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.photo-lightbox-toolbar .btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
+.photo-lightbox-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.photo-lightbox-scale {
+  min-width: 48px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #fff;
+}
+
+.photo-lightbox-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+
+.photo-lightbox-stage--fit {
+  cursor: pointer;
+}
+
+.photo-lightbox-stage:active {
+  cursor: grabbing;
+}
+
+.photo-lightbox-stage--fit:active {
+  cursor: pointer;
+}
+
+.photo-lightbox-close-float {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.photo-lightbox-close-float:hover {
+  background: rgba(0, 0, 0, 0.75);
+  border-color: #fff;
+}
+
+.photo-lightbox-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  user-select: none;
+  pointer-events: none;
 }
 
 .photo-modal-footer {
