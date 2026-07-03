@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import partial
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from psycopg2 import OperationalError
@@ -34,6 +36,7 @@ from app.crm.schemas import (
     CollectTasksRequest,
     CreateOfficeTaskRequest,
     FieldPhotosResultOut,
+    SendToFieldRequest,
     SnapshotResultOut,
     TaskFormFieldsOut,
     TaskRecordOut,
@@ -468,10 +471,12 @@ def patch_task(
 @router.post("/tasks/{key}/send-to-field")
 def post_send_to_field(
     key: str,
+    body: SendToFieldRequest,
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
     check_task_source(user, "active")
-    return _send_snapshot(key, send_task_to_field, user.login)
+    handler = partial(send_task_to_field, office_comment=body.office_comment)
+    return _send_snapshot(key, handler, user.login)
 
 
 @router.post("/tasks/{key}/close-legal")

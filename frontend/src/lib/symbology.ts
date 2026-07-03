@@ -1,6 +1,13 @@
 import type { PathOptions } from 'leaflet'
 import type { Symbology } from '../types'
 
+/** Минимальная толщина линии на карте (удобнее кликать). */
+export const MIN_LINE_WEIGHT = 5
+
+export function lineWeight(symbology: Symbology): number {
+  return Math.max(symbology.width ?? 2, MIN_LINE_WEIGHT)
+}
+
 export function pointRadius(symbology: Symbology): number {
   return symbology.size ?? 4
 }
@@ -18,7 +25,7 @@ export function pointStyle(symbology: Symbology): PathOptions {
 export function lineStyle(symbology: Symbology): PathOptions {
   return {
     color: symbology.color ?? '#3388ff',
-    weight: symbology.width ?? 2,
+    weight: lineWeight(symbology),
     opacity: symbology.opacity ?? 0.9,
   }
 }

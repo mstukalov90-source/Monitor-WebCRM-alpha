@@ -146,6 +146,7 @@ export function TaskEditModal({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const [pendingStatusAction, setPendingStatusAction] = useState<StatusAction | null>(null)
+  const [officeComment, setOfficeComment] = useState('')
   const [showLegalRequirements, setShowLegalRequirements] = useState(false)
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
@@ -257,6 +258,7 @@ export function TaskEditModal({
     if (!context) {
       setRecord(null)
       setPendingStatusAction(null)
+      setOfficeComment('')
       setShowLegalRequirements(false)
       setPhotoUuid(null)
       setFieldMaterialsKey(null)
@@ -269,6 +271,7 @@ export function TaskEditModal({
     setPhotoUuid(null)
     setFieldMaterialsKey(null)
     setPendingStatusAction(null)
+    setOfficeComment('')
     setShowLegalRequirements(false)
     let cancelled = false
     setLoading(true)
@@ -424,7 +427,7 @@ export function TaskEditModal({
     setLoading(true)
     try {
       let result
-      if (action === 'field') result = await sendTaskToField(record.key)
+      if (action === 'field') result = await sendTaskToField(record.key, officeComment)
       else if (action === 'legal') result = await closeTaskLegal(record.key)
       else if (action === 'illegal') result = await closeTaskIllegal(record.key)
       else if (action === 'clear') result = await markDisruptionAbsent(record.key)
@@ -498,6 +501,14 @@ export function TaskEditModal({
                 Отправлено: {new Date(context.feature.sent_at).toLocaleString('ru-RU')}
               </p>
             )}
+            {taskSource === 'field' &&
+              context.feature.attributes.office_comment != null &&
+              String(context.feature.attributes.office_comment).trim() !== '' && (
+                <p className="muted small">
+                  Комментарий камерального анализа:{' '}
+                  {String(context.feature.attributes.office_comment)}
+                </p>
+              )}
             {message && <p className="message error-text">{message}</p>}
 
             <div className="form-section">
@@ -654,6 +665,17 @@ export function TaskEditModal({
                   {pendingStatusAction ? (
                     <div className="status-confirm">
                       <p>{STATUS_CONFIRM_MESSAGES[pendingStatusAction]}</p>
+                      {pendingStatusAction === 'field' && (
+                        <label className="form-row status-confirm-comment">
+                          <span>Комментарий (необязательно)</span>
+                          <textarea
+                            value={officeComment}
+                            rows={3}
+                            disabled={loading}
+                            onChange={(e) => setOfficeComment(e.target.value)}
+                          />
+                        </label>
+                      )}
                       <div className="modal-action-buttons">
                         <button
                           type="button"
@@ -667,7 +689,10 @@ export function TaskEditModal({
                           type="button"
                           className="btn"
                           disabled={loading}
-                          onClick={() => setPendingStatusAction(null)}
+                          onClick={() => {
+                            setPendingStatusAction(null)
+                            setOfficeComment('')
+                          }}
                         >
                           Отмена
                         </button>

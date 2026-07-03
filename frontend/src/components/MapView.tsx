@@ -6,7 +6,7 @@ import { fetchGeoJson, fetchLayersConfig } from '../api/client'
 import { fetchTasksAreaGeoJson } from '../api/client'
 import { findHoodLayerKey } from '../lib/hoodLayer'
 import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapStyle'
-import { pointRadius, styleForGeometryType } from '../lib/symbology'
+import { pointRadius, styleForGeometryType, MIN_LINE_WEIGHT } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
 import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
@@ -451,7 +451,16 @@ function PickLayerLoader({
                 fillColor: '#66aaff',
                 fillOpacity: 0.8,
               }),
-            style: { color: '#0066cc', weight: 3, fillOpacity: 0.2 },
+            style: (feature) => {
+              const isLine =
+                feature?.geometry?.type === 'LineString' ||
+                feature?.geometry?.type === 'MultiLineString'
+              return {
+                color: '#0066cc',
+                weight: isLine ? MIN_LINE_WEIGHT : 3,
+                fillOpacity: 0.2,
+              }
+            },
             onEachFeature: (feature, layer) => {
               layer.on('click', (e) => {
                 L.DomEvent.stopPropagation(e)
@@ -527,7 +536,7 @@ function highlightPathStyle(
     geometry.type === 'LineString' || geometry.type === 'MultiLineString'
   return {
     color: palette.color,
-    weight: palette.weight,
+    weight: isLine ? Math.max(palette.weight, MIN_LINE_WEIGHT) : palette.weight,
     dashArray: isLine && palette === HIGHLIGHT_LINKED ? HIGHLIGHT_LINKED.dashArray : undefined,
     fillColor: palette.color,
     fillOpacity: isPolygon ? palette.fillOpacity : 0,

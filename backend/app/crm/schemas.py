@@ -134,6 +134,10 @@ class SnapshotResultOut(BaseModel):
     status: str
 
 
+class SendToFieldRequest(BaseModel):
+    office_comment: str | None = None
+
+
 class PersonnelUserOut(BaseModel):
     uuid: str
     login: str

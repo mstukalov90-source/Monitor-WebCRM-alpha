@@ -923,6 +923,16 @@ body,
   font-size: 0.9rem;
 }
 
+.status-confirm-comment {
+  margin-bottom: 10px;
+}
+
+.status-confirm-comment textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
 .btn-status-field {
   background: #b8860b;
   border-color: #8b6914;

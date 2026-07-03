@@ -134,6 +134,36 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     ) + user_audit_migration_statements(schema, table)
 
 
+def _field_only_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
+    if table != "tasks_field":
+        return ()
+    return (
+        f'ALTER TABLE "{schema}"."{table}" '
+        f"ADD COLUMN IF NOT EXISTS office_comment TEXT",
+    )
+
+
+_office_comment_ready: set[str] = set()
+
+
+def ensure_office_comment_column(conn: PgConnection, schema: str, table: str) -> bool:
+    if table != "tasks_field":
+        return True
+    key = f"{schema}.{table}"
+    if key in _office_comment_ready:
+        return True
+    try:
+        with conn.cursor() as cur:
+            for stmt in _field_only_migration_statements(schema, table):
+                cur.execute(stmt)
+        conn.commit()
+        _office_comment_ready.add(key)
+        return True
+    except Exception:
+        conn.rollback()
+        return False
+
+
 def _snapshot_ddl_statements(
     schema: str, tasks_table: str, snapshot_table: str
 ) -> Tuple[str, ...]:
@@ -350,6 +380,8 @@ def ensure_task_snapshot_table(
             for stmt in _snapshot_ddl_statements(schema, tasks_table, snapshot_table):
                 cur.execute(stmt)
             for stmt in _station_migration_statements(snapshot_schema, snapshot_table):
+                cur.execute(stmt)
+            for stmt in _field_only_migration_statements(snapshot_schema, snapshot_table):
                 cur.execute(stmt)
         conn.commit()
         return True
@@ -585,6 +617,7 @@ def send_task_snapshot(
     login: str,
     *,
     ensure_table: bool = True,
+    office_comment: str | None = None,
 ) -> SendTaskSnapshotResult:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     if ensure_table and not ensure_task_snapshot_table(conn, store_cfg, config_key, default_table):
@@ -610,6 +643,9 @@ def send_task_snapshot(
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
     ] + [bool(record.is_field_data), bool(record.is_office_task)] + [audit, audit]
+    if default_table == "tasks_field":
+        columns = list(columns) + ["office_comment"]
+        values = list(values) + [_normalize_id_value(office_comment)]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -640,9 +676,17 @@ def send_task_to_field(
     login: str,
     *,
     ensure_table: bool = True,
+    office_comment: str | None = None,
 ) -> SendTaskSnapshotResult:
     return send_task_snapshot(
-        conn, record, store_cfg, "field_table", "tasks_field", login, ensure_table=ensure_table
+        conn,
+        record,
+        store_cfg,
+        "field_table",
+        "tasks_field",
+        login,
+        ensure_table=ensure_table,
+        office_comment=office_comment,
     )
 
 

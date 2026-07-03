@@ -58,6 +58,7 @@ class SnapshotRow:
     subgroup_name: str
     group_name: str
     executor: Optional[str] = None
+    office_comment: Optional[str] = None
 
 
 def _snapshot_table_ref(store_cfg: dict, config_key: str, default_table: str) -> tuple[str, str]:
@@ -72,6 +73,15 @@ def _find_group_name(subgroup_name: str, crm_cfg: dict[str, Any]) -> str:
             if sub_cfg.get("name") == subgroup_name:
                 return group_cfg.get("name", "")
     return ""
+
+
+def _apply_snapshot_metadata(attrs: dict[str, Any], snap: SnapshotRow) -> None:
+    if snap.executor:
+        attrs["executor"] = snap.executor
+    if snap.sent_at:
+        attrs["_sent_at"] = snap.sent_at
+    if snap.office_comment and str(snap.office_comment).strip():
+        attrs["office_comment"] = str(snap.office_comment).strip()
 
 
 def _row_to_snapshot_row(
@@ -112,6 +122,7 @@ def _row_to_snapshot_row(
         subgroup_name=subgroup_name,
         group_name=group_name,
         executor=row.get("executor") if include_executor else None,
+        office_comment=row.get("office_comment") if include_executor else None,
     )
 
 
@@ -123,6 +134,7 @@ def _snapshot_select_columns(table: str) -> list[str]:
     )
     if table == "tasks_field":
         columns.append("executor")
+        columns.append("office_comment")
     return columns
 
 
@@ -139,8 +151,10 @@ def fetch_snapshot_rows(
     include_executor = table == "tasks_field"
     if include_executor:
         from app.crm.executor import ensure_executor_column
+        from app.crm.store import ensure_office_comment_column
 
         ensure_executor_column(conn, schema, table)
+        ensure_office_comment_column(conn, schema, table)
     col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
 
     filters: list[str] = []
@@ -179,8 +193,10 @@ def fetch_snapshot_rows_by_keys(
     include_executor = table == "tasks_field"
     if include_executor:
         from app.crm.executor import ensure_executor_column
+        from app.crm.store import ensure_office_comment_column
 
         ensure_executor_column(conn, schema, table)
+        ensure_office_comment_column(conn, schema, table)
     col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
     query = f'SELECT {col_list} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
 
@@ -231,10 +247,7 @@ def _field_data_snapshot_to_feature(
     attrs["_snapshot_key"] = snap.snapshot_key
     attrs["field_observed"] = bool(snap.record.field_observed)
     attrs["is_field_data"] = True
-    if snap.executor:
-        attrs["executor"] = snap.executor
-    if snap.sent_at:
-        attrs["_sent_at"] = snap.sent_at
+    _apply_snapshot_metadata(attrs, snap)
     for col in ("oati_id", "earthwork_id", "localwork_id", "avr_mos_id", "sps", "kgs", "station_avr"):
         value = getattr(snap.record, col, None)
         if value is not None and str(value).strip():
@@ -282,10 +295,7 @@ def _office_data_snapshot_to_feature(
         if point_row.get("created_at") is not None
         else None,
     }
-    if snap.executor:
-        attrs["executor"] = snap.executor
-    if snap.sent_at:
-        attrs["_sent_at"] = snap.sent_at
+    _apply_snapshot_metadata(attrs, snap)
     for col in ("oati_id", "earthwork_id", "localwork_id", "avr_mos_id", "sps", "kgs", "station_avr"):
         value = getattr(snap.record, col, None)
         if value is not None and str(value).strip():
@@ -351,10 +361,7 @@ def snapshot_row_to_feature(
     attrs = dict(feature_data.get("attributes") or {})
     attrs["_task_key"] = snap.task_key
     attrs["_snapshot_key"] = snap.snapshot_key
-    if snap.executor:
-        attrs["executor"] = snap.executor
-    if snap.sent_at:
-        attrs["_sent_at"] = snap.sent_at
+    _apply_snapshot_metadata(attrs, snap)
 
     return TaskFeature(
         layer_name=feature_data.get("layer_name", ""),

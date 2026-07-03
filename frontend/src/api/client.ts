@@ -270,8 +270,14 @@ export function createOfficeTask(payload: CreateOfficeTaskPayload): Promise<Task
   })
 }
 
-export function sendTaskToField(key: string): Promise<{ status: string }> {
-  return request(`/api/tasks/${key}/send-to-field`, { method: 'POST' })
+export function sendTaskToField(
+  key: string,
+  officeComment?: string | null,
+): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/send-to-field`, {
+    method: 'POST',
+    body: JSON.stringify({ office_comment: officeComment?.trim() || null }),
+  })
 }
 
 export function closeTaskLegal(key: string): Promise<{ status: string }> {
