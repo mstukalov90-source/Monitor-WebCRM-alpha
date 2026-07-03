@@ -6,6 +6,7 @@ import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
+import { OrderTracksScreen } from './components/OrderTracksScreen'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
 import { flattenLayers } from './components/LayerControl'
@@ -412,6 +413,17 @@ function App() {
     )
   }
 
+  if (appView === 'order_tracks' && user.can_manage_personnel) {
+    return (
+      <OrderTracksScreen
+        userLogin={user.login}
+        initialRayon={collection.rayon || taskResult?.district_name || ''}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
   if (!taskResult) {
     return (
       <DistrictStartScreen
@@ -429,6 +441,7 @@ function App() {
         onCollect={handleCollect}
         onLoadFieldTasks={handleLoadFieldTasks}
         onOpenPersonnel={() => setAppView('personnel')}
+        onOpenOrderTracks={() => setAppView('order_tracks')}
         onOpenStatistics={() => setAppView('statistics')}
         onLogout={logout}
       />
@@ -581,6 +594,11 @@ function App() {
             {user.can_manage_personnel && (
               <button type="button" className="btn" onClick={() => setAppView('personnel')}>
                 Персонал
+              </button>
+            )}
+            {user.can_manage_personnel && (
+              <button type="button" className="btn" onClick={() => setAppView('order_tracks')}>
+                Треки заказов
               </button>
             )}
             <button type="button" className="btn" onClick={() => setAppView('statistics')}>

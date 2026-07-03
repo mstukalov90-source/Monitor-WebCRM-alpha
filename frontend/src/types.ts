@@ -82,7 +82,51 @@ export interface PersonnelStatistics {
   scope: 'all' | 'self'
 }
 
-export type AppView = 'workspace' | 'personnel' | 'statistics'
+export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks'
+
+export interface TrackFeature {
+  id: string
+  attributes: Record<string, unknown>
+  geometry: GeoJSON.Geometry
+}
+
+export interface OrderTracksResult {
+  district_name: string
+  tracks: TrackFeature[]
+  errors: string[]
+}
+
+export interface TrackTableColumn {
+  field: string
+  label: string
+  format?: 'date' | 'datetime' | 'duration_sec'
+}
+
+export const TRACK_TABLE_COLUMNS: TrackTableColumn[] = [
+  { field: 'username', label: 'Исполнитель' },
+  { field: 'started_at', label: 'Начало', format: 'datetime' },
+  { field: 'duration_sec', label: 'Продолжительность', format: 'duration_sec' },
+]
+
+export function formatTrackTableCell(value: unknown, format?: TrackTableColumn['format']): string {
+  if (value == null || value === '') return ''
+  if (format === 'datetime') {
+    const d = new Date(String(value))
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('ru-RU')
+  }
+  if (format === 'date') {
+    const d = new Date(String(value))
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('ru-RU')
+  }
+  if (format === 'duration_sec') {
+    const sec = Number(value)
+    if (Number.isNaN(sec)) return String(value)
+    const m = Math.floor(sec / 60)
+    const s = sec % 60
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+  return String(value)
+}
 
 export const HOOD_BOUNDARIES_DISPLAY_NAME = 'Границы районов'
 export const DISTRICT_RAYON_FIELD = 'rayon'

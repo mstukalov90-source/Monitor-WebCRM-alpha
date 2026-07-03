@@ -259,3 +259,15 @@ class PersonnelStatisticsOut(BaseModel):
     date_from: str
     date_to: str
     scope: Literal["all", "self"] = "all"
+
+
+class OrderTrackOut(BaseModel):
+    id: str
+    attributes: dict[str, Any]
+    geometry: dict[str, Any]
+
+
+class OrderTracksResultOut(BaseModel):
+    district_name: str
+    tracks: list[OrderTrackOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)

@@ -411,6 +411,29 @@ body,
   font-size: 0.9rem;
 }
 
+.district-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.district-field-inline span {
+  white-space: nowrap;
+}
+
+.district-field-inline select {
+  min-width: 160px;
+}
+
+.map-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 240px;
+}
+
 .app-body {
   flex: 1;
   display: flex;

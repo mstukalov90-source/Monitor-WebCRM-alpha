@@ -589,6 +589,22 @@
       "boundaries_layer": "Границы районов",
       "field": "rayon"
     },
+    "order_tracks": {
+      "schema": "mggt_field",
+      "table": "tracks",
+      "id_column": "id",
+      "geometry_column": "geom",
+      "task_column": "task",
+      "display_columns": [
+        "name",
+        "username",
+        "started_at",
+        "duration_sec",
+        "comment",
+        "area_key",
+        "created_at"
+      ]
+    },
     "groups": [
       {
         "name": "Разрытия",
@@ -720,6 +736,6 @@
     "lens": "Данные Объектив",
     "genplan": "Данные ГенПлан (photo_meta, order)",
     "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрывия (ogh-disruption)",
-    "mggt_field": "Полевые отчёты МГГТ Field (reports)"
+    "mggt_field": "Полевые отчёты МГГТ Field (reports, tracks)"
   }
 }

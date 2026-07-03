@@ -20,6 +20,7 @@ import type {
   PersonnelStatistics,
   WorkflowTargetStatus,
   BulkStatusResult,
+  OrderTracksResult,
 } from '../types'
 import { appendLayerChunk, taskResultFromPlan } from '../lib/collectTasks'
 
@@ -525,4 +526,9 @@ export function fetchPersonnelStatistics(params: {
   if (params.objectType) qs.set('object_type', params.objectType)
   if (params.userLogin) qs.set('user_login', params.userLogin)
   return request(`/api/personnel/statistics?${qs}`)
+}
+
+export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {
+  const qs = new URLSearchParams({ rayon })
+  return request(`/api/order-tracks?${qs}`)
 }
