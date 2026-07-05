@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from psycopg2.extensions import connection as PgConnection
 
-from app.crm.statistics import log_statistic, skip_field_complete_trigger
+from app.crm.statistics import skip_field_complete_trigger
 from app.crm.user_audit import (
     USER_AUDIT_COLUMNS,
     make_user_audit,
@@ -20,13 +20,6 @@ logger = logging.getLogger(__name__)
 SendTaskSnapshotResult = Literal["inserted", "skipped", "deleted", "not_found"]
 WorkflowStatus = Literal["active", "field", "clear", "done_legal", "done_illegal"]
 WorkflowTarget = Literal["active", "field", "clear"]
-
-_SNAPSHOT_STAT_ACTIONS: dict[str, str] = {
-    "field_table": "task_sent_to_field",
-    "done_legal_table": "task_closed_legal",
-    "done_illegal_table": "task_closed_illegal",
-    "clear_table": "task_marked_clear",
-}
 
 TASK_ID_COLUMNS = (
     "photo_uuid",
@@ -653,15 +646,6 @@ def send_task_snapshot(
     try:
         with conn.cursor() as cur:
             cur.execute(query, values)
-        if config_key in _SNAPSHOT_STAT_ACTIONS:
-            log_statistic(
-                conn,
-                login=login,
-                object_type="task",
-                action=_SNAPSHOT_STAT_ACTIONS[config_key],
-                object_key=record.key,
-                metadata={"task_type": task_type},
-            )
         conn.commit()
         return "inserted"
     except Exception:
@@ -751,14 +735,6 @@ def remove_task_from_field(
                         """,
                         (audit, record.key),
                     )
-                    if log_return_to_active:
-                        log_statistic(
-                            conn,
-                            login=login,
-                            object_type="task",
-                            action="task_returned_to_active",
-                            object_key=record.key,
-                        )
         conn.commit()
         return "deleted" if deleted else "not_found"
     except Exception:
@@ -884,16 +860,6 @@ def set_task_workflow_status(
             conn, record, store_cfg, login, ensure_table=ensure_snapshot
         )
         if result in ("inserted", "skipped"):
-            log_statistic(
-                conn,
-                login=login,
-                object_type="task",
-                action="task_workflow_changed",
-                object_key=record.key,
-                metadata={"target": target, "from": current},
-                skip_if_exists=False,
-            )
-            conn.commit()
             return "updated"
         return result
 
@@ -907,16 +873,6 @@ def set_task_workflow_status(
         conn, record, store_cfg, login, ensure_table=ensure_snapshot
     )
     if result in ("inserted", "skipped"):
-        log_statistic(
-            conn,
-            login=login,
-            object_type="task",
-            action="task_workflow_changed",
-            object_key=record.key,
-            metadata={"target": target, "from": current},
-            skip_if_exists=False,
-        )
-        conn.commit()
         return "updated"
     return result
 
@@ -1096,15 +1052,6 @@ def update_task_record(
             cur.execute(query, params)
             if cur.rowcount == 0:
                 raise ValueError(f"Task {record.key} not found")
-            log_statistic(
-                conn,
-                login=login,
-                object_type="task",
-                action="task_updated",
-                object_key=record.key,
-                metadata={"task_type": task_type},
-                skip_if_exists=False,
-            )
         conn.commit()
     except Exception:
         conn.rollback()

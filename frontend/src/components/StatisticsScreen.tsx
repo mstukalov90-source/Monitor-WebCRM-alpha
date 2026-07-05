@@ -192,15 +192,16 @@ export function StatisticsScreen({
                     <thead>
                       <tr>
                         <th>Сотрудник</th>
-                        <th>Выполнено задач</th>
-                        <th>Завершено заказов</th>
-                        <th>Создано задач</th>
+                        <th>Обследование камеральной задачи</th>
+                        <th>Отсутствие разрытия</th>
+                        <th>Обнаружение разрытия</th>
+                        <th>Закрытие заказа</th>
                       </tr>
                     </thead>
                     <tbody>
                       {fieldRows.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="muted">
+                          <td colSpan={5} className="muted">
                             Нет данных
                           </td>
                         </tr>
@@ -208,9 +209,10 @@ export function StatisticsScreen({
                         fieldRows.map((row) => (
                           <tr key={row.user_login}>
                             <td>{row.user_login}</td>
-                            <td>{row.tasks_completed}</td>
-                            <td>{row.orders_completed}</td>
-                            <td>{row.tasks_created}</td>
+                            <td>{row.camera_surveys}</td>
+                            <td>{row.disruption_absent}</td>
+                            <td>{row.disruption_found}</td>
+                            <td>{row.orders_closed}</td>
                           </tr>
                         ))
                       )}
@@ -265,16 +267,20 @@ function FieldMetricsCards({ row }: { row: FieldStatisticsSummary }) {
   return (
     <div className="statistics-metrics">
       <div className="statistics-metric-card">
-        <span className="statistics-metric-value">{row.tasks_completed}</span>
-        <span className="statistics-metric-label">Выполнено задач</span>
+        <span className="statistics-metric-value">{row.camera_surveys}</span>
+        <span className="statistics-metric-label">Обследование камеральной задачи</span>
       </div>
       <div className="statistics-metric-card">
-        <span className="statistics-metric-value">{row.orders_completed}</span>
-        <span className="statistics-metric-label">Завершено заказов</span>
+        <span className="statistics-metric-value">{row.disruption_absent}</span>
+        <span className="statistics-metric-label">Отсутствие разрытия по задаче</span>
       </div>
       <div className="statistics-metric-card">
-        <span className="statistics-metric-value">{row.tasks_created}</span>
-        <span className="statistics-metric-label">Создано задач</span>
+        <span className="statistics-metric-value">{row.disruption_found}</span>
+        <span className="statistics-metric-label">Обнаружение разрытия в поле</span>
+      </div>
+      <div className="statistics-metric-card">
+        <span className="statistics-metric-value">{row.orders_closed}</span>
+        <span className="statistics-metric-label">Закрытие заказа</span>
       </div>
     </div>
   )

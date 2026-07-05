@@ -236,9 +236,10 @@ class FieldPhotosResultOut(BaseModel):
 class FieldStatisticsSummaryOut(BaseModel):
     user_login: str
     user_role: str
-    tasks_completed: int
-    orders_completed: int
-    tasks_created: int
+    camera_surveys: int
+    disruption_absent: int
+    disruption_found: int
+    orders_closed: int
     period_from: str | None = None
     period_to: str | None = None
 

@@ -120,7 +120,7 @@ npm run dev
 | GET | `/api/personnel/districts` | Районы с gid |
 | GET | `/api/personnel/tasks/field` | Задачи tasks_field для назначения |
 | GET | `/api/personnel/tasks/active` | Активные задачи для управления (manager/admin) |
-| GET | `/api/personnel/tasks/clear` | Задачи «разрывие отсутствует» (manager/admin) |
+| GET | `/api/personnel/tasks/clear` | Задачи «разрытие отсутствует» (manager/admin) |
 | GET | `/api/personnel/tasks/area` | Задачи tasks_area для назначения |
 | PATCH | `/api/personnel/tasks/area/{key}` | Назначить executor (площадная) |
 | PATCH | `/api/personnel/tasks/area/{key}/task-number` | Изменить task_number (только admin) |
@@ -143,7 +143,7 @@ npm run dev
 9. Войти как `vasya` — видны только свои и неназначенные задачи в поле
 10. Войти как `admin` → «Персонал» → «Добавить сотрудника» → создать пользователя `test_field` (роль field); войти под новым логином
 11. Войти как `admin` или `lena` → «Персонал» → вкладка «Активные» → выбрать задачи → «В поле» → на карте задачи появляются во вкладке «В поле»
-12. На вкладке «В поле» → выбрать задачи → назначить исполнителя из списка → «В активные» или «Разрывие отсутствует»
+12. На вкладке «В поле» → выбрать задачи → назначить исполнителя из списка → «В активные» или «Разрытие отсутствует»
 
 ```sql
 SELECT * FROM crm.tasks_field ORDER BY sent_at DESC LIMIT 5;

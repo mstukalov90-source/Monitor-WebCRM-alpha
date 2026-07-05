@@ -27,14 +27,14 @@ type CreatableRole = 'field' | 'office' | 'manager'
 const TAB_LABELS: Record<TaskTab, string> = {
   active: 'Активные',
   field: 'В поле',
-  clear: 'Разрывие отсутствует',
+  clear: 'Разрытие отсутствует',
   area: 'Площадные',
 }
 
 const STATUS_CONFIRM: Record<WorkflowTargetStatus, string> = {
   active: 'Вернуть выбранные задачи в активные?',
   field: 'Отправить выбранные задачи в поле?',
-  clear: 'Отметить выбранные задачи: разрывие отсутствует?',
+  clear: 'Отметить выбранные задачи: разрытие отсутствует?',
 }
 
 const STATUS_ACTIONS: Record<TaskTab, WorkflowTargetStatus[]> = {
@@ -291,7 +291,7 @@ export function PersonnelScreen({
   const statusButtonLabel = (target: WorkflowTargetStatus): string => {
     if (target === 'active') return 'В активные'
     if (target === 'field') return 'В поле'
-    return 'Разрывие отсутствует'
+    return 'Разрытие отсутствует'
   }
 
   const statusButtonClass = (target: WorkflowTargetStatus): string => {

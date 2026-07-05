@@ -15,6 +15,15 @@ STATISTICS_TABLE = "statistics"
 
 OFFICE_SESSION_ROLES = frozenset({"office", "manager", "admin"})
 
+OFFICE_STATISTICS_ACTIONS = (
+    "office_analise_started",
+    "office_analise_completed",
+    "office_disruption_absent",
+    "office_camera_tasks_created",
+    "office_closed_illegal",
+    "office_closed_legal",
+)
+
 
 def map_session_role_to_statistics(role: str) -> str | None:
     role = (role or "").strip()
@@ -168,15 +177,16 @@ def fetch_field_statistics_summary(
         SELECT
             s.user_login,
             s.user_role,
-            COUNT(*) FILTER (WHERE s.action = 'task_completed') AS tasks_completed,
-            COUNT(*) FILTER (WHERE s.action = 'order_completed') AS orders_completed,
-            COUNT(*) FILTER (WHERE s.action = 'task_created') AS tasks_created,
+            COUNT(*) FILTER (WHERE s.action = 'field_camera_survey') AS camera_surveys,
+            COUNT(*) FILTER (WHERE s.action = 'field_disruption_absent') AS disruption_absent,
+            COUNT(*) FILTER (WHERE s.action = 'field_disruption_found') AS disruption_found,
+            COUNT(*) FILTER (WHERE s.action = 'field_order_closed') AS orders_closed,
             MIN(s.created_at) AS period_from,
             MAX(s.created_at) AS period_to
         FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
         WHERE {where}
         GROUP BY s.user_login, s.user_role
-        ORDER BY tasks_completed DESC, orders_completed DESC, tasks_created DESC
+        ORDER BY camera_surveys DESC, disruption_found DESC, orders_closed DESC
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
@@ -207,7 +217,14 @@ def fetch_office_statistics_breakdown(
         filters.append("s.user_login = %s")
         params.append(user_login.strip())
 
+    action_placeholders = ", ".join(["%s"] * len(OFFICE_STATISTICS_ACTIONS))
+    filters.append(f"s.action IN ({action_placeholders})")
+    params.extend(OFFICE_STATISTICS_ACTIONS)
+
     where = " AND ".join(filters)
+    action_order = ", ".join(
+        f"'{action}'" for action in OFFICE_STATISTICS_ACTIONS
+    )
     query = f"""
         SELECT
             s.user_login,
@@ -220,7 +237,9 @@ def fetch_office_statistics_breakdown(
         FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
         WHERE {where}
         GROUP BY s.user_login, s.user_role, s.object_type, s.action
-        ORDER BY s.user_login, s.object_type, action_count DESC
+        ORDER BY s.user_login,
+            array_position(ARRAY[{action_order}]::text[], s.action),
+            s.object_type
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)

@@ -735,7 +735,7 @@
     "stroymonitoring": "СтройМониторинг",
     "lens": "Данные Объектив",
     "genplan": "Данные ГенПлан (photo_meta, order)",
-    "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрывия (ogh-disruption)",
+    "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрытия (ogh-disruption)",
     "mggt_field": "Полевые отчёты МГГТ Field (reports, tracks)"
   }
 }

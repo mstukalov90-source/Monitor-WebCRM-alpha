@@ -57,9 +57,10 @@ export interface BulkStatusResult {
 export interface FieldStatisticsSummary {
   user_login: string
   user_role: string
-  tasks_completed: number
-  orders_completed: number
-  tasks_created: number
+  camera_surveys: number
+  disruption_absent: number
+  disruption_found: number
+  orders_closed: number
   period_from: string | null
   period_to: string | null
 }
