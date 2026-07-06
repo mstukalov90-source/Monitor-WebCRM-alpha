@@ -22,7 +22,6 @@ import type {
   BulkStatusResult,
   OrderTracksResult,
 } from '../types'
-import { appendLayerChunk, taskResultFromPlan } from '../lib/collectTasks'
 
 const API_BASE = ''
 
@@ -143,7 +142,10 @@ export function collectTasksLayer(
   )
 }
 
-export function triggerCollectPersist(rayon: string, applyDateFilter: boolean): Promise<{ status: string }> {
+export function triggerCollectPersist(
+  rayon: string,
+  applyDateFilter: boolean,
+): Promise<{ status: string; inserted: number; skipped: number; invalid: number }> {
   return request('/api/tasks/collect/persist', {
     method: 'POST',
     body: JSON.stringify({ rayon, apply_date_filter: applyDateFilter }),
@@ -156,15 +158,11 @@ export async function collectTasksByLayers(
   onProgress?: (progress: CollectProgress) => void,
 ): Promise<TaskResult> {
   const plan = await fetchCollectPlan(rayon, applyDateFilter)
-  const result = taskResultFromPlan(plan)
-  result.persist_stats = {
-    inserted: 0,
-    skipped: 0,
-    invalid: 0,
-    pending: true,
-  }
+
+  const persist = await triggerCollectPersist(rayon, applyDateFilter)
 
   const total = plan.layers.length
+  const layerErrors: string[] = [...plan.errors]
   for (let index = 0; index < plan.layers.length; index += 1) {
     const layer = plan.layers[index]
     onProgress?.({
@@ -173,11 +171,22 @@ export async function collectTasksByLayers(
       layerName: layer.layer_name,
     })
     const chunk = await collectTasksLayer(rayon, applyDateFilter, layer)
-    appendLayerChunk(result, chunk)
+    if (chunk.errors.length) {
+      layerErrors.push(...chunk.errors)
+    }
   }
 
-  void triggerCollectPersist(rayon, applyDateFilter)
-  return result
+  const active = await fetchActiveTasks(rayon, applyDateFilter)
+  active.persist_stats = {
+    inserted: persist.inserted,
+    skipped: persist.skipped,
+    invalid: persist.invalid,
+    pending: false,
+  }
+  if (layerErrors.length) {
+    active.errors = [...active.errors, ...layerErrors]
+  }
+  return active
 }
 
 export function fetchActiveTasks(rayon: string, applyDateFilter: boolean): Promise<TaskResult> {
@@ -342,11 +351,13 @@ export function fetchLinkedFeatures(
 export function lookupTaskByFeature(
   subgroupName: string,
   attributes: Record<string, unknown>,
+  layerKey?: string,
 ): Promise<TaskRecord> {
   const params = new URLSearchParams({
     subgroup_name: subgroupName,
     attributes: JSON.stringify(attributes),
   })
+  if (layerKey) params.set('layer_key', layerKey)
   return request(`/api/tasks/lookup/by-feature?${params}`)
 }
 

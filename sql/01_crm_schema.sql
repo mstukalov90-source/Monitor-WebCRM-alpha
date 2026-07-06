@@ -22,13 +22,20 @@ ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS kgs TEXT;
 ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS station_avr TEXT;
 ALTER TABLE crm.tasks ADD COLUMN IF NOT EXISTS field_observed BOOLEAN;
 
-DROP INDEX IF EXISTS crm.tasks_uq_photo_uuid;
-DROP INDEX IF EXISTS crm.tasks_uq_photo_lens;
-DROP INDEX IF EXISTS crm.tasks_uq_ogh_id;
-DROP INDEX IF EXISTS crm.tasks_uq_oati_id;
-DROP INDEX IF EXISTS crm.tasks_uq_earthwork_id;
-DROP INDEX IF EXISTS crm.tasks_uq_localwork_id;
-DROP INDEX IF EXISTS crm.tasks_uq_avr_mos_id;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_photo_uuid
+    ON crm.tasks (photo_uuid) WHERE photo_uuid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_photo_lens
+    ON crm.tasks (photo_lens) WHERE photo_lens IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_ogh_id
+    ON crm.tasks (ogh_id) WHERE ogh_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_oati_id
+    ON crm.tasks (oati_id) WHERE oati_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_earthwork_id
+    ON crm.tasks (earthwork_id) WHERE earthwork_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_localwork_id
+    ON crm.tasks (localwork_id) WHERE localwork_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_avr_mos_id
+    ON crm.tasks (avr_mos_id) WHERE avr_mos_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS crm.tasks_field (
     key UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -231,6 +231,7 @@ export interface LinkedTaskFeature {
   geometry?: GeoJSON.Geometry | null
   attributes: Record<string, unknown>
   business_id?: string
+  link_kind?: 'link' | 'sibling'
 }
 
 export interface MissingLink {
@@ -250,6 +251,10 @@ export interface TaskHighlight {
   linked: LinkedTaskFeature[]
   missingLinks?: MissingLink[]
   popup?: TaskHighlightPopup
+  notificationGroup?: {
+    value: string
+    total: number
+  }
 }
 
 export interface TaskFeature {

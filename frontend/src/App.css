@@ -694,6 +694,31 @@ body,
   font-size: 0.85rem;
 }
 
+.notification-banner {
+  background: rgba(139, 69, 19, 0.92);
+}
+
+.task-table-group-row {
+  background: #f4f0eb;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.task-table-group-row td {
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+
+.task-table-group-toggle {
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.35rem;
+}
+
+.task-table-nested-row td:first-child {
+  padding-left: 1.5rem;
+}
+
 .pick-banner {
   position: absolute;
   top: 40px;

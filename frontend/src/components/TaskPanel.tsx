@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
+import {
+  buildGroupedTableRows,
+  countNotificationGroup,
+  findSiblingFeatures,
+  getSubgroupLinkField,
+  normalizeLinkValue,
+  siblingsToLinkedFeatures,
+} from '../lib/notificationSiblings'
 import type { SelectedTaskContext, TaskFeature, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
-import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS } from '../types'
+import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS, CRM_GROUP_ORDERS } from '../types'
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
@@ -37,6 +45,7 @@ export function TaskPanel({
   const [linkLoading, setLinkLoading] = useState(false)
   const [linkInfo, setLinkInfo] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     setSelectedGroup(0)
@@ -57,6 +66,18 @@ export function TaskPanel({
   const tableColumns = useMemo((): TaskTableColumn[] => {
     return resolveTaskTableColumns(subgroup?.name, isArea, features.map((f) => f.attributes), showSentAt)
   }, [subgroup?.name, isArea, features, showSentAt])
+
+  const tableRows = useMemo(
+    () =>
+      buildGroupedTableRows(
+        features,
+        subgroup?.name ?? '',
+        groupName,
+        collapsedGroups,
+        CRM_GROUP_ORDERS,
+      ),
+    [features, subgroup?.name, groupName, collapsedGroups],
+  )
 
   const totalCount = useMemo(
     () => groups.reduce((acc, g) => acc + g.subgroups.reduce((a, s) => a + s.features.length, 0), 0),
@@ -91,21 +112,40 @@ export function TaskPanel({
     try {
       let taskKey = feat.task_key
       if (!taskKey) {
-        const record = await lookupTaskByFeature(subgroup.name, feat.attributes)
+        const record = await lookupTaskByFeature(subgroup.name, feat.attributes, feat.layer_key)
         taskKey = record.key
       }
 
       const { linked_features, missing_links } = await fetchLinkedFeatures(taskKey, groupName)
+      let linked = linked_features
+      let notificationGroup: TaskHighlight['notificationGroup']
+
+      const linkField = getSubgroupLinkField(subgroup.name)
+      if (groupName === CRM_GROUP_ORDERS && linkField) {
+        const linkValue = normalizeLinkValue(feat.attributes[linkField])
+        if (linkValue) {
+          const siblings = findSiblingFeatures(features, feat, linkField, taskKey)
+          linked = [...linked, ...siblingsToLinkedFeatures(siblings, linkField, linkValue)]
+          const total = countNotificationGroup(features, linkField, linkValue)
+          if (total > 1) {
+            notificationGroup = { value: linkValue, total }
+          }
+        }
+      }
+
       onSelectHighlight({
         primary,
-        linked: linked_features,
+        linked,
         missingLinks: missing_links,
         popup,
+        notificationGroup,
       })
 
       const parts: string[] = []
-      if (linked_features.length) {
-        parts.push(`Привязано: ${linked_features.length}`)
+      if (notificationGroup) {
+        parts.push(`По номеру ${notificationGroup.value}: ${notificationGroup.total}`)
+      } else if (linked.length) {
+        parts.push(`Связано: ${linked.length}`)
       }
       if (missing_links.length) {
         parts.push(
@@ -289,29 +329,50 @@ export function TaskPanel({
             </tr>
           </thead>
           <tbody>
-            {features.map((feat, row) => {
+            {tableRows.map((row) => {
+              if (row.kind === 'group') {
+                return (
+                  <tr
+                    key={row.groupKey}
+                    className="task-table-group-row"
+                    onClick={() =>
+                      setCollapsedGroups((prev) => ({
+                        ...prev,
+                        [row.groupKey]: !row.collapsed,
+                      }))
+                    }
+                  >
+                    <td colSpan={tableColumns.length + (showSentAt ? 2 : 1)}>
+                      <span className="task-table-group-toggle">{row.collapsed ? '▸' : '▾'}</span>
+                      {row.label} ({row.count})
+                    </td>
+                  </tr>
+                )
+              }
+
+              const { featureIndex, feature: feat, indent } = row
               const areaStatus = isArea ? areaStatusFromAttributes(feat.attributes) : null
               const rowStyle =
                 areaStatus != null
                   ? { borderLeftColor: AREA_STATUS_COLORS[areaStatus] }
                   : undefined
               return (
-              <tr
-                key={row}
-                className={`${selectedRow === row ? 'selected' : ''}${areaStatus != null ? ' area-order-row' : ''}`}
-                style={rowStyle}
-                onClick={() => handleRowClick(row)}
-              >
-                <td>{feat.layer_name}</td>
-                {showSentAt && (
-                  <td>{feat.sent_at ? new Date(feat.sent_at).toLocaleString('ru-RU') : ''}</td>
-                )}
-                {tableColumns.map((col) => (
-                  <td key={col.field}>
-                    {formatTaskTableCell(feat.attributes[col.field], col.format)}
-                  </td>
-                ))}
-              </tr>
+                <tr
+                  key={`${feat.layer_key}-${featureIndex}`}
+                  className={`${selectedRow === featureIndex ? 'selected' : ''}${areaStatus != null ? ' area-order-row' : ''}${indent ? ' task-table-nested-row' : ''}`}
+                  style={rowStyle}
+                  onClick={() => handleRowClick(featureIndex)}
+                >
+                  <td>{feat.layer_name}</td>
+                  {showSentAt && (
+                    <td>{feat.sent_at ? new Date(feat.sent_at).toLocaleString('ru-RU') : ''}</td>
+                  )}
+                  {tableColumns.map((col) => (
+                    <td key={col.field}>
+                      {formatTaskTableCell(feat.attributes[col.field], col.format)}
+                    </td>
+                  ))}
+                </tr>
               )
             })}
           </tbody>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from functools import partial
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -57,7 +58,10 @@ from app.crm.store import (
     task_form_field_groups,
     update_task_record,
 )
-from app.crm.link_resolver import resolve_link_layer_infos, resolve_linked_features
+from app.crm.link_resolver import (
+    resolve_link_layer_infos,
+    resolve_linked_features,
+)
 from app.crm.office_tasks import create_office_task
 from app.photos.field_photo import _field_image_url, fetch_field_photos
 from app.crm.tasks_area import (
@@ -89,8 +93,9 @@ def _background_persist_tasks(rayon: str, apply_date_filter: bool, login: str) -
     try:
         with get_connection() as conn:
             persist_district_tasks(conn, rayon, apply_date_filter, login)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger = logging.getLogger(__name__)
+        logger.exception("Background persist failed for rayon %s: %s", rayon, exc)
 
 
 def _record_to_out(record: TaskRecord) -> TaskRecordOut:
@@ -225,25 +230,45 @@ def post_collect_layer(
 @router.post("/tasks/collect/persist", dependencies=[Depends(require_can_collect)])
 def post_collect_persist(
     body: CollectTasksRequest,
-    background_tasks: BackgroundTasks,
-    user: UserSession = Depends(get_current_user),
-) -> dict:
-    check_task_source(user, "active")
-    check_rayon(user, body.rayon)
-    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter, user.login)
-    return {"status": "pending"}
-
-
-@router.post("/tasks/collect", dependencies=[Depends(require_can_collect)])
-def post_collect_tasks(
-    body: CollectTasksRequest,
-    background_tasks: BackgroundTasks,
     user: UserSession = Depends(get_current_user),
 ) -> dict:
     check_task_source(user, "active")
     check_rayon(user, body.rayon)
     try:
         with get_connection() as conn:
+            stats = persist_district_tasks(
+                conn, body.rayon, body.apply_date_filter, user.login
+            )
+    except OperationalError as exc:
+        message = str(exc).lower()
+        if "timeout" in message or "canceling statement" in message:
+            raise HTTPException(
+                status_code=503,
+                detail="База данных не отвечает вовремя при записи задач.",
+            ) from exc
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "inserted": stats.inserted,
+        "skipped": stats.skipped,
+        "invalid": stats.invalid,
+    }
+
+
+@router.post("/tasks/collect", dependencies=[Depends(require_can_collect)])
+def post_collect_tasks(
+    body: CollectTasksRequest,
+    user: UserSession = Depends(get_current_user),
+) -> dict:
+    check_task_source(user, "active")
+    check_rayon(user, body.rayon)
+    try:
+        with get_connection() as conn:
+            stats = persist_district_tasks(
+                conn, body.rayon, body.apply_date_filter, user.login
+            )
             result, _ = collect_tasks(
                 conn,
                 body.rayon,
@@ -264,12 +289,11 @@ def post_collect_tasks(
     data = task_result_to_dict(result)
     data["task_source"] = "active"
     data["persist_stats"] = {
-        "inserted": 0,
-        "skipped": 0,
-        "invalid": 0,
-        "pending": True,
+        "inserted": stats.inserted,
+        "skipped": stats.skipped,
+        "invalid": stats.invalid,
+        "pending": False,
     }
-    background_tasks.add_task(_background_persist_tasks, body.rayon, body.apply_date_filter, user.login)
     return data
 
 
@@ -277,6 +301,7 @@ def post_collect_tasks(
 def lookup_task_by_feature(
     subgroup_name: str = Query(...),
     attributes: str = Query(..., description="JSON object of feature attributes"),
+    layer_key: str = Query(""),
 ) -> TaskRecordOut:
     import json
 
@@ -287,7 +312,9 @@ def lookup_task_by_feature(
         raise HTTPException(status_code=400, detail="Invalid attributes JSON") from exc
 
     with get_connection() as conn:
-        record = fetch_task_for_feature(conn, subgroup_name, attrs, store_cfg)
+        record = fetch_task_for_feature(
+            conn, subgroup_name, attrs, store_cfg, layer_key=layer_key or None
+        )
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found in crm.tasks")
     return _record_to_out(record)

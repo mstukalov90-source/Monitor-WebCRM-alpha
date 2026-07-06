@@ -1,0 +1,174 @@
+{
+  "title": "QGIS: синхронизация crm.tasks с WebCRM (scoped id, без дублей)",
+  "repository": "MONITOR_QGIS",
+  "language": "ru",
+  "summary": "WebCRM и QGIS пишут в одну БД monitor, схема crm.tasks. Клиенты могут работать параллельно. Задача не должна дублироваться ни внутри одного клиента, ни между WebCRM и QGIS. Уникальный ключ задачи — scoped business id (geometry_type:id), а не номер уведомления.",
+  "context": {
+    "shared_database": "monitor @ production/staging",
+    "shared_schema": "crm.tasks",
+    "parallel_clients": ["WebCRM", "QGIS monitor_db_loader"],
+    "reference_repo": "MONITOR_WEBCRM",
+    "reference_config": "MONITOR_WEBCRM/shared/layers_config.json",
+    "reference_sql": [
+      "MONITOR_WEBCRM/sql/01_crm_schema.sql",
+      "MONITOR_WEBCRM/sql/17_tasks_business_id_unique.sql",
+      "MONITOR_WEBCRM/sql/19_scoped_geometry_task_ids.sql",
+      "MONITOR_WEBCRM/sql/20_oati_scoped_geometry_tasks.sql"
+    ]
+  },
+  "identity_model": {
+    "rule": "Одна CRM-задача = одна строка источника (точка, линия или полигон). Номер уведомления — атрибут и ключ поиска геометрии для разрывов, но НЕ уникальный id задачи.",
+    "subgroups_with_scoped_id": {
+      "Ордера ОАТИ": {
+        "task_column": "oati_id",
+        "source_field": "id",
+        "link_lookup_field": "order_number",
+        "scoped_geometry_id": true,
+        "layers": [
+          "Ордера ОАТИ — точки",
+          "Ордера ОАТИ — линии",
+          "Ордера ОАТИ — полигоны"
+        ],
+        "business_id_example": ["point:12345", "line:678", "polygon:901"]
+      },
+      "Уведомления на земляные работы": {
+        "task_column": "earthwork_id",
+        "source_field": "id",
+        "link_lookup_field": "registration_number_notifications",
+        "scoped_geometry_id": true,
+        "layers": [
+          "Уведомления на земляные работы — точки",
+          "Уведомления на земляные работы — линии",
+          "Уведомления на земляные работы — полигоны"
+        ],
+        "business_id_example": ["point:2752", "line:5323", "polygon:901"]
+      },
+      "Текущие локальные ремонты": {
+        "task_column": "localwork_id",
+        "source_field": "id",
+        "link_lookup_field": "global_id",
+        "scoped_geometry_id": true
+      },
+      "Аварийно-восстановительные работы": {
+        "task_column": "avr_mos_id",
+        "source_field": "id",
+        "link_lookup_field": "em_call_reg_num",
+        "scoped_geometry_id": true
+      }
+    },
+    "unchanged_subgroups": {
+      "Разрытия": "oati_id/earthwork_id могут содержать номер ордера/уведомления (26031303, У0218899) — другой тип задач, не конфликтует с point:12345"
+    },
+    "format_scoped_business_id": "f\"{layer.geometry_type}:{trim(str(feature[source_field]))}\"  # geometry_type ∈ point|line|polygon",
+    "why_scoped": "id в items_*_points и items_*_lines — разные таблицы; числовые id могут совпасть. Partial UNIQUE INDEX на oati_id/earthwork_id не допустит две задачи с одним значением."
+  },
+  "anti_duplicate_rules": [
+    "НИКОГДА не использовать order_number / registration_number_notifications / global_id / em_call_reg_num как business_id при INSERT в crm.tasks для заказов.",
+    "НИКОГДА не дедуплицировать features или задачи по номеру уведомления — только по (task_column, scoped_business_id).",
+    "Для scoped_geometry_id=true: in-memory dedup ключ = (task_column, f\"{geometry_type}:{id}\"), не (task_column, id) и не (task_column, registration_number).",
+    "Один проход persist — одна запись на feature; точка, линия и полигон с одним номером уведомления = три разные задачи.",
+    "Повторный сбор того же района не создаёт новых строк: INSERT → skipped / ON CONFLICT DO NOTHING / UniqueViolation → skipped.",
+    "Параллельный сбор WebCRM + QGIS: кто первый вставил point:2752 — второй получает skipped, без ошибки UI и без второй строки.",
+    "Не удалять partial UNIQUE INDEX tasks_uq_oati_id, tasks_uq_earthwork_id, tasks_uq_localwork_id, tasks_uq_avr_mos_id и аналоги."
+  ],
+  "files_to_change": [
+    {
+      "path": "monitor_db_loader/resources/layers_config.json",
+      "action": "sync_from",
+      "source": "MONITOR_WEBCRM/shared/layers_config.json",
+      "verify": [
+        "subgroups земляных/локальных/АВР содержат layers: точки + линии + полигоны",
+        "task_store.scoped_geometry_id = true для ОАТИ, земляных, локальных, АВР",
+        "нет related_geometry_groups",
+        "link_lookup_field сохранён"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/core/crm_task_store.py",
+      "changes": [
+        {
+          "function": "format_scoped_business_id / parse_scoped_business_id",
+          "description": "Скопировать логику из MONITOR_WEBCRM/backend/app/crm/store.py: prefix point|line|polygon, parse для snapshot lookup."
+        },
+        {
+          "function": "task_row_from_feature",
+          "description": "При mapping.scoped_geometry_id и известном geometry_type слоя записывать oati_id/earthwork_id/localwork_id/avr_mos_id = format_scoped_business_id(geometry_type, feature[id])."
+        },
+        {
+          "function": "build_district_feature_index / dedup перед persist",
+          "description": "Ключ дедупа: (subgroup_name, task_column, scoped_business_id). Не схлопывать line в point при одном raw id."
+        },
+        {
+          "function": "_insert_task",
+          "description": "INSERT с ON CONFLICT (task_column) WHERE task_column IS NOT NULL DO NOTHING — как WebCRM _task_id_conflict_clause. Либо ловить psycopg2.errors.UniqueViolation (sqlstate 23505) и возвращать False → skipped, без raise."
+        },
+        {
+          "function": "persist_task_result",
+          "description": "Сохранить task_index по (task_column, business_id) где business_id уже scoped. inserted/skipped считать по результату _insert_task. Не переписывать на bulk INSERT без ON CONFLICT."
+        },
+        {
+          "section": "ensure_tasks_table / DDL",
+          "description": "CREATE UNIQUE INDEX IF NOT EXISTS для всех TASK_ID_COLUMNS (partial WHERE IS NOT NULL). Убрать DROP INDEX tasks_uq_* если есть."
+        }
+      ]
+    },
+    {
+      "path": "monitor_db_loader/crm/crm_tasks.py",
+      "changes": [
+        {
+          "description": "_collect_subgroup_features: собирать все слои подгруппы (point+line+polygon). JOIN к crm.tasks по scoped id для каждого слоя отдельно."
+        },
+        {
+          "description": "_persist_tasks_to_db: передавать geometry_type слоя в task_row_from_feature."
+        }
+      ]
+    },
+    {
+      "path": "monitor_db_loader/crm/link_resolver.py",
+      "changes": [
+        {
+          "description": "Привязка разрыва к заказу: искать геометрию по link_lookup_field (order_number, registration_number_notifications, …) во всех слоях подгруппы. Не искать по scoped id."
+        }
+      ]
+    },
+    {
+      "path": "scripts/db_crm_indexes.sql",
+      "optional": true,
+      "description": "Partial UNIQUE INDEX на crm.tasks business-id колонки, если ещё нет."
+    }
+  ],
+  "webcrm_reference_implementation": {
+    "store_py": [
+      "format_scoped_business_id / parse_scoped_business_id / scoped_business_id_expr",
+      "persist_new_tasks_in_district: DISTINCT ON (scoped business_id_expr) per layer",
+      "ON CONFLICT (earthwork_id) WHERE earthwork_id IS NOT NULL DO NOTHING",
+      "acquire_persist_rayon_lock / release_persist_rayon_lock"
+    ],
+    "collector_py": "dedupe_subgroup_features: при scoped_geometry_id не схлопывать геометрии по приоритету point→line",
+    "geojson_py": "fetch_task_attributes_in_district: JOIN ct.task_column = CONCAT(geometry_type, ':', trim(id))"
+  },
+  "sql_on_production": {
+    "required_once": [
+      "MONITOR_WEBCRM/sql/20_oati_scoped_geometry_tasks.sql — удаление legacy oati_id=order_number",
+      "MONITOR_WEBCRM/sql/19_scoped_geometry_task_ids.sql — миграция numeric id → point:/line:/polygon: (земляные/локальные/АВР)"
+    ],
+    "already_applied_check": "SELECT earthwork_id FROM crm.tasks WHERE earthwork_id LIKE 'point:%' LIMIT 1"
+  },
+  "test_plan": [
+    "SELECT task_column, business_id, COUNT(*) FROM (SELECT 'oati_id' AS task_column, oati_id AS business_id FROM crm.tasks WHERE oati_id IS NOT NULL UNION ALL SELECT 'earthwork_id', earthwork_id FROM crm.tasks WHERE earthwork_id IS NOT NULL UNION ALL SELECT 'localwork_id', localwork_id FROM crm.tasks WHERE localwork_id IS NOT NULL UNION ALL SELECT 'avr_mos_id', avr_mos_id FROM crm.tasks WHERE avr_mos_id IS NOT NULL) s GROUP BY 1,2 HAVING COUNT(*) > 1 → 0 строк",
+    "Ордер 26031303: несколько задач point:* и line:* с одним order_number в атрибутах",
+    "Сокол / У0218899: ≥6 задач (point:2752, point:2753, point:2754 + line:*), все с одним registration_number_notifications",
+    "QGIS: дважды «Получить задачу» по Сокол → второй раз Добавлено=0, Уже в БД растёт, ошибок нет",
+    "WebCRM: дважды «Получить задачу» по Сокол → inserted=0, дублей нет",
+    "Параллельно: QGIS собирает Сокол, сразу WebCRM собирает Сокол → суммарно без дублей, оба клиента завершаются без unique violation в UI",
+    "Разрыв с oati_id=26031303: привязка находит геометрию по order_number",
+  ],
+  "do_not": [
+    "Не возвращать модель «1 номер ордера/уведомления = 1 задача» для заказов",
+    "Не дедуплицировать по order_number или registration_number_notifications",
+    "Не хранить в earthwork_id голый numeric id без префикса geometry_type для scoped подгрупп",
+    "Не удалять unique indexes на crm.tasks",
+    "Не падать с необработанным UniqueViolation при гонке с WebCRM"
+  ],
+  "acceptance": "QGIS и WebCRM используют одинаковый layers_config и одинаковый scoped business id. Повторный и параллельный сбор не создают дублей в crm.tasks."
+}

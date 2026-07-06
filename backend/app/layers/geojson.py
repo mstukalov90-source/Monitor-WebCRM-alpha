@@ -106,16 +106,22 @@ def fetch_task_attributes_in_district(
     tasks_table: str,
     district_wkt: str,
     metric_srid: int = 32637,
+    *,
+    scoped_geometry_id: bool = False,
 ) -> list[dict[str, Any]]:
     """Атрибуты объектов в районе, которые уже есть в crm.tasks."""
+    from app.crm.store import scoped_business_id_expr
+
     geom_col = layer.geometry_column
     table = layer.qualified_table
     spatial, params = _district_spatial_filter(layer, district_wkt, metric_srid, table_alias="t")
 
+    business_id_expr = scoped_business_id_expr(layer, source_field, scoped_geometry_id)
     filters = [
         f't."{geom_col}" IS NOT NULL',
         spatial,
         f't."{source_field}" IS NOT NULL',
+        f'{business_id_expr} <> \'\'',
         f'ct."{task_column}" IS NOT NULL',
     ]
     if layer.sql_filter:
@@ -123,14 +129,16 @@ def fetch_task_attributes_in_district(
 
     where = " AND ".join(filters)
     query = f"""
-        SELECT ct.key::text AS task_key,
+        SELECT DISTINCT ON (ct.key)
+               ct.key::text AS task_key,
                ct.field_observed,
                to_jsonb(t) - '{geom_col}' AS attrs,
                ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
         FROM {table} t
         INNER JOIN "{tasks_schema}"."{tasks_table}" ct
-            ON ct."{task_column}" = t."{source_field}"::text
+            ON ct."{task_column}" = {business_id_expr}
         WHERE {where}
+        ORDER BY ct.key, t."{layer.primary_key or 'id'}"
     """
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:

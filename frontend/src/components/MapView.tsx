@@ -9,6 +9,7 @@ import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapSty
 import { pointRadius, styleForGeometryType, MIN_LINE_WEIGHT } from '../lib/symbology'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
+import { geometryKindLabel } from '../lib/notificationSiblings'
 import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
 import { MapResizeObserver } from './MapResizeObserver'
 import {
@@ -639,12 +640,16 @@ function TaskHighlightLayer({
 
     highlight.linked.forEach((linked) => {
       if (!linked.geometry) return
+      const popupTitle =
+        linked.link_kind === 'sibling'
+          ? `Тот же номер: ${linked.business_id ?? linked.link_column} · ${geometryKindLabel(linked.layer_name)}`
+          : `Привязка: ${linked.link_column}`
       addHighlightFeature(
         group,
         linked.geometry,
         HIGHLIGHT_LINKED,
         {
-          popupHtml: `<b>Привязка: ${linked.link_column}</b><br/>${linked.layer_name}`,
+          popupHtml: `<b>${popupTitle}</b><br/>${linked.layer_name}`,
         },
       )
     })

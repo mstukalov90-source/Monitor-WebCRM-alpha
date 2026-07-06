@@ -641,8 +641,10 @@
           },
           {
             "name": "Уведомления на земляные работы",
-            "groups": [
-              "Данные о действующих зарегистрированных уведомлениях на проведение земляных работ"
+            "layers": [
+              "Уведомления на земляные работы — точки",
+              "Уведомления на земляные работы — линии",
+              "Уведомления на земляные работы — полигоны"
             ],
             "date_field": "work_start_date"
           },
@@ -689,19 +691,27 @@
         },
         "Ордера ОАТИ": {
           "task_column": "oati_id",
-          "source_field": "order_number"
+          "source_field": "id",
+          "link_lookup_field": "order_number",
+          "scoped_geometry_id": true
         },
         "Уведомления на земляные работы": {
           "task_column": "earthwork_id",
-          "source_field": "registration_number_notifications"
+          "source_field": "id",
+          "link_lookup_field": "registration_number_notifications",
+          "scoped_geometry_id": true
         },
         "Текущие локальные ремонты": {
           "task_column": "localwork_id",
-          "source_field": "global_id"
+          "source_field": "id",
+          "link_lookup_field": "global_id",
+          "scoped_geometry_id": true
         },
         "Аварийно-восстановительные работы": {
           "task_column": "avr_mos_id",
-          "source_field": "em_call_reg_num"
+          "source_field": "id",
+          "link_lookup_field": "em_call_reg_num",
+          "scoped_geometry_id": true
         },
         "Полевые данные": {
           "source": "field_data",

@@ -12,10 +12,17 @@ import {
   sendTaskToField,
   updateTask,
 } from '../api/client'
+import {
+  countNotificationGroup,
+  findSiblingFeatures,
+  getSubgroupLinkField,
+  normalizeLinkValue,
+  siblingsToLinkedFeatures,
+} from '../lib/notificationSiblings'
 import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
-import type { LinkLayerInfo, SelectedTaskContext, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
+import type { LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
 import {
   aiPhotoUuidFromAttributes,
   CRM_GROUP_ORDERS,
@@ -111,6 +118,7 @@ function fieldObservedBadgeClass(value: boolean | null | undefined): string {
 
 interface TaskEditModalProps {
   context: SelectedTaskContext | null
+  subgroupFeatures?: TaskFeature[]
   canManagePersonnel: boolean
   userRole: UserRole
   officeWorking?: boolean
@@ -126,6 +134,7 @@ interface TaskEditModalProps {
 
 export function TaskEditModal({
   context,
+  subgroupFeatures = [],
   canManagePersonnel,
   userRole,
   officeWorking = false,
@@ -241,10 +250,32 @@ export function TaskEditModal({
   async function refreshHighlight(ctx: SelectedTaskContext, recordKey: string) {
     try {
       const { linked_features, missing_links } = await fetchLinkedFeatures(recordKey, ctx.groupName)
+      let linked = linked_features
+      let notificationGroup: TaskHighlight['notificationGroup']
+
+      const linkField = getSubgroupLinkField(ctx.subgroupName)
+      if (ctx.groupName === CRM_GROUP_ORDERS && linkField && subgroupFeatures.length) {
+        const linkValue = normalizeLinkValue(ctx.feature.attributes[linkField])
+        if (linkValue) {
+          const siblings = findSiblingFeatures(
+            subgroupFeatures,
+            ctx.feature,
+            linkField,
+            recordKey,
+          )
+          linked = [...linked, ...siblingsToLinkedFeatures(siblings, linkField, linkValue)]
+          const total = countNotificationGroup(subgroupFeatures, linkField, linkValue)
+          if (total > 1) {
+            notificationGroup = { value: linkValue, total }
+          }
+        }
+      }
+
       onHighlightChange({
         primary: ctx.feature.geometry ?? null,
-        linked: linked_features,
+        linked,
         missingLinks: missing_links,
+        notificationGroup,
       })
     } catch {
       onHighlightChange({

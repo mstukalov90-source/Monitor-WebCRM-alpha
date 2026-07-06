@@ -27,11 +27,14 @@ from app.crm.store import (
     OFFICE_DATA_SUBGROUP,
     PersistStats,
     _table_ref,
+    acquire_persist_rayon_lock,
     enrich_features_field_observed,
     enrich_task_result_field_observed,
     fetch_snapshot_task_keys,
     filter_sent_tasks_from_result,
     persist_new_tasks_in_district,
+    release_persist_rayon_lock,
+    resolve_task_lookup,
 )
 from app.layers.geojson import fetch_district_wkt, fetch_task_attributes_in_district
 from app.layers.registry import get_registry
@@ -87,6 +90,65 @@ def _date_filter_range(lookback_days: int) -> tuple[date, date]:
     return today - timedelta(days=lookback_days), today
 
 
+_GEOMETRY_LAYER_PRIORITY = {"point": 0, "line": 1, "polygon": 2}
+
+
+def _layer_geometry_priority(layer_key: str, registry: Any) -> int:
+    layer = registry.by_key.get(layer_key)
+    if layer is None:
+        return 99
+    return _GEOMETRY_LAYER_PRIORITY.get(layer.geometry_type, 99)
+
+
+def dedupe_subgroup_features(
+    features: list[TaskFeature],
+    subgroup_name: str,
+    store_cfg: dict[str, Any],
+    registry: Any,
+) -> list[TaskFeature]:
+    """Одна feature на business_id; для scoped_geometry_id — отдельная строка на геометрию."""
+    best_by_business: dict[tuple[str, str], TaskFeature] = {}
+    best_by_task_key: dict[str, TaskFeature] = {}
+    unkeyed: list[TaskFeature] = []
+
+    mapping = store_cfg.get("subgroups", {}).get(subgroup_name, {})
+    scoped = bool(mapping.get("scoped_geometry_id"))
+
+    for feat in features:
+        layer = registry.by_key.get(feat.layer_key)
+        geometry_type = layer.geometry_type if layer else None
+        lookup = resolve_task_lookup(
+            subgroup_name,
+            feat.attributes,
+            store_cfg,
+            geometry_type=geometry_type,
+            layer_key=feat.layer_key,
+        )
+        if lookup:
+            if scoped:
+                if lookup not in best_by_business:
+                    best_by_business[lookup] = feat
+                continue
+            existing = best_by_business.get(lookup)
+            if existing is None:
+                best_by_business[lookup] = feat
+                continue
+            if _layer_geometry_priority(feat.layer_key, registry) < _layer_geometry_priority(
+                existing.layer_key, registry
+            ):
+                best_by_business[lookup] = feat
+            continue
+
+        task_key = feat.task_key
+        if task_key:
+            if task_key not in best_by_task_key:
+                best_by_task_key[task_key] = feat
+            continue
+        unkeyed.append(feat)
+
+    return list(best_by_business.values()) + list(best_by_task_key.values()) + unkeyed
+
+
 def persist_district_tasks(
     conn: PgConnection,
     rayon: str,
@@ -118,32 +180,41 @@ def persist_district_tasks(
     if not store_cfg:
         return stats
 
-    for group_cfg in cfg.get("groups", []):
-        group_name = group_cfg.get("name", "")
-        for sub_cfg in group_cfg.get("subgroups", []):
-            subgroup_name = sub_cfg.get("name", "")
-            layers, _missing = registry.resolve_subgroup_layers(
-                sub_cfg.get("layers", []),
-                sub_cfg.get("groups", []),
-            )
-            date_field = sub_cfg.get("date_field") if apply_date_filter else None
-            for layer in layers:
-                try:
-                    stats.inserted += persist_new_tasks_in_district(
-                        conn,
-                        group_name,
-                        subgroup_name,
-                        layer,
-                        store_cfg,
-                        district_wkt,
-                        metric_srid,
-                        date_field,
-                        date_from if date_field else None,
-                        date_to if date_field else None,
-                        login,
-                    )
-                except Exception:
-                    stats.invalid += 1
+    lock_key = acquire_persist_rayon_lock(conn, rayon)
+    try:
+        for group_cfg in cfg.get("groups", []):
+            group_name = group_cfg.get("name", "")
+            for sub_cfg in group_cfg.get("subgroups", []):
+                subgroup_name = sub_cfg.get("name", "")
+                layers, _missing = registry.resolve_subgroup_layers(
+                    sub_cfg.get("layers", []),
+                    sub_cfg.get("groups", []),
+                )
+                date_field = sub_cfg.get("date_field") if apply_date_filter else None
+                for layer in layers:
+                    try:
+                        stats.inserted += persist_new_tasks_in_district(
+                            conn,
+                            group_name,
+                            subgroup_name,
+                            layer,
+                            store_cfg,
+                            district_wkt,
+                            metric_srid,
+                            date_field,
+                            date_from if date_field else None,
+                            date_to if date_field else None,
+                            login,
+                            commit=False,
+                        )
+                    except Exception:
+                        stats.invalid += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        release_persist_rayon_lock(conn, lock_key)
     return stats
 
 
@@ -300,6 +371,7 @@ def collect_layer_tasks(
             tasks_table,
             district_wkt,
             metric_srid,
+            scoped_geometry_id=bool(mapping.get("scoped_geometry_id")),
         )
     except Exception as exc:
         return [], [f"{layer.display_name}: {exc}"]
@@ -368,6 +440,18 @@ def collect_tasks(
         subgroup = subgroup_index.get((chunk.group_name, chunk.subgroup_name))
         if subgroup is not None:
             subgroup.features.extend(features)
+
+    store_cfg = crm_task_store_config()
+    registry = get_registry()
+    if store_cfg:
+        for group in result.groups:
+            for subgroup in group.subgroups:
+                subgroup.features = dedupe_subgroup_features(
+                    subgroup.features,
+                    subgroup.name,
+                    store_cfg,
+                    registry,
+                )
 
     field_features, field_errors = collect_field_data_tasks(conn, rayon, apply_date_filter)
     result.errors.extend(field_errors)

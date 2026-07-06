@@ -346,9 +346,16 @@ def snapshot_row_to_feature(
         sub_cfg.get("layers", []),
         sub_cfg.get("groups", []),
     )
+    from app.crm.store import parse_scoped_business_id
+
+    scoped = bool(mapping.get("scoped_geometry_id"))
+    prefix, raw_business_id = parse_scoped_business_id(str(business_id))
     feature_data = None
     for layer in layers:
-        feature_data = lookup_feature(conn, layer, source_field, str(business_id))
+        if scoped and prefix and layer.geometry_type != prefix:
+            continue
+        lookup_id = raw_business_id if scoped else str(business_id)
+        feature_data = lookup_feature(conn, layer, source_field, lookup_id)
         if feature_data:
             break
     if not feature_data or not feature_data.get("geometry"):

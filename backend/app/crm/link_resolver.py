@@ -1,4 +1,4 @@
-"""Resolve linked feature geometries from crm.tasks link columns."""
+"""Resolve linked geometries for disruption tasks (by notification number)."""
 
 from __future__ import annotations
 
@@ -28,6 +28,26 @@ def find_subgroup_cfg(crm_cfg: dict[str, Any], subgroup_name: str) -> dict[str, 
     return None
 
 
+def _layers_for_link_search(
+    registry: LayerRegistry,
+    subgroup_name: str,
+    sub_cfg: dict[str, Any],
+    mapping: dict[str, Any],
+) -> list[Any]:
+    if mapping.get("link_lookup_field"):
+        return [
+            layer
+            for layer in registry.by_display_name.values()
+            if layer.display_name.startswith(f"{subgroup_name} —")
+        ]
+    return list(
+        registry.resolve_subgroup_layers(
+            sub_cfg.get("layers", []),
+            sub_cfg.get("groups", []),
+        )[0]
+    )
+
+
 def resolve_link_layer_infos(
     store_cfg: dict[str, Any],
     registry: LayerRegistry,
@@ -46,11 +66,11 @@ def resolve_link_layer_infos(
         if sub_cfg is None:
             continue
 
-        layer_defs, _ = registry.resolve_subgroup_layers(
-            sub_cfg.get("layers", []),
-            sub_cfg.get("groups", []),
-        )
         mapping = store_cfg["subgroups"][subgroup_name]
+        lookup_field = _lookup_field_for_links(mapping)
+        if not lookup_field:
+            continue
+        layer_defs = _layers_for_link_search(registry, subgroup_name, sub_cfg, mapping)
         for layer in layer_defs:
             layers_info.append(
                 {
@@ -58,11 +78,15 @@ def resolve_link_layer_infos(
                     "subgroup_name": subgroup_name,
                     "layer_key": layer.layer_key,
                     "display_name": layer.display_name,
-                    "source_field": mapping.get("source_field"),
+                    "source_field": lookup_field,
                 }
             )
 
     return layers_info
+
+
+def _lookup_field_for_links(mapping: dict[str, Any]) -> str | None:
+    return mapping.get("link_lookup_field") or mapping.get("source_field")
 
 
 def resolve_linked_features(
@@ -96,19 +120,16 @@ def resolve_linked_features(
             continue
 
         mapping = store_cfg["subgroups"][subgroup_name]
-        source_field = mapping.get("source_field")
-        if not source_field:
+        lookup_field = _lookup_field_for_links(mapping)
+        if not lookup_field:
             missing.append({"link_column": link_column, "business_id": value})
             continue
 
-        layer_defs, _ = registry.resolve_subgroup_layers(
-            sub_cfg.get("layers", []),
-            sub_cfg.get("groups", []),
-        )
+        layer_defs = _layers_for_link_search(registry, subgroup_name, sub_cfg, mapping)
 
         found = False
         for layer in layer_defs:
-            for feat in lookup_features(conn, layer, source_field, value):
+            for feat in lookup_features(conn, layer, lookup_field, value):
                 dedupe_key = f"{feat['layer_key']}:{value}:{json.dumps(feat.get('geometry'), sort_keys=True)}"
                 if dedupe_key in seen_keys:
                     found = True

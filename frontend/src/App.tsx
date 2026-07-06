@@ -123,6 +123,17 @@ function App() {
     return allTaskFeaturesOnMap(taskResult.groups)
   }, [taskResult, taskSource, taskFilterSelection, isOfficeUser, officeAreaOrder, officeFilteredTaskResult])
 
+  const modalSubgroupFeatures = useMemo(() => {
+    if (!editContext || !taskResult) return []
+    for (const group of taskResult.groups) {
+      if (group.name !== editContext.groupName) continue
+      for (const subgroup of group.subgroups) {
+        if (subgroup.name === editContext.subgroupName) return subgroup.features
+      }
+    }
+    return []
+  }, [editContext, taskResult])
+
   const panelTaskResult = useMemo((): TaskResult | null => {
     if (!taskResult) return null
     if (isAreaSource(taskSource)) return taskResult
@@ -665,7 +676,15 @@ function App() {
         <main ref={workspace.mapAreaRef} className="map-area">
           <div className="map-area-stack">
             <div className={`map-viewport${workspace.resizing ? ' map-viewport--resizing' : ''}`}>
-              {activeHighlight && activeHighlight.linked.length > 0 && (
+              {activeHighlight?.notificationGroup && (
+                <div className="linked-banner notification-banner">
+                  Объекты по номеру {activeHighlight.notificationGroup.value}:{' '}
+                  {activeHighlight.notificationGroup.total}
+                </div>
+              )}
+              {activeHighlight &&
+                !activeHighlight.notificationGroup &&
+                activeHighlight.linked.length > 0 && (
                 <div className="linked-banner">
                   Привязанные объекты: {activeHighlight.linked.length}
                 </div>
@@ -708,6 +727,7 @@ function App() {
 
       <TaskEditModal
         context={editContext}
+        subgroupFeatures={modalSubgroupFeatures}
         canManagePersonnel={user.can_manage_personnel}
         userRole={user.role}
         officeWorking={officeWorking}
