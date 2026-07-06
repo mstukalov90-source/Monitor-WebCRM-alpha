@@ -82,7 +82,8 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
   if (!taskKey) return null
 
   const hasPhotos = (result?.photos.length ?? 0) > 0
-  const showEmpty = !loading && !error && result != null && !hasPhotos
+  const hasComment = Boolean(result?.comment?.trim())
+  const showEmpty = !loading && !error && result != null && !hasPhotos && !hasComment
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -97,6 +98,13 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
         {loading && <p className="muted">Загрузка…</p>}
         {error && <p className="error-banner">{error}</p>}
         {showEmpty && <p className="muted">Материалы не найдены</p>}
+
+        {result && !error && hasComment && (
+          <section className="field-materials-comment">
+            <h3 className="field-materials-section-title">Комментарий полевого сотрудника</h3>
+            <p className="field-materials-comment-text">{result.comment?.trim()}</p>
+          </section>
+        )}
 
         {result && !error && hasPhotos && (
           <>

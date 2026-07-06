@@ -340,6 +340,7 @@ export interface FieldPhoto {
 export interface FieldPhotosResult {
   photos: FieldPhoto[]
   banner_missing: boolean
+  comment?: string | null
 }
 
 export const AI_PHOTO_SUBGROUP = 'Фото после обработки ИИ'

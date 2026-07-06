@@ -1237,6 +1237,20 @@ body,
   font-weight: 600;
 }
 
+.field-materials-comment {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+}
+
+.field-materials-comment-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+}
+
 .field-materials-banner {
   margin-bottom: 16px;
 }

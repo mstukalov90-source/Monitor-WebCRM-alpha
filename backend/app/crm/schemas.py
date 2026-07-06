@@ -231,6 +231,7 @@ class FieldPhotoOut(BaseModel):
 class FieldPhotosResultOut(BaseModel):
     photos: list[FieldPhotoOut] = Field(default_factory=list)
     banner_missing: bool = False
+    comment: str | None = None
 
 
 class FieldStatisticsSummaryOut(BaseModel):

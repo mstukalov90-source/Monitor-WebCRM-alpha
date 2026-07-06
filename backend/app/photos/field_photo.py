@@ -55,11 +55,13 @@ class FieldPhotoItem:
 class FieldPhotosResult:
     photos: list[FieldPhotoItem]
     banner_missing: bool
+    comment: str | None = None
 
     def to_dict(self, image_url_fn) -> dict[str, Any]:
         return {
             "photos": [p.to_dict(image_url_fn(p.file_path)) for p in self.photos],
             "banner_missing": self.banner_missing,
+            "comment": self.comment,
         }
 
 
@@ -78,7 +80,22 @@ def _format_created_at(value: Any) -> str | None:
     return str(value)
 
 
+def _normalize_comment(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def fetch_field_photos(conn: PgConnection, task_key: str) -> FieldPhotosResult:
+    comment_query = """
+        SELECT comment
+        FROM mggt_field.reports
+        WHERE tasks_key = %s::uuid
+          AND comment IS NOT NULL
+          AND TRIM(comment) <> ''
+        LIMIT 1
+    """
     query = """
         SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
         FROM mggt_field.reports r
@@ -89,7 +106,13 @@ def fetch_field_photos(conn: PgConnection, task_key: str) -> FieldPhotosResult:
         ORDER BY p.banner DESC, p.created_at ASC
     """
     photos: list[FieldPhotoItem] = []
+    comment: str | None = None
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(comment_query, (task_key,))
+        comment_row = cur.fetchone()
+        if comment_row:
+            comment = _normalize_comment(comment_row.get("comment"))
+
         cur.execute(query, (task_key,))
         for row in cur.fetchall():
             file_path = str(row["file_path"]).strip()
@@ -106,7 +129,7 @@ def fetch_field_photos(conn: PgConnection, task_key: str) -> FieldPhotosResult:
                 )
             )
     has_banner = any(p.banner for p in photos)
-    return FieldPhotosResult(photos=photos, banner_missing=not has_banner)
+    return FieldPhotosResult(photos=photos, banner_missing=not has_banner, comment=comment)
 
 
 def field_photo_storage_dir(settings: Settings) -> Path:
