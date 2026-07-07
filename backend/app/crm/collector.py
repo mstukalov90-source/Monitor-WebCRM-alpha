@@ -11,6 +11,10 @@ from psycopg2.extensions import connection as PgConnection
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.date_utils import attribute_matches_date_range
 from app.crm.link_resolver import find_subgroup_cfg
+from app.crm.etl_photo_loader import (
+    collect_etl_sync_subgroup_tasks,
+    is_etl_sync_cfg,
+)
 from app.crm.field_data_loader import (
     FIELD_DATA_LAYER_KEY,
     FIELD_DATA_LAYER_NAME,
@@ -185,6 +189,8 @@ def persist_district_tasks(
         for group_cfg in cfg.get("groups", []):
             group_name = group_cfg.get("name", "")
             for sub_cfg in group_cfg.get("subgroups", []):
+                if is_etl_sync_cfg(sub_cfg):
+                    continue
                 subgroup_name = sub_cfg.get("name", "")
                 layers, _missing = registry.resolve_subgroup_layers(
                     sub_cfg.get("layers", []),
@@ -292,6 +298,12 @@ def build_collect_plan(
                 )
                 continue
 
+            if is_etl_sync_cfg(sub_cfg):
+                group.subgroups.append(
+                    TaskSubgroup(name=subgroup_name, date_field=date_field)
+                )
+                continue
+
             layer_names = sub_cfg.get("layers", [])
             group_names = sub_cfg.get("groups", [])
             resolved_layers, missing = registry.resolve_subgroup_layers(layer_names, group_names)
@@ -340,6 +352,11 @@ def collect_layer_tasks(
     sub_cfg = find_subgroup_cfg(cfg, subgroup_name)
     if sub_cfg is None:
         return [], [f"Subgroup not found: {subgroup_name}"]
+
+    if is_etl_sync_cfg(sub_cfg):
+        return collect_etl_sync_subgroup_tasks(
+            conn, rayon, subgroup_name, apply_date_filter
+        )
 
     layer = registry.by_key.get(layer_key)
     if layer is None:
@@ -464,6 +481,20 @@ def collect_tasks(
     office_subgroup = subgroup_index.get((CRM_GROUP_DISRUPTIONS, OFFICE_DATA_SUBGROUP))
     if office_subgroup is not None:
         office_subgroup.features.extend(office_features)
+
+    for group in result.groups:
+        for subgroup in group.subgroups:
+            sub_cfg = find_subgroup_cfg(crm_tasks_config(), subgroup.name)
+            if not is_etl_sync_cfg(sub_cfg):
+                continue
+            etl_features, etl_errors = collect_etl_sync_subgroup_tasks(
+                conn,
+                rayon,
+                subgroup.name,
+                apply_date_filter,
+            )
+            result.errors.extend(etl_errors)
+            subgroup.features.extend(etl_features)
 
     if filter_sent:
         store_cfg = crm_task_store_config()

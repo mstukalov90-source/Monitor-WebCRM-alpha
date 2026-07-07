@@ -60,7 +60,6 @@ class SnapshotRow:
     executor: Optional[str] = None
     office_comment: Optional[str] = None
     rayon: Optional[str] = None
-    geom: Optional[dict[str, Any]] = None
 
 
 def _snapshot_table_ref(store_cfg: dict, config_key: str, default_table: str) -> tuple[str, str]:
@@ -126,7 +125,6 @@ def _row_to_snapshot_row(
         executor=row.get("executor") if include_executor else None,
         office_comment=row.get("office_comment") if include_executor else None,
         rayon=row.get("rayon") if include_executor else None,
-        geom=row.get("geom") if include_executor else None,
     )
 
 
@@ -140,7 +138,6 @@ def _snapshot_select_columns(table: str) -> list[str]:
         columns.append("executor")
         columns.append("office_comment")
         columns.append("rayon")
-        columns.append("geom")
     return columns
 
 
@@ -163,10 +160,7 @@ def fetch_snapshot_rows(
         ensure_executor_column(conn, schema, table)
         ensure_office_comment_column(conn, schema, table)
         ensure_rayon_column(conn, schema, table)
-    col_list = ", ".join(
-        'ST_AsGeoJSON(geom)::json AS geom' if c == "geom" else f'"{c}"'
-        for c in _snapshot_select_columns(table)
-    )
+    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
 
     filters: list[str] = []
     params: list[Any] = []
@@ -213,10 +207,7 @@ def fetch_snapshot_rows_by_keys(
         ensure_executor_column(conn, schema, table)
         ensure_office_comment_column(conn, schema, table)
         ensure_rayon_column(conn, schema, table)
-    col_list = ", ".join(
-        'ST_AsGeoJSON(geom)::json AS geom' if c == "geom" else f'"{c}"'
-        for c in _snapshot_select_columns(table)
-    )
+    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
     query = f'SELECT {col_list} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
 
     rows: list[SnapshotRow] = []

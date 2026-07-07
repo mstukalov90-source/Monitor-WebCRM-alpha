@@ -144,8 +144,6 @@ def _field_only_migration_statements(schema: str, table: str) -> Tuple[str, ...]
         f"ADD COLUMN IF NOT EXISTS office_comment TEXT",
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS rayon TEXT",
-        f'ALTER TABLE "{schema}"."{table}" '
-        f"ADD COLUMN IF NOT EXISTS geom GEOMETRY(Geometry, 4326)",
     )
 
 
@@ -484,9 +482,8 @@ def link_items_row_after_persist(
         if global_id is not None:
             anchor_sets.append("source_global_id = %s")
             anchor_params.append(global_id)
-        anchor_sets.append(
-            f"source_geom_hash = {_geom_hash_expr(f't.\"{geom_col}\"')}"
-        )
+        geom_ref = f't."{geom_col}"'
+        anchor_sets.append(f"source_geom_hash = {_geom_hash_expr(geom_ref)}")
         anchor_params.extend([task_key, row_id_int])
         cur.execute(
             f"""
