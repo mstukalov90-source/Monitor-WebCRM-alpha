@@ -28,7 +28,6 @@ from app.crm.collector import (
     collect_layer_to_dict,
     collect_plan_to_dict,
     collect_tasks,
-    persist_district_tasks,
     task_result_to_dict,
 )
 from app.crm.snapshot_loader import collect_snapshot_tasks, snapshot_result_to_dict
@@ -87,15 +86,6 @@ router = APIRouter(
     tags=["crm"],
     dependencies=[Depends(get_current_user)],
 )
-
-
-def _background_persist_tasks(rayon: str, apply_date_filter: bool, login: str) -> None:
-    try:
-        with get_connection() as conn:
-            persist_district_tasks(conn, rayon, apply_date_filter, login)
-    except Exception as exc:
-        logger = logging.getLogger(__name__)
-        logger.exception("Background persist failed for rayon %s: %s", rayon, exc)
 
 
 def _record_to_out(record: TaskRecord) -> TaskRecordOut:
@@ -232,29 +222,10 @@ def post_collect_persist(
     body: CollectTasksRequest,
     user: UserSession = Depends(get_current_user),
 ) -> dict:
-    check_task_source(user, "active")
-    check_rayon(user, body.rayon)
-    try:
-        with get_connection() as conn:
-            stats = persist_district_tasks(
-                conn, body.rayon, body.apply_date_filter, user.login
-            )
-    except OperationalError as exc:
-        message = str(exc).lower()
-        if "timeout" in message or "canceling statement" in message:
-            raise HTTPException(
-                status_code=503,
-                detail="База данных не отвечает вовремя при записи задач.",
-            ) from exc
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {
-        "status": "ok",
-        "inserted": stats.inserted,
-        "skipped": stats.skipped,
-        "invalid": stats.invalid,
-    }
+    raise HTTPException(
+        status_code=410,
+        detail="Создание задач перенесено в ETL; используйте «Обновить активные».",
+    )
 
 
 @router.post("/tasks/collect", dependencies=[Depends(require_can_collect)])
@@ -266,9 +237,6 @@ def post_collect_tasks(
     check_rayon(user, body.rayon)
     try:
         with get_connection() as conn:
-            stats = persist_district_tasks(
-                conn, body.rayon, body.apply_date_filter, user.login
-            )
             result, _ = collect_tasks(
                 conn,
                 body.rayon,
@@ -288,12 +256,6 @@ def post_collect_tasks(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     data = task_result_to_dict(result)
     data["task_source"] = "active"
-    data["persist_stats"] = {
-        "inserted": stats.inserted,
-        "skipped": stats.skipped,
-        "invalid": stats.invalid,
-        "pending": False,
-    }
     return data
 
 
@@ -502,8 +464,24 @@ def post_send_to_field(
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
     check_task_source(user, "active")
-    handler = partial(send_task_to_field, office_comment=body.office_comment)
-    return _send_snapshot(key, handler, user.login)
+    check_rayon(user, body.rayon)
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            status = send_task_to_field(
+                conn,
+                record,
+                store_cfg,
+                user.login,
+                office_comment=body.office_comment,
+                rayon=body.rayon,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SnapshotResultOut(status=status)
 
 
 @router.post("/tasks/{key}/close-legal")

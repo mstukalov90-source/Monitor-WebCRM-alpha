@@ -50,7 +50,7 @@ export function Toolbar({
         Фильтр по дате (ордера/уведомления)
       </label>
       <button type="button" className="btn primary" disabled={!rayon || loading} onClick={onCollect}>
-        {loading ? 'Сбор…' : 'Получить задачу'}
+        {loading ? 'Загрузка…' : 'Обновить активные'}
       </button>
     </div>
   )

@@ -38,7 +38,7 @@ from app.crm.store import (
     _find_subgroup_for_record,
     enrich_task_result_field_observed,
 )
-from app.layers.geojson import fetch_district_wkt, geometry_in_district, lookup_feature
+from app.layers.geojson import fetch_district_wkt, geometry_in_district, lookup_feature, normalize_rayon_name
 from app.layers.registry import get_registry
 
 SNAPSHOT_SOURCES = {
@@ -59,6 +59,8 @@ class SnapshotRow:
     group_name: str
     executor: Optional[str] = None
     office_comment: Optional[str] = None
+    rayon: Optional[str] = None
+    geom: Optional[dict[str, Any]] = None
 
 
 def _snapshot_table_ref(store_cfg: dict, config_key: str, default_table: str) -> tuple[str, str]:
@@ -123,6 +125,8 @@ def _row_to_snapshot_row(
         group_name=group_name,
         executor=row.get("executor") if include_executor else None,
         office_comment=row.get("office_comment") if include_executor else None,
+        rayon=row.get("rayon") if include_executor else None,
+        geom=row.get("geom") if include_executor else None,
     )
 
 
@@ -135,6 +139,8 @@ def _snapshot_select_columns(table: str) -> list[str]:
     if table == "tasks_field":
         columns.append("executor")
         columns.append("office_comment")
+        columns.append("rayon")
+        columns.append("geom")
     return columns
 
 
@@ -145,17 +151,22 @@ def fetch_snapshot_rows(
     default_table: str,
     *,
     field_executor_login: str | None = None,
+    rayon: str | None = None,
 ) -> list[SnapshotRow]:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     crm_cfg = crm_tasks_config()
     include_executor = table == "tasks_field"
     if include_executor:
         from app.crm.executor import ensure_executor_column
-        from app.crm.store import ensure_office_comment_column
+        from app.crm.store import ensure_office_comment_column, ensure_rayon_column
 
         ensure_executor_column(conn, schema, table)
         ensure_office_comment_column(conn, schema, table)
-    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
+        ensure_rayon_column(conn, schema, table)
+    col_list = ", ".join(
+        'ST_AsGeoJSON(geom)::json AS geom' if c == "geom" else f'"{c}"'
+        for c in _snapshot_select_columns(table)
+    )
 
     filters: list[str] = []
     params: list[Any] = []
@@ -165,6 +176,10 @@ def fetch_snapshot_rows(
         ensure_executor_column(conn, schema, table)
         filters.append("(executor IS NULL OR executor = %s)")
         params.append(field_executor_login)
+    if rayon and table == "tasks_field":
+        rayon_norm = normalize_rayon_name(rayon)
+        filters.append("(rayon = %s OR rayon IS NULL)")
+        params.append(rayon_norm)
 
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     query = f'SELECT {col_list} FROM "{schema}"."{table}" {where} ORDER BY sent_at DESC'
@@ -193,11 +208,15 @@ def fetch_snapshot_rows_by_keys(
     include_executor = table == "tasks_field"
     if include_executor:
         from app.crm.executor import ensure_executor_column
-        from app.crm.store import ensure_office_comment_column
+        from app.crm.store import ensure_office_comment_column, ensure_rayon_column
 
         ensure_executor_column(conn, schema, table)
         ensure_office_comment_column(conn, schema, table)
-    col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
+        ensure_rayon_column(conn, schema, table)
+    col_list = ", ".join(
+        'ST_AsGeoJSON(geom)::json AS geom' if c == "geom" else f'"{c}"'
+        for c in _snapshot_select_columns(table)
+    )
     query = f'SELECT {col_list} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
 
     rows: list[SnapshotRow] = []
@@ -224,6 +243,8 @@ def _field_data_snapshot_to_feature(
     store_cfg: dict[str, Any],
     district_wkt: str,
     metric_srid: int,
+    *,
+    skip_district_check: bool = False,
 ) -> Optional[TaskFeature]:
     import json
 
@@ -239,7 +260,9 @@ def _field_data_snapshot_to_feature(
 
     from app.layers.geojson import geometry_in_district
 
-    if not geometry_in_district(conn, geometry, district_wkt, metric_srid):
+    if not skip_district_check and not geometry_in_district(
+        conn, geometry, district_wkt, metric_srid
+    ):
         return None
 
     attrs = report_row_to_attributes(report_row)
@@ -269,6 +292,8 @@ def _office_data_snapshot_to_feature(
     store_cfg: dict[str, Any],
     district_wkt: str,
     metric_srid: int,
+    *,
+    skip_district_check: bool = False,
 ) -> Optional[TaskFeature]:
     import json
 
@@ -284,7 +309,9 @@ def _office_data_snapshot_to_feature(
 
     from app.layers.geojson import geometry_in_district
 
-    if not geometry_in_district(conn, geometry, district_wkt, metric_srid):
+    if not skip_district_check and not geometry_in_district(
+        conn, geometry, district_wkt, metric_srid
+    ):
         return None
 
     attrs: dict[str, Any] = {
@@ -311,37 +338,66 @@ def _office_data_snapshot_to_feature(
     )
 
 
-def snapshot_row_to_feature(
+def _lookup_feature_for_record(
     conn: PgConnection,
-    snap: SnapshotRow,
+    record: TaskRecord,
+    subgroup_name: str,
     store_cfg: dict[str, Any],
-    district_wkt: str,
-    metric_srid: int,
-) -> Optional[TaskFeature]:
-    if snap.record.is_field_data or snap.subgroup_name == FIELD_DATA_SUBGROUP:
-        return _field_data_snapshot_to_feature(
-            conn, snap, store_cfg, district_wkt, metric_srid
-        )
-    if snap.record.is_office_task or snap.subgroup_name == OFFICE_DATA_SUBGROUP:
-        return _office_data_snapshot_to_feature(
-            conn, snap, store_cfg, district_wkt, metric_srid
-        )
+) -> dict[str, Any] | None:
+    if record.is_field_data or subgroup_name == FIELD_DATA_SUBGROUP:
+        report_row = fetch_field_report_row(conn, record.key, store_cfg)
+        if not report_row:
+            return None
+        import json
 
-    registry = get_registry()
-    mapping = store_cfg.get("subgroups", {}).get(snap.subgroup_name)
+        geometry = report_row.pop("_geometry", None)
+        if isinstance(geometry, str):
+            geometry = json.loads(geometry)
+        if not geometry:
+            return None
+        return {"geometry": geometry, "attributes": report_row_to_attributes(report_row)}
+
+    if record.is_office_task or subgroup_name == OFFICE_DATA_SUBGROUP:
+        point_row = fetch_office_task_point(conn, record.key, store_cfg)
+        if not point_row:
+            return None
+        import json
+
+        geometry = point_row.pop("_geometry", None)
+        if isinstance(geometry, str):
+            geometry = json.loads(geometry)
+        if not geometry:
+            return None
+        return {
+            "geometry": geometry,
+            "attributes": {
+                "created_at": point_row.get("created_at").isoformat()
+                if point_row.get("created_at") is not None
+                else None,
+            },
+        }
+
+    mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
     if not mapping:
         return None
 
+    from app.layers.geojson import fetch_feature_by_task_key
+
+    feature_data = fetch_feature_by_task_key(conn, record.key, subgroup_name, store_cfg)
+    if feature_data:
+        return feature_data
+
     source_field = mapping.get("source_field")
     task_column = mapping.get("task_column")
-    business_id = getattr(snap.record, task_column, None)
+    business_id = getattr(record, task_column, None)
     if not source_field or not business_id:
         return None
 
-    sub_cfg = _subgroup_cfg(snap.subgroup_name)
+    sub_cfg = _subgroup_cfg(subgroup_name)
     if sub_cfg is None:
         return None
 
+    registry = get_registry()
     layers, _ = registry.resolve_subgroup_layers(
         sub_cfg.get("layers", []),
         sub_cfg.get("groups", []),
@@ -358,11 +414,120 @@ def snapshot_row_to_feature(
         feature_data = lookup_feature(conn, layer, source_field, lookup_id)
         if feature_data:
             break
+    if not feature_data and scoped:
+        link_field = mapping.get("link_lookup_field")
+        if link_field:
+            for layer in layers:
+                feature_data = lookup_feature(conn, layer, link_field, str(business_id))
+                if feature_data:
+                    break
+    return feature_data
+
+
+def task_record_geometry_in_district(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+    district_wkt: str,
+    metric_srid: int = 32637,
+) -> bool:
+    resolved = _find_subgroup_for_record(record, store_cfg)
+    if resolved is None:
+        return False
+    subgroup_name, _, _ = resolved
+    feature_data = _lookup_feature_for_record(conn, record, subgroup_name, store_cfg)
+    if not feature_data or not feature_data.get("geometry"):
+        return False
+    return geometry_in_district(conn, feature_data["geometry"], district_wkt, metric_srid)
+
+
+def snapshot_row_to_feature(
+    conn: PgConnection,
+    snap: SnapshotRow,
+    store_cfg: dict[str, Any],
+    district_wkt: str,
+    metric_srid: int,
+    *,
+    requested_rayon: str | None = None,
+) -> Optional[TaskFeature]:
+    skip_district_check = False
+    if requested_rayon and snap.rayon:
+        skip_district_check = normalize_rayon_name(snap.rayon) == normalize_rayon_name(
+            requested_rayon
+        )
+
+    if snap.record.is_field_data or snap.subgroup_name == FIELD_DATA_SUBGROUP:
+        return _field_data_snapshot_to_feature(
+            conn,
+            snap,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            skip_district_check=skip_district_check,
+        )
+
+    if snap.record.is_office_task or snap.subgroup_name == OFFICE_DATA_SUBGROUP:
+        return _office_data_snapshot_to_feature(
+            conn,
+            snap,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            skip_district_check=skip_district_check,
+        )
+
+    registry = get_registry()
+    mapping = store_cfg.get("subgroups", {}).get(snap.subgroup_name)
+    if not mapping:
+        return None
+
+    import json
+
+    feature_data = None
+    if mapping.get("scoped_geometry_id"):
+        from app.layers.geojson import fetch_feature_by_task_key
+
+        feature_data = fetch_feature_by_task_key(
+            conn, snap.task_key, snap.subgroup_name, store_cfg
+        )
+
+    source_field = mapping.get("source_field")
+    task_column = mapping.get("task_column")
+    business_id = getattr(snap.record, task_column, None)
+    if not feature_data and source_field and business_id:
+        sub_cfg = _subgroup_cfg(snap.subgroup_name)
+        if sub_cfg is None:
+            return None
+
+        layers, _ = registry.resolve_subgroup_layers(
+            sub_cfg.get("layers", []),
+            sub_cfg.get("groups", []),
+        )
+        from app.crm.store import parse_scoped_business_id
+
+        scoped = bool(mapping.get("scoped_geometry_id"))
+        prefix, raw_business_id = parse_scoped_business_id(str(business_id))
+        for layer in layers:
+            if scoped and prefix and layer.geometry_type != prefix:
+                continue
+            lookup_id = raw_business_id if scoped else str(business_id)
+            feature_data = lookup_feature(conn, layer, source_field, lookup_id)
+            if feature_data:
+                break
+        if not feature_data and scoped:
+            link_field = mapping.get("link_lookup_field")
+            if link_field:
+                for layer in layers:
+                    feature_data = lookup_feature(conn, layer, link_field, str(business_id))
+                    if feature_data:
+                        break
     if not feature_data or not feature_data.get("geometry"):
         return None
 
     geom = feature_data["geometry"]
-    if not geometry_in_district(conn, geom, district_wkt, metric_srid):
+    if not skip_district_check and not geometry_in_district(
+        conn, geom, district_wkt, metric_srid
+    ):
         return None
 
     attrs = dict(feature_data.get("attributes") or {})
@@ -410,17 +575,26 @@ def collect_snapshot_tasks(
         )
 
     executor_filter = field_executor_login if source == "field" else None
+    rayon_filter = rayon if source == "field" else None
     snapshot_rows = fetch_snapshot_rows(
         conn,
         store_cfg,
         config_key,
         default_table,
         field_executor_login=executor_filter,
+        rayon=rayon_filter,
     )
 
     groups_map: dict[str, dict[str, list[TaskFeature]]] = {}
     for snap in snapshot_rows:
-        feat = snapshot_row_to_feature(conn, snap, store_cfg, district_wkt, metric_srid)
+        feat = snapshot_row_to_feature(
+            conn,
+            snap,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            requested_rayon=rayon if source == "field" else None,
+        )
         if feat is None:
             continue
         groups_map.setdefault(snap.group_name, {}).setdefault(snap.subgroup_name, []).append(feat)

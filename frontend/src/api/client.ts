@@ -142,24 +142,12 @@ export function collectTasksLayer(
   )
 }
 
-export function triggerCollectPersist(
-  rayon: string,
-  applyDateFilter: boolean,
-): Promise<{ status: string; inserted: number; skipped: number; invalid: number }> {
-  return request('/api/tasks/collect/persist', {
-    method: 'POST',
-    body: JSON.stringify({ rayon, apply_date_filter: applyDateFilter }),
-  })
-}
-
 export async function collectTasksByLayers(
   rayon: string,
   applyDateFilter: boolean,
   onProgress?: (progress: CollectProgress) => void,
 ): Promise<TaskResult> {
   const plan = await fetchCollectPlan(rayon, applyDateFilter)
-
-  const persist = await triggerCollectPersist(rayon, applyDateFilter)
 
   const total = plan.layers.length
   const layerErrors: string[] = [...plan.errors]
@@ -177,12 +165,6 @@ export async function collectTasksByLayers(
   }
 
   const active = await fetchActiveTasks(rayon, applyDateFilter)
-  active.persist_stats = {
-    inserted: persist.inserted,
-    skipped: persist.skipped,
-    invalid: persist.invalid,
-    pending: false,
-  }
   if (layerErrors.length) {
     active.errors = [...active.errors, ...layerErrors]
   }
@@ -282,11 +264,15 @@ export function createOfficeTask(payload: CreateOfficeTaskPayload): Promise<Task
 
 export function sendTaskToField(
   key: string,
-  officeComment?: string | null,
+  officeComment: string | null | undefined,
+  rayon: string,
 ): Promise<{ status: string }> {
   return request(`/api/tasks/${key}/send-to-field`, {
     method: 'POST',
-    body: JSON.stringify({ office_comment: officeComment?.trim() || null }),
+    body: JSON.stringify({
+      rayon,
+      office_comment: officeComment?.trim() || null,
+    }),
   })
 }
 

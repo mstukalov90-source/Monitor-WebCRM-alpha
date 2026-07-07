@@ -162,7 +162,56 @@
     "WebCRM: дважды «Получить задачу» по Сокол → inserted=0, дублей нет",
     "Параллельно: QGIS собирает Сокол, сразу WebCRM собирает Сокол → суммарно без дублей, оба клиента завершаются без unique violation в UI",
     "Разрыв с oati_id=26031303: привязка находит геометрию по order_number",
+    "tasks_field.rayon: после send-to-field все новые строки имеют rayon = район сессии",
+    "tasks_field.geom: после send-to-field геометрия сохранена в snapshot",
+    "task_key: после persist COUNT(items_* WHERE task_key IS NOT NULL) растёт на inserted",
+    "Ночной ETL: task_key count не уменьшается (link_health_check.sh)",
+    "Собрать район X → отправить 3 задачи (point + line + polygon) → «В поле» в районе X показывает ровно 3",
+    "Повторный сбор X → inserted=0",
+    "После ночного ETL data_mos: уже отправленные задачи остаются в «В поле» по tasks_field.rayon"
   ],
+  "field_tasks_rayon": {
+    "rule": "Полевая задача привязана к району отправки (tasks_field.rayon), а не к текущему положению геометрии в hood.",
+    "send_to_field": [
+      "Обязательный параметр rayon = район сессии",
+      "Backend/QGIS: геометрия задачи должна пересекать полигон rayon, иначе 400",
+      "Frontend/QGIS: send только для task_key из текущего active taskResult"
+    ],
+    "field_load": [
+      "Фильтр tasks_field по rayon = выбранный район",
+      "Если snap.rayon задан — не отфильтровывать повторно по geometry∩район",
+      "Legacy rows (rayon IS NULL) — fallback geometry∩район"
+    ],
+    "sql": "MONITOR_WEBCRM/sql/22_tasks_field_rayon.sql",
+    "daily_data_mos": "scoped id стабилен при стабильном id строки items_*; re-collect района — ON CONFLICT DO NOTHING"
+  },
+  "stable_links": {
+    "summary": "task_key на data_mos.items_* + source anchor на crm.tasks; ETL не удаляет связанные строки.",
+    "webcrm_reference": [
+      "MONITOR_WEBCRM/backend/app/crm/store.py — link_items_row_after_persist, link_items_tasks_in_layer",
+      "MONITOR_WEBCRM/backend/app/layers/geojson.py — fetch_geometry_by_task_key, fetch_feature_by_task_key",
+      "MONITOR_WEBCRM/backend/app/crm/snapshot_loader.py — task_key lookup first, snap.geom fallback",
+      "MONITOR_WEBCRM/sql/23-26, MONITOR/sql/27, prompts/etl-data-mos-agent.json"
+    ],
+    "qgis_tasks": [
+      "monitor_db_loader/core/crm_task_store.py — link_items_task_key после persist/send",
+      "monitor_db_loader/core/crm_snapshot_loader.py — _lookup_feature_by_task_key_db, snap.geom",
+      "Синхронизировать layers_config.json с WebCRM"
+    ],
+    "lookup_priority": [
+      "1. tasks_field.geom (snapshot при send)",
+      "2. items_*.task_key = crm.tasks.key",
+      "3. scoped id point|line|polygon:id",
+      "4. link_lookup_field (order_number и т.д.)"
+    ],
+    "etl_invariant": "Строки с task_key IS NOT NULL не удаляются ночным ETL (MONITOR merge-load + geom_split restore)",
+    "smoke_after_etl": [
+      "Re-collect района → inserted=0, task_key count не изменился",
+      "Ночной ETL → SELECT COUNT(*) FROM items_* WHERE task_key IS NOT NULL не уменьшился",
+      "Send 3 задачи → «В поле» = 3, tasks_field.rayon задан, geom сохранён",
+      "scripts/link_health_check.sh → exit 0"
+    ]
+  },
   "do_not": [
     "Не возвращать модель «1 номер ордера/уведомления = 1 задача» для заказов",
     "Не дедуплицировать по order_number или registration_number_notifications",

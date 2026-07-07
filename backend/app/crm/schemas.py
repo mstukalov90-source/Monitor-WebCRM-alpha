@@ -135,6 +135,7 @@ class SnapshotResultOut(BaseModel):
 
 
 class SendToFieldRequest(BaseModel):
+    rayon: str
     office_comment: str | None = None
 
 

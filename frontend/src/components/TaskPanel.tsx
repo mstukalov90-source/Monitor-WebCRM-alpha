@@ -277,11 +277,6 @@ export function TaskPanel({
         ) : taskSource === 'active' ? (
           <div className="muted small">Без фильтра по дате</div>
         ) : null}
-        {taskResult.persist_stats && taskSource === 'active' && (
-          <div className="muted small">
-            БД: +{taskResult.persist_stats.inserted}, пропущено {taskResult.persist_stats.skipped}
-          </div>
-        )}
         {linkLoading && <div className="muted small">Загрузка привязок…</div>}
         {linkInfo && !linkLoading && <div className="muted small">{linkInfo}</div>}
         {actionMessage && <div className="muted small">{actionMessage}</div>}

@@ -399,9 +399,17 @@ def list_field_tasks_for_assignment(
         filters.append(exec_sql)
         params.extend(exec_params)
 
+    if rayon:
+        from app.crm.store import ensure_rayon_column
+        from app.layers.geojson import normalize_rayon_name
+
+        ensure_rayon_column(conn, schema, table)
+        filters.append("(rayon = %s OR rayon IS NULL)")
+        params.append(normalize_rayon_name(rayon))
+
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     query = f"""
-        SELECT key::text, task_key::text, type, executor, sent_at
+        SELECT key::text, task_key::text, type, executor, sent_at, rayon
         FROM "{schema}"."{table}"
         {where}
         ORDER BY sent_at DESC NULLS LAST
@@ -416,11 +424,12 @@ def list_field_tasks_for_assignment(
         return [_field_task_row(r) for r in rows]
 
     from app.crm.snapshot_loader import fetch_snapshot_rows_by_keys, snapshot_row_to_feature
-    from app.layers.geojson import fetch_district_wkt
+    from app.layers.geojson import fetch_district_wkt, normalize_rayon_name
 
+    rayon_norm = normalize_rayon_name(rayon)
     metric_crs = crm_tasks_config().get("metric_crs", "EPSG:32637")
     metric_srid = int(metric_crs.split(":")[-1]) if ":" in metric_crs else 32637
-    district_wkt = fetch_district_wkt(conn, rayon, metric_srid=metric_srid)
+    district_wkt = fetch_district_wkt(conn, rayon_norm, metric_srid=metric_srid)
     if not district_wkt:
         return []
 
@@ -434,10 +443,21 @@ def list_field_tasks_for_assignment(
         snap = snap_by_key.get(row["key"])
         if snap is None:
             continue
-        feat = snapshot_row_to_feature(conn, snap, store_cfg, district_wkt, metric_srid)
+        row_rayon = row.get("rayon")
+        if row_rayon and normalize_rayon_name(str(row_rayon)) == rayon_norm:
+            matched.append(_field_task_row(row, rayon=rayon_norm))
+            continue
+        feat = snapshot_row_to_feature(
+            conn,
+            snap,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            requested_rayon=rayon_norm,
+        )
         if feat is None:
             continue
-        matched.append(_field_task_row(row, rayon=rayon))
+        matched.append(_field_task_row(row, rayon=rayon_norm))
     return matched
 
 

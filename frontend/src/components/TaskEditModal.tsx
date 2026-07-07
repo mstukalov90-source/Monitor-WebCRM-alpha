@@ -119,6 +119,8 @@ function fieldObservedBadgeClass(value: boolean | null | undefined): string {
 interface TaskEditModalProps {
   context: SelectedTaskContext | null
   subgroupFeatures?: TaskFeature[]
+  sessionRayon?: string
+  taskInCurrentResult?: boolean
   canManagePersonnel: boolean
   userRole: UserRole
   officeWorking?: boolean
@@ -135,6 +137,8 @@ interface TaskEditModalProps {
 export function TaskEditModal({
   context,
   subgroupFeatures = [],
+  sessionRayon = '',
+  taskInCurrentResult = false,
   canManagePersonnel,
   userRole,
   officeWorking = false,
@@ -168,7 +172,8 @@ export function TaskEditModal({
   const canManageFieldTaskStatus =
     taskSource === 'field' && (userRole === 'admin' || userRole === 'manager')
   const canPerformStatusActions = !isReadonly || canManageFieldTaskStatus
-  const canSendToField = taskSource === 'active'
+  const canSendToField =
+    taskSource === 'active' && Boolean(sessionRayon) && taskInCurrentResult
   const canCloseLegal =
     taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
   const showIllegalClose =
@@ -458,7 +463,13 @@ export function TaskEditModal({
     setLoading(true)
     try {
       let result
-      if (action === 'field') result = await sendTaskToField(record.key, officeComment)
+      if (action === 'field') {
+        if (!sessionRayon) {
+          setMessage('Не выбран район сессии')
+          return
+        }
+        result = await sendTaskToField(record.key, officeComment, sessionRayon)
+      }
       else if (action === 'legal') result = await closeTaskLegal(record.key)
       else if (action === 'illegal') result = await closeTaskIllegal(record.key)
       else if (action === 'clear') result = await markDisruptionAbsent(record.key)

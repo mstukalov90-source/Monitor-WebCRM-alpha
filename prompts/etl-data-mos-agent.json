@@ -1,0 +1,114 @@
+{
+  "title": "ETL data_mos: сохранение task_key и merge-load без TRUNCATE",
+  "repository": "MONITOR",
+  "language": "ru",
+  "summary": "Ночной ETL data.mos.ru не должен уничтожать связь data_mos.items_* ↔ crm.tasks. Колонка task_key на строках items — обратная ссылка на crm.tasks.key. Строки с task_key защищены от DELETE/TRUNCATE; загрузка — merge/UPSERT, не полная перезаливка.",
+  "context": {
+    "database": "monitor",
+    "schemas": ["data_mos", "crm"],
+    "related_repos": {
+      "webcrm": "MONITOR_WEBCRM",
+      "qgis": "MONITOR_QGIS"
+    },
+    "reference_sql": [
+      "MONITOR/sql/27_data_mos_items_task_key.sql",
+      "MONITOR_WEBCRM/sql/23_crm_tasks_source_anchor.sql",
+      "MONITOR_WEBCRM/sql/24_backfill_items_task_key.sql"
+    ]
+  },
+  "problem": {
+    "current_behavior": "load_geojson_to_db делает TRUNCATE TABLE data_mos.items_* RESTART IDENTITY; rebuild_geom_split делает TRUNCATE на *_points/lines/polygons. Любой task_key теряется каждую ночь.",
+    "files": [
+      "collector/jobs/data_mos_job.py",
+      "collector/data_mos_geom_split.py",
+      "collector/data_mos_purge.py",
+      "collector/data_mos_schema.py"
+    ]
+  },
+  "target_model": {
+    "items_task_key": "UUID NULL REFERENCES crm.tasks(key) ON DELETE SET NULL",
+    "unique": "UNIQUE INDEX ON each items_* table (task_key) WHERE task_key IS NOT NULL",
+    "crm_writes_task_key": "WebCRM/QGIS пишут task_key при persist; ETL только сохраняет и восстанавливает",
+    "invariants": [
+      "Никогда DELETE/TRUNCATE строк с task_key IS NOT NULL",
+      "Не изменять crm.tasks из ETL (только чтение task_key для preserve)",
+      "Не использовать global_id как единственный ключ задачи (не уникален на уровне геометрии)"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "sql-27",
+      "file": "sql/27_data_mos_items_task_key.sql",
+      "description": "ADD COLUMN task_key + UNIQUE partial index на items_{2855,62501,62441,62461}_{points,lines,polygons}"
+    },
+    {
+      "id": "reserved-column",
+      "file": "collector/data_mos_schema.py",
+      "description": "Добавить task_key в _RESERVED_COLUMNS — не перезаписывать при flatten/insert из GeoJSON"
+    },
+    {
+      "id": "merge-load",
+      "file": "collector/jobs/data_mos_job.py",
+      "function": "load_geojson_to_db",
+      "description": "Заменить TRUNCATE на merge-load: сохранить строки с task_key; UPSERT остальных по (global_id, md5(ST_AsEWKB(geom))); UPDATE geom/атрибутов на месте для совпадений"
+    },
+    {
+      "id": "geom-split",
+      "file": "collector/data_mos_geom_split.py",
+      "function": "rebuild_geom_split",
+      "description": "Перед rebuild сохранить (task_key, global_id, geom_hash, id); не TRUNCATE split-таблиц с task_key; после insert восстановить task_key по (global_id, geom_hash)"
+    },
+    {
+      "id": "purge",
+      "file": "collector/data_mos_purge.py",
+      "function": "purge_archived",
+      "description": "DELETE только WHERE task_key IS NULL AND <purge rule>"
+    },
+    {
+      "id": "health-check",
+      "description": "После job: логировать COUNT(task_key IS NOT NULL) до/после; fail если count уменьшился"
+    },
+    {
+      "id": "tests",
+      "file": "tests/test_data_mos_task_key_preserve.py",
+      "description": "Строка с task_key переживает load_geojson_to_db и rebuild_geom_split"
+    }
+  ],
+  "merge_load_algorithm": {
+    "steps": [
+      "1. ensure_columns + task_key column exists",
+      "2. Сохранить snapshot: SELECT id, task_key, global_id, md5(ST_AsEWKB(geom)) FROM table WHERE task_key IS NOT NULL",
+      "3. Для каждой feature из GeoJSON: найти existing по (global_id, geom_hash) OR по task_key snapshot",
+      "4. MATCH с task_key → UPDATE attributes + geom, keep id and task_key",
+      "5. MATCH без task_key → UPDATE or INSERT",
+      "6. NO MATCH → INSERT new row",
+      "7. DELETE rows WHERE task_key IS NULL AND id NOT IN incoming_set (опционально, только unlinked)",
+      "8. НИКОГДА не DELETE WHERE task_key IS NOT NULL"
+    ]
+  },
+  "geom_split_restore": {
+    "before": "COPY task_key_links(task_key, global_id, geom_hash, source_id) FROM split tables",
+    "rebuild": "INSERT routed geometries (may get new ids)",
+    "after": "UPDATE split SET task_key = l.task_key FROM task_key_links l WHERE global_id match AND md5(geom)=geom_hash"
+  },
+  "do_not": [
+    "TRUNCATE items_* или *_points|lines|polygons без переноса task_key",
+    "DELETE FROM items_* WHERE task_key IS NOT NULL",
+    "INSERT в crm.tasks из ETL",
+    "Использовать order_number/global_id как business_id в crm.tasks"
+  ],
+  "test_plan": [
+    "До/после run_for(2855): COUNT(*) FROM items_2855_lines WHERE task_key IS NOT NULL не уменьшается",
+    "Строка с task_key: атрибуты обновились после ETL, task_key тот же",
+    "rebuild_geom_split: task_key восстановлен на lines после split",
+    "purge_archived: строки с task_key не удалены",
+    "Полный run_all_data_mos: health check passed"
+  ],
+  "deploy_order": [
+    "1. sql/27 на prod",
+    "2. deploy ETL code",
+    "3. MONITOR_WEBCRM sql/23-25 + backfill",
+    "4. WebCRM phase2 persist пишет task_key",
+    "5. verify link_health_check"
+  ]
+}

@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.layers.registry import LayerDef
+
+_ITEMS_LINK_TABLE_RE = re.compile(
+    r'^"?data_mos"?\."?items_\d+_(?:points|lines|polygons)"?$'
+)
+
+
+def _is_data_mos_items_table(qualified_table: str) -> bool:
+    return bool(_ITEMS_LINK_TABLE_RE.match(qualified_table))
 
 
 def _parse_bbox(bbox_str: str) -> tuple[float, float, float, float]:
@@ -346,6 +355,104 @@ def lookup_feature(
     return features[0] if features else None
 
 
+def fetch_geometry_by_task_key(
+    conn: PgConnection,
+    task_key: str,
+    store_cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Fetch geometry from items_* split table by crm.tasks.key."""
+    from app.config import crm_tasks_config
+    from app.layers.registry import get_registry
+
+    registry = get_registry()
+    crm_cfg = crm_tasks_config()
+
+    for group_cfg in crm_cfg.get("groups", []):
+        for sub_cfg in group_cfg.get("subgroups", []):
+            subgroup_name = sub_cfg.get("name", "")
+            mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
+            if not mapping or not mapping.get("scoped_geometry_id"):
+                continue
+            layers, _ = registry.resolve_subgroup_layers(
+                sub_cfg.get("layers", []),
+                sub_cfg.get("groups", []),
+            )
+            for layer in layers:
+                if not _is_data_mos_items_table(layer.qualified_table):
+                    continue
+                geom_col = layer.geometry_column
+                query = f"""
+                    SELECT ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))::json AS geometry
+                    FROM {layer.qualified_table}
+                    WHERE task_key = %s::uuid
+                    LIMIT 1
+                """
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    cur.execute(query, (task_key,))
+                    row = cur.fetchone()
+                if row and row.get("geometry"):
+                    return row["geometry"]
+    return None
+
+
+def fetch_feature_by_task_key(
+    conn: PgConnection,
+    task_key: str,
+    subgroup_name: str,
+    store_cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Full feature (geometry + attributes) by task_key for a subgroup."""
+    from app.layers.registry import get_registry
+
+    mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
+    if not mapping:
+        return None
+
+    sub_cfg = None
+    from app.config import crm_tasks_config
+
+    for group_cfg in crm_tasks_config().get("groups", []):
+        for sub in group_cfg.get("subgroups", []):
+            if sub.get("name") == subgroup_name:
+                sub_cfg = sub
+                break
+
+    if sub_cfg is None:
+        return None
+
+    registry = get_registry()
+    layers, _ = registry.resolve_subgroup_layers(
+        sub_cfg.get("layers", []),
+        sub_cfg.get("groups", []),
+    )
+    for layer in layers:
+        if not _is_data_mos_items_table(layer.qualified_table):
+            continue
+        geom_col = layer.geometry_column
+        query = f"""
+            SELECT to_jsonb(t) - '{geom_col}' AS attrs,
+                   ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+            FROM {layer.qualified_table} t
+            WHERE t.task_key = %s::uuid
+            LIMIT 1
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, (task_key,))
+            row = cur.fetchone()
+        if row and row.get("geometry"):
+            return {
+                "layer_name": layer.display_name,
+                "layer_key": layer.layer_key,
+                "attributes": dict(row["attrs"]) if row["attrs"] else {},
+                "geometry": row["geometry"],
+            }
+    return None
+
+
+def normalize_rayon_name(value: str) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
 def fetch_district_wkt(
     conn: PgConnection,
     rayon: str,
@@ -354,6 +461,9 @@ def fetch_district_wkt(
     field: str = "rayon",
     metric_srid: int = 32637,
 ) -> str | None:
+    normalized = normalize_rayon_name(rayon)
+    if not normalized:
+        return None
     query = f"""
         SELECT ST_AsText(
             ST_Union(
@@ -361,10 +471,10 @@ def fetch_district_wkt(
             )
         ) AS wkt
         FROM "{schema}"."{table}"
-        WHERE "{field}" = %s
+        WHERE regexp_replace(trim("{field}"::text), '\\s+', ' ', 'g') = %s
     """
     with conn.cursor() as cur:
-        cur.execute(query, (rayon,))
+        cur.execute(query, (normalized,))
         row = cur.fetchone()
     if row and row[0]:
         return row[0]

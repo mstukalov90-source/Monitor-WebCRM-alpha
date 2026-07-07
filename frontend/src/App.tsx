@@ -134,6 +134,23 @@ function App() {
     return []
   }, [editContext, taskResult])
 
+  const sessionRayon = taskResult?.district_name ?? collection.rayon ?? ''
+
+  const editTaskInCurrentResult = useMemo(() => {
+    if (!editContext || !taskResult || taskSource !== 'active') return false
+    const taskKey = editContext.feature.task_key ?? String(editContext.feature.attributes._task_key ?? '')
+    if (!taskKey) return false
+    for (const group of taskResult.groups) {
+      for (const subgroup of group.subgroups) {
+        for (const feat of subgroup.features) {
+          const key = feat.task_key ?? String(feat.attributes._task_key ?? '')
+          if (key === taskKey) return true
+        }
+      }
+    }
+    return false
+  }, [editContext, taskResult, taskSource])
+
   const panelTaskResult = useMemo((): TaskResult | null => {
     if (!taskResult) return null
     if (isAreaSource(taskSource)) return taskResult
@@ -204,11 +221,12 @@ function App() {
   }
 
   const handleLoadFieldTasks = async () => {
-    if (!collection.rayon) return
+    const rayon = taskResult?.district_name ?? collection.rayon
+    if (!rayon) return
     setSourceLoading(true)
     setLoadError(null)
     try {
-      const result = await fetchSnapshotTasks(collection.rayon, 'field')
+      const result = await fetchSnapshotTasks(rayon, 'field')
       setTaskResult(result)
       setTaskSource('field')
       setTaskFilterSelection('field')
@@ -728,6 +746,8 @@ function App() {
       <TaskEditModal
         context={editContext}
         subgroupFeatures={modalSubgroupFeatures}
+        sessionRayon={sessionRayon}
+        taskInCurrentResult={editTaskInCurrentResult}
         canManagePersonnel={user.can_manage_personnel}
         userRole={user.role}
         officeWorking={officeWorking}
