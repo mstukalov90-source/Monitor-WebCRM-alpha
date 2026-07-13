@@ -623,6 +623,15 @@
         "created_at"
       ]
     },
+    "employee_locations": {
+      "schema": "mggt_field",
+      "table": "track_real_time",
+      "id_column": "user",
+      "geometry_column": "geom",
+      "display_columns": [
+        "user"
+      ]
+    },
     "groups": [
       {
         "name": "Разрытия",
@@ -774,6 +783,6 @@
     "lens": "Данные Объектив",
     "genplan": "Данные ГенПлан (photo_meta, order)",
     "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрытия (ogh-disruption)",
-    "mggt_field": "Полевые отчёты МГГТ Field (reports, tracks)"
+    "mggt_field": "Полевые отчёты МГГТ Field (reports, tracks, track_real_time)"
   }
 }

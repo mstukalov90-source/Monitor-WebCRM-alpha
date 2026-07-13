@@ -21,6 +21,7 @@ import type {
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
+  EmployeeLocationsResult,
 } from '../types'
 
 const API_BASE = ''
@@ -528,4 +529,9 @@ export function fetchPersonnelStatistics(params: {
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {
   const qs = new URLSearchParams({ rayon })
   return request(`/api/order-tracks?${qs}`)
+}
+
+export function fetchEmployeeLocations(rayon: string): Promise<EmployeeLocationsResult> {
+  const qs = new URLSearchParams({ rayon })
+  return request(`/api/employee-locations?${qs}`)
 }

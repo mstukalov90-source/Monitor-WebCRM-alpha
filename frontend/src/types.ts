@@ -83,7 +83,7 @@ export interface PersonnelStatistics {
   scope: 'all' | 'self'
 }
 
-export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks'
+export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks' | 'employee_locations'
 
 export interface TrackFeature {
   id: string
@@ -126,6 +126,32 @@ export function formatTrackTableCell(value: unknown, format?: TrackTableColumn['
     const s = sec % 60
     return `${m}:${String(s).padStart(2, '0')}`
   }
+  return String(value)
+}
+
+export interface EmployeeLocationFeature {
+  id: string
+  attributes: Record<string, unknown>
+  geometry: GeoJSON.Geometry
+}
+
+export interface EmployeeLocationsResult {
+  district_name: string
+  locations: EmployeeLocationFeature[]
+  errors: string[]
+}
+
+export interface EmployeeLocationTableColumn {
+  field: string
+  label: string
+}
+
+export const EMPLOYEE_LOCATION_TABLE_COLUMNS: EmployeeLocationTableColumn[] = [
+  { field: 'user', label: 'Сотрудник' },
+]
+
+export function formatEmployeeLocationTableCell(value: unknown): string {
+  if (value == null || value === '') return ''
   return String(value)
 }
 

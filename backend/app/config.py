@@ -77,3 +77,7 @@ def crm_task_store_config() -> dict[str, Any]:
 
 def order_tracks_config() -> dict[str, Any]:
     return crm_tasks_config().get("order_tracks", {})
+
+
+def employee_locations_config() -> dict[str, Any]:
+    return crm_tasks_config().get("employee_locations", {})

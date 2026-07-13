@@ -434,7 +434,11 @@ def collect_tasks(
     *,
     persist: bool = True,
     filter_sent: bool = True,
+    login: str = "",
 ) -> tuple[TaskResult, Any]:
+    if persist and login:
+        persist_district_tasks(conn, rayon, apply_date_filter, login)
+
     result, layers = build_collect_plan(rayon, apply_date_filter)
     if result.errors and not layers:
         return result, None

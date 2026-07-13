@@ -274,3 +274,15 @@ class OrderTracksResultOut(BaseModel):
     district_name: str
     tracks: list[OrderTrackOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class EmployeeLocationOut(BaseModel):
+    id: str
+    attributes: dict[str, Any]
+    geometry: dict[str, Any]
+
+
+class EmployeeLocationsResultOut(BaseModel):
+    district_name: str
+    locations: list[EmployeeLocationOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)

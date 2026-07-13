@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.crm.collector import build_collect_plan, persist_district_tasks
+from app.crm.collector import (
+    TaskResult,
+    build_collect_plan,
+    collect_tasks,
+    persist_district_tasks,
+)
 from app.crm.etl_photo_loader import (
     AI_PHOTO_SUBGROUP,
     LENS_PHOTO_SUBGROUP,
@@ -72,6 +77,56 @@ class EtlPhotoCollectorPlanTests(unittest.TestCase):
         persist_district_tasks(conn, "Сокол", apply_date_filter=True, login="test")
         called_subgroups = {call.args[2] for call in persist_mock.call_args_list}
         self.assertTrue(etl_names.isdisjoint(called_subgroups))
+
+
+class CollectTasksPersistTests(unittest.TestCase):
+    @patch("app.crm.collector.enrich_task_result_field_observed")
+    @patch("app.crm.collector.filter_sent_tasks_from_result")
+    @patch("app.crm.collector.collect_etl_sync_subgroup_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_office_data_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_field_data_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_layer_tasks", return_value=([], []))
+    @patch("app.crm.collector.build_collect_plan")
+    @patch("app.crm.collector.persist_district_tasks")
+    def test_collect_tasks_calls_persist_when_enabled(
+        self,
+        persist_mock: MagicMock,
+        plan_mock: MagicMock,
+        *_mocks: MagicMock,
+    ) -> None:
+        from datetime import date
+
+        plan_mock.return_value = (
+            TaskResult("Сокол", date.today(), date.today()),
+            [],
+        )
+        conn = MagicMock()
+        collect_tasks(conn, "Сокол", True, persist=True, login="test")
+        persist_mock.assert_called_once_with(conn, "Сокол", True, "test")
+
+    @patch("app.crm.collector.enrich_task_result_field_observed")
+    @patch("app.crm.collector.filter_sent_tasks_from_result")
+    @patch("app.crm.collector.collect_etl_sync_subgroup_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_office_data_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_field_data_tasks", return_value=([], []))
+    @patch("app.crm.collector.collect_layer_tasks", return_value=([], []))
+    @patch("app.crm.collector.build_collect_plan")
+    @patch("app.crm.collector.persist_district_tasks")
+    def test_collect_tasks_skips_persist_when_disabled(
+        self,
+        persist_mock: MagicMock,
+        plan_mock: MagicMock,
+        *_mocks: MagicMock,
+    ) -> None:
+        from datetime import date
+
+        plan_mock.return_value = (
+            TaskResult("Сокол", date.today(), date.today()),
+            [],
+        )
+        conn = MagicMock()
+        collect_tasks(conn, "Сокол", True, persist=False, login="test")
+        persist_mock.assert_not_called()
 
 
 class EtlPhotoLoaderSqlTests(unittest.TestCase):

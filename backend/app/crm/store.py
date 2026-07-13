@@ -297,6 +297,18 @@ class TaskRecord:
         )
 
 
+def _ensure_task_id_unique_indexes(conn: PgConnection) -> None:
+    """Best-effort unique indexes; duplicate business IDs must not block status actions."""
+    for stmt in _CREATE_TASK_ID_UNIQUE_INDEXES:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(stmt)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.warning("Skipped crm.tasks unique index (duplicates?): %s", exc)
+
+
 def ensure_tasks_table(conn: PgConnection) -> bool:
     schema, table = "crm", "tasks"
     try:
@@ -305,14 +317,13 @@ def ensure_tasks_table(conn: PgConnection) -> bool:
                 cur.execute(stmt)
             for stmt in _station_migration_statements(schema, table):
                 cur.execute(stmt)
-            for stmt in _CREATE_TASK_ID_UNIQUE_INDEXES:
-                cur.execute(stmt)
         conn.commit()
-        return True
     except Exception as exc:
         conn.rollback()
         logger.warning("Failed to ensure crm.tasks: %s", exc)
         return False
+    _ensure_task_id_unique_indexes(conn)
+    return True
 
 
 def acquire_persist_rayon_lock(conn: PgConnection, rayon: str) -> int:

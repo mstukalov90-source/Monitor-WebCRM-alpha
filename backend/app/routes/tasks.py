@@ -19,7 +19,7 @@ from app.auth.deps import (
     require_manager_or_admin,
     require_office_or_admin,
 )
-from app.auth.session import UserSession, allowed_area_statuses, districts_unrestricted
+from app.auth.session import UserSession, allowed_area_statuses, can_collect, districts_unrestricted
 from app.auth.service import fetch_allowed_rayons
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.collector import (
@@ -135,6 +135,8 @@ def _send_snapshot(
                 remove_task_from_field(conn, record, store_cfg, login)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SnapshotResultOut(status=status)
 
 
@@ -241,8 +243,9 @@ def post_collect_tasks(
                 conn,
                 body.rayon,
                 body.apply_date_filter,
-                persist=False,
+                persist=True,
                 filter_sent=True,
+                login=user.login,
             )
     except OperationalError as exc:
         message = str(exc).lower()
@@ -295,8 +298,9 @@ def get_active_tasks(
             conn,
             rayon,
             apply_date_filter,
-            persist=False,
+            persist=can_collect(user.role),
             filter_sent=True,
+            login=user.login if can_collect(user.role) else "",
         )
     data = task_result_to_dict(result)
     data["task_source"] = "active"
@@ -481,6 +485,8 @@ def post_send_to_field(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SnapshotResultOut(status=status)
 
 

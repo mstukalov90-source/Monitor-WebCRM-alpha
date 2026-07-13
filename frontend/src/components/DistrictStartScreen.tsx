@@ -24,6 +24,7 @@ interface DistrictStartScreenProps {
   onCollect: () => void
   onLoadFieldTasks: () => void
   onOpenPersonnel?: () => void
+  onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
   onOpenStatistics?: () => void
   onLogout: () => Promise<void>
@@ -44,6 +45,7 @@ export function DistrictStartScreen({
   onCollect,
   onLoadFieldTasks,
   onOpenPersonnel,
+  onOpenEmployeeLocations,
   onOpenOrderTracks,
   onOpenStatistics,
   onLogout,
@@ -112,6 +114,11 @@ export function DistrictStartScreen({
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
+              </button>
+            )}
+            {canManagePersonnel && onOpenEmployeeLocations && (
+              <button type="button" className="btn" onClick={onOpenEmployeeLocations}>
+                Местоположение сотрудника
               </button>
             )}
             {canManagePersonnel && onOpenOrderTracks && (
