@@ -3,7 +3,25 @@ import { AttributionControl, MapContainer, TileLayer, useMap } from 'react-leafl
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
-import { findHoodLayerKey } from '../lib/hoodLayer'
+import { EmployeeLocationMarkersLayer } from './EmployeeLocationMarkersLayer'
+import { createAreaSvgRenderer, hatchFillStyle } from '../lib/areaMapStyle'
+import {
+  buildDistrictOrdersPopupHtml,
+  ordersForRayon,
+  type AreaOrdersByRayon,
+} from '../lib/areaOrders'
+import {
+  buildDistrictStyleByRayon,
+  districtBasePathStyle,
+  type DistrictOrderVisual,
+} from '../lib/districtOrderStyle'
+import {
+  extractDistrictMeta,
+  filterDistrictGeoJsonByOkrug,
+  findHoodLayerKey,
+  type DistrictHoodMeta,
+} from '../lib/hoodLayer'
+import type { EmployeeLocationFeature } from '../types'
 import {
   DISTRICT_RAYON_FIELD,
   filterDistrictGeoJson,
@@ -39,34 +57,94 @@ const HOOD_STYLE_SELECTED: L.PathOptions = {
   fillOpacity: 0.25,
 }
 
+const EMPTY_VISUAL: DistrictOrderVisual = { fill: 'empty', hatch: 'none' }
+
 interface DistrictPickerMapProps {
   selectedRayon: string
+  selectedOkrug?: string
   districts: string[]
   onRayonSelect: (rayon: string) => void
+  onHoodMeta?: (meta: DistrictHoodMeta) => void
   disabled?: boolean
+  employeeLocations?: EmployeeLocationFeature[]
+  areaOrdersByRayon?: AreaOrdersByRayon[]
+  /** When false, use legacy red styling until orders finish loading. */
+  areaOrdersReady?: boolean
+}
+
+type DistrictPath = L.Path & {
+  feature?: GeoJSON.Feature
+  _districtRayon?: string
+  _districtVisual?: DistrictOrderVisual
+}
+
+function resolveVisual(
+  rayonNorm: string,
+  styleByRayon: Map<string, DistrictOrderVisual>,
+  areaOrdersReady: boolean,
+): DistrictOrderVisual | null {
+  if (!areaOrdersReady) return null
+  return styleByRayon.get(rayonNorm) ?? EMPTY_VISUAL
+}
+
+function baseStyleFor(
+  visual: DistrictOrderVisual | null,
+  selected: boolean,
+): L.PathOptions {
+  if (!visual) {
+    return selected ? HOOD_STYLE_SELECTED : HOOD_STYLE_DEFAULT
+  }
+  return districtBasePathStyle(visual, selected)
 }
 
 function HoodDistrictsLayer({
   layerKey,
   selectedRayon,
+  selectedOkrug,
   districts,
   onRayonSelect,
+  onHoodMeta,
   disabled,
+  styleByRayon,
+  areaOrdersByRayon,
+  areaOrdersReady,
 }: {
   layerKey: string | null
   selectedRayon: string
+  selectedOkrug: string
   districts: string[]
   onRayonSelect: (rayon: string) => void
+  onHoodMeta?: (meta: DistrictHoodMeta) => void
   disabled?: boolean
+  styleByRayon: Map<string, DistrictOrderVisual>
+  areaOrdersByRayon: AreaOrdersByRayon[]
+  areaOrdersReady: boolean
 }) {
   const map = useMap()
-  const layerRef = useRef<L.GeoJSON | null>(null)
+  const baseGroupRef = useRef<L.FeatureGroup | null>(null)
+  const hatchGroupRef = useRef<L.FeatureGroup | null>(null)
+  const rendererRef = useRef<L.SVG | null>(null)
+  const metaReportedRef = useRef(false)
   const selectedNorm = useMemo(() => normalizeRayonName(selectedRayon), [selectedRayon])
+  const selectedNormRef = useRef(selectedNorm)
+  selectedNormRef.current = selectedNorm
+  const onHoodMetaRef = useRef(onHoodMeta)
+  onHoodMetaRef.current = onHoodMeta
+  const areaOrdersRef = useRef(areaOrdersByRayon)
+  areaOrdersRef.current = areaOrdersByRayon
 
   useEffect(() => {
-    if (layerRef.current) {
-      map.removeLayer(layerRef.current)
-      layerRef.current = null
+    if (baseGroupRef.current) {
+      map.removeLayer(baseGroupRef.current)
+      baseGroupRef.current = null
+    }
+    if (hatchGroupRef.current) {
+      map.removeLayer(hatchGroupRef.current)
+      hatchGroupRef.current = null
+    }
+    if (rendererRef.current) {
+      map.removeLayer(rendererRef.current)
+      rendererRef.current = null
     }
     if (!layerKey) return
 
@@ -75,33 +153,77 @@ function HoodDistrictsLayer({
       .then((geojson) => {
         if (cancelled) return
 
-        const filtered = filterDistrictGeoJson(geojson)
+        if (!metaReportedRef.current) {
+          metaReportedRef.current = true
+          onHoodMetaRef.current?.(extractDistrictMeta(geojson))
+        }
 
-        const gj = L.geoJSON(filtered, {
-          style: (feature) => {
-            const raw = feature?.properties?.[DISTRICT_RAYON_FIELD]
-            const isSelected =
-              selectedNorm !== '' &&
-              normalizeRayonName(String(raw ?? '')) === selectedNorm
-            return isSelected ? HOOD_STYLE_SELECTED : HOOD_STYLE_DEFAULT
-          },
-          onEachFeature: (feature, pathLayer) => {
-            const raw = feature.properties?.[DISTRICT_RAYON_FIELD]
-            const label = normalizeRayonName(String(raw ?? '')) || 'Район'
-            pathLayer.bindTooltip(label, { sticky: true, opacity: 0.9 })
+        const filtered = filterDistrictGeoJsonByOkrug(
+          filterDistrictGeoJson(geojson),
+          selectedOkrug,
+        )
+        const renderer = createAreaSvgRenderer(map)
+        rendererRef.current = renderer
 
-            pathLayer.on('click', () => {
-              if (disabled) return
-              const resolved = resolveRayonFromDistricts(raw, districts)
-              if (resolved) onRayonSelect(resolved)
-            })
-          },
-        })
+        const baseGroup = L.featureGroup()
+        const hatchGroup = L.featureGroup()
+        const currentSelected = selectedNormRef.current
 
-        gj.addTo(map)
-        layerRef.current = gj
+        for (const feature of filtered.features) {
+          const raw = feature.properties?.[DISTRICT_RAYON_FIELD]
+          const rayonNorm = normalizeRayonName(String(raw ?? ''))
+          const visual = resolveVisual(rayonNorm, styleByRayon, areaOrdersReady)
+          const isSelected = currentSelected !== '' && rayonNorm === currentSelected
+          const single = {
+            type: 'FeatureCollection',
+            features: [feature],
+          } as GeoJSON.FeatureCollection
 
-        const bounds = gj.getBounds()
+          const popupHtml = buildDistrictOrdersPopupHtml(
+            rayonNorm || 'Район',
+            ordersForRayon(areaOrdersRef.current, rayonNorm),
+          )
+
+          const baseGj = L.geoJSON(single, {
+            renderer,
+            style: () => baseStyleFor(visual, isSelected),
+            onEachFeature: (_f, pathLayer) => {
+              const path = pathLayer as DistrictPath
+              path._districtRayon = rayonNorm
+              path._districtVisual = visual ?? undefined
+              const label = rayonNorm || 'Район'
+              path.bindTooltip(label, { sticky: true, opacity: 0.9 })
+              path.bindPopup(popupHtml, {
+                maxWidth: 360,
+                className: 'district-orders-popup',
+                autoPanPadding: [24, 24],
+              })
+              path.on('click', () => {
+                if (disabled) return
+                const resolved = resolveRayonFromDistricts(raw, districts)
+                if (resolved) onRayonSelect(resolved)
+              })
+            },
+          } as L.GeoJSONOptions)
+          baseGj.eachLayer((layer) => baseGroup.addLayer(layer))
+
+          if (visual && visual.hatch !== 'none') {
+            const hatchKind = visual.hatch
+            const hatchGj = L.geoJSON(single, {
+              renderer,
+              interactive: false,
+              style: () => hatchFillStyle(hatchKind),
+            } as L.GeoJSONOptions)
+            hatchGj.eachLayer((layer) => hatchGroup.addLayer(layer))
+          }
+        }
+
+        baseGroup.addTo(map)
+        hatchGroup.addTo(map)
+        baseGroupRef.current = baseGroup
+        hatchGroupRef.current = hatchGroup
+
+        const bounds = baseGroup.getBounds()
         if (bounds.isValid()) {
           map.fitBounds(bounds, { padding: [24, 24] })
         }
@@ -110,44 +232,66 @@ function HoodDistrictsLayer({
 
     return () => {
       cancelled = true
-      if (layerRef.current) {
-        map.removeLayer(layerRef.current)
-        layerRef.current = null
+      if (baseGroupRef.current) {
+        map.removeLayer(baseGroupRef.current)
+        baseGroupRef.current = null
+      }
+      if (hatchGroupRef.current) {
+        map.removeLayer(hatchGroupRef.current)
+        hatchGroupRef.current = null
+      }
+      if (rendererRef.current) {
+        map.removeLayer(rendererRef.current)
+        rendererRef.current = null
       }
     }
-  }, [map, layerKey, districts, onRayonSelect, disabled])
+  }, [
+    map,
+    layerKey,
+    selectedOkrug,
+    districts,
+    onRayonSelect,
+    disabled,
+    styleByRayon,
+    areaOrdersReady,
+    areaOrdersByRayon,
+  ])
 
   useEffect(() => {
-    const gj = layerRef.current
-    if (!gj) return
+    const baseGroup = baseGroupRef.current
+    if (!baseGroup) return
 
-    gj.eachLayer((pathLayer) => {
-      const layer = pathLayer as L.Path
-      const feature = (pathLayer as L.GeoJSON & { feature?: GeoJSON.Feature }).feature
-      const raw = feature?.properties?.[DISTRICT_RAYON_FIELD]
-      const isSelected =
-        selectedNorm !== '' && normalizeRayonName(String(raw ?? '')) === selectedNorm
-      layer.setStyle(isSelected ? HOOD_STYLE_SELECTED : HOOD_STYLE_DEFAULT)
-      if (isSelected && 'bringToFront' in layer && typeof layer.bringToFront === 'function') {
+    baseGroup.eachLayer((pathLayer) => {
+      const path = pathLayer as DistrictPath
+      const rayonNorm = path._districtRayon ?? ''
+      const visual = path._districtVisual ?? null
+      const isSelected = selectedNorm !== '' && rayonNorm === selectedNorm
+      path.setStyle(baseStyleFor(visual, isSelected))
+      if (isSelected && typeof path.bringToFront === 'function') {
+        path.bringToFront()
+      }
+    })
+
+    hatchGroupRef.current?.eachLayer((layer) => {
+      if ('bringToFront' in layer && typeof layer.bringToFront === 'function') {
         layer.bringToFront()
       }
     })
 
-    if (selectedNorm) {
-      const selectedLayers: L.Layer[] = []
-      gj.eachLayer((pathLayer) => {
-        const feature = (pathLayer as L.GeoJSON & { feature?: GeoJSON.Feature }).feature
-        const raw = feature?.properties?.[DISTRICT_RAYON_FIELD]
-        if (normalizeRayonName(String(raw ?? '')) === selectedNorm) {
-          selectedLayers.push(pathLayer)
-        }
-      })
-      if (selectedLayers.length) {
-        const group = L.featureGroup(selectedLayers)
-        const bounds = group.getBounds()
-        if (bounds.isValid()) {
-          map.flyToBounds(bounds, { padding: [48, 48], maxZoom: 13 })
-        }
+    if (!selectedNorm) return
+
+    const selectedLayers: L.Layer[] = []
+    baseGroup.eachLayer((pathLayer) => {
+      const path = pathLayer as DistrictPath
+      if (path._districtRayon === selectedNorm) {
+        selectedLayers.push(pathLayer)
+      }
+    })
+    if (selectedLayers.length) {
+      const group = L.featureGroup(selectedLayers)
+      const bounds = group.getBounds()
+      if (bounds.isValid()) {
+        map.flyToBounds(bounds, { padding: [48, 48], maxZoom: 13 })
       }
     }
   }, [selectedNorm, map])
@@ -157,11 +301,21 @@ function HoodDistrictsLayer({
 
 export function DistrictPickerMap({
   selectedRayon,
+  selectedOkrug = '',
   districts,
   onRayonSelect,
+  onHoodMeta,
   disabled,
+  employeeLocations = [],
+  areaOrdersByRayon = [],
+  areaOrdersReady = false,
 }: DistrictPickerMapProps) {
   const [layerKey, setLayerKey] = useState<string | null>(null)
+
+  const styleByRayon = useMemo(
+    () => buildDistrictStyleByRayon(areaOrdersByRayon),
+    [areaOrdersByRayon],
+  )
 
   useEffect(() => {
     fetchLayersConfig()
@@ -188,10 +342,18 @@ export function DistrictPickerMap({
         <HoodDistrictsLayer
           layerKey={layerKey}
           selectedRayon={selectedRayon}
+          selectedOkrug={selectedOkrug}
           districts={districts}
           onRayonSelect={onRayonSelect}
+          onHoodMeta={onHoodMeta}
           disabled={disabled}
+          styleByRayon={styleByRayon}
+          areaOrdersByRayon={areaOrdersByRayon}
+          areaOrdersReady={areaOrdersReady}
         />
+        {employeeLocations.length > 0 && (
+          <EmployeeLocationMarkersLayer locations={employeeLocations} />
+        )}
       </MapContainer>
       {!layerKey && <div className="district-map-fallback">Слой границ районов недоступен</div>}
     </div>

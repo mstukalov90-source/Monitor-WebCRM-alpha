@@ -61,6 +61,7 @@ export interface FieldStatisticsSummary {
   disruption_absent: number
   disruption_found: number
   orders_closed: number
+  orders_closed_ha: number
   period_from: string | null
   period_to: string | null
 }
@@ -71,6 +72,7 @@ export interface OfficeStatisticsBreakdown {
   object_type: string
   action: string
   action_count: number
+  area_hectares: number
   period_from: string | null
   period_to: string | null
 }

@@ -1,5 +1,12 @@
 import type { TaskFeature } from '../types'
-import { normalizeRayonName } from '../types'
+import {
+  analiseWorkflowStatus,
+  analiseWorkflowStatusClass,
+  areaStatusFromAttributes,
+  formatAnaliseWorkflowStatus,
+  formatAreaStatus,
+  normalizeRayonName,
+} from '../types'
 
 export interface AreaOrdersByRayon {
   rayon: string
@@ -48,4 +55,68 @@ export function areaOrderDisplayName(attrs: Record<string, unknown>): string {
     return String(taskNumber).trim()
   }
   return '—'
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** Popup HTML for a district: same content as the sidebar area-orders list for that rayon. */
+export function buildDistrictOrdersPopupHtml(
+  districtName: string,
+  orders: TaskFeature[],
+): string {
+  const title = escapeHtml(districtName || 'Район')
+  if (!orders.length) {
+    return (
+      `<div class="district-map-popup">` +
+      `<strong class="district-map-popup-title">${title}</strong>` +
+      `<p class="muted small">Нет площадных заказов</p>` +
+      `</div>`
+    )
+  }
+
+  const items = orders
+    .map((order) => {
+      const attrs = order.attributes
+      const name = escapeHtml(areaOrderDisplayName(attrs))
+      const surveyStatus = areaStatusFromAttributes(attrs)
+      const surveyLabel = escapeHtml(formatAreaStatus(surveyStatus) || '—')
+      const workflow = analiseWorkflowStatus(attrs)
+      const analiseLabel = escapeHtml(formatAnaliseWorkflowStatus(attrs))
+      const analiseClass = analiseWorkflowStatusClass(workflow)
+      return (
+        `<li class="district-orders-item">` +
+        `<span class="district-orders-name" title="${name}">${name}</span>` +
+        `<span class="district-orders-statuses">` +
+        `<span class="area-survey-status area-survey-status-${surveyStatus}" ` +
+        `title="Полевое обследование: ${surveyLabel}">${surveyLabel}</span>` +
+        `<span class="area-analise-status ${analiseClass}" ` +
+        `title="Анализ: ${analiseLabel}">${analiseLabel}</span>` +
+        `</span>` +
+        `</li>`
+      )
+    })
+    .join('')
+
+  return (
+    `<div class="district-map-popup">` +
+    `<strong class="district-map-popup-title">${title}</strong>` +
+    `<p class="district-map-popup-subtitle muted small">Площадные заказы: ${orders.length}</p>` +
+    `<ul class="district-orders-items">${items}</ul>` +
+    `</div>`
+  )
+}
+
+export function ordersForRayon(
+  groups: AreaOrdersByRayon[],
+  rayonName: string,
+): TaskFeature[] {
+  const key = normalizeRayonName(rayonName)
+  const group = groups.find((g) => normalizeRayonName(g.rayon) === key)
+  return group?.orders ?? []
 }

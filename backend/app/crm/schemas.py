@@ -242,6 +242,7 @@ class FieldStatisticsSummaryOut(BaseModel):
     disruption_absent: int
     disruption_found: int
     orders_closed: int
+    orders_closed_ha: float = 0.0
     period_from: str | None = None
     period_to: str | None = None
 
@@ -252,6 +253,7 @@ class OfficeStatisticsBreakdownOut(BaseModel):
     object_type: str
     action: str
     action_count: int
+    area_hectares: float = 0.0
     period_from: str | None = None
     period_to: str | None = None
 

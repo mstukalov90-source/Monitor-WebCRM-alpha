@@ -129,8 +129,49 @@ cd /opt/monitor/webcrm && ./deploy/deploy.sh
 
 `deploy.sh` автоматически:
 - дописывает в `.env` недостающие ключи (`FIELD_PHOTO_*`)
-- прогоняет все `sql/0*.sql` (идемпотентно)
+- применяет **только новые** SQL-миграции из `sql/[0-9]*.sql` (учёт в `webcrm.schema_migrations`)
+- на существующем prod при первом deploy после обновления — bootstrap: помечает уже применённые миграции без повторного выполнения
 - обновляет Python-зависимости, собирает frontend, перезапускает backend
+
+### SQL-миграции
+
+| Каталог | Назначение |
+|---------|------------|
+| `sql/[0-9]*.sql` | Идемпотентные миграции схемы — применяются автоматически при deploy |
+| `sql/one_time/` | Одноразовые деструктивные скрипты (DELETE `crm.tasks`) — **не** в deploy |
+
+Одноразовые миграции запускаются вручную:
+
+```bash
+# Dry-run / малый объём (28_cleanup abort при >100 без флага):
+./scripts/run_one_time_migration.sh sql/one_time/28_cleanup_link_orphan_tasks.sql
+
+# Явное подтверждение массового DELETE:
+ALLOW_DESTRUCTIVE_MIGRATION=1 ./scripts/run_one_time_migration.sh sql/one_time/28_cleanup_link_orphan_tasks.sql
+```
+
+Подробнее: [`sql/one_time/README.md`](../sql/one_time/README.md), [`docs/webcrm_tasks_deletion_investigation.md`](../docs/webcrm_tasks_deletion_investigation.md).
+
+### Smoke-test после deploy
+
+```sql
+-- Нет новых удалений задач
+SELECT count(*) FROM crm.tasks_deletion_log
+WHERE deleted_at > NOW() - INTERVAL '10 minutes';
+
+-- Scoped ETL-задачи MONITOR на месте (сравнить count до/после deploy)
+SELECT count(*) FROM crm.tasks
+WHERE 'etl' = ANY(user_created)
+  AND (earthwork_id ~ '^(point|line|polygon):'
+    OR oati_id ~ '^(point|line|polygon):'
+    OR localwork_id ~ '^(point|line|polygon):'
+    OR avr_mos_id ~ '^(point|line|polygon):');
+
+-- Учёт миграций
+SELECT filename FROM webcrm.schema_migrations ORDER BY filename;
+```
+
+Повторный `./deploy/deploy.sh` должен выводить `skip ... (already applied)` для всех файлов.
 
 **Оба сервера с локальной машины** (VPN для 172.21.198.219):
 

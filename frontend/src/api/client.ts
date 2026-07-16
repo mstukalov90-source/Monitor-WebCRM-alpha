@@ -531,7 +531,7 @@ export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {
   return request(`/api/order-tracks?${qs}`)
 }
 
-export function fetchEmployeeLocations(rayon: string): Promise<EmployeeLocationsResult> {
-  const qs = new URLSearchParams({ rayon })
-  return request(`/api/employee-locations?${qs}`)
+export function fetchEmployeeLocations(rayon?: string): Promise<EmployeeLocationsResult> {
+  const qs = rayon ? new URLSearchParams({ rayon }) : ''
+  return request(`/api/employee-locations${qs ? `?${qs}` : ''}`)
 }

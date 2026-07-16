@@ -458,7 +458,6 @@ function App() {
     return (
       <EmployeeLocationsScreen
         userLogin={user.login}
-        initialRayon={collection.rayon || taskResult?.district_name || ''}
         onBack={() => setAppView('workspace')}
         onLogout={logout}
       />

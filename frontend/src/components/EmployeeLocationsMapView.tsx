@@ -50,7 +50,7 @@ const LOCATION_STYLE_SELECTED: L.CircleMarkerOptions = {
 
 interface EmployeeLocationsMapViewProps {
   locations: EmployeeLocationFeature[]
-  districtName: string
+  districtName?: string
   selectedLocationId: string | null
   onSelectLocation: (locationId: string) => void
 }
@@ -234,7 +234,7 @@ export function EmployeeLocationsMapView({
       />
       <AttributionControl position="bottomright" prefix={LEAFLET_ATTRIBUTION_PREFIX} />
       <MapResizeObserver />
-      <DistrictBoundaryLayer districtName={districtName} />
+      {districtName ? <DistrictBoundaryLayer districtName={districtName} /> : null}
       <LocationsLayer
         locations={locations}
         selectedLocationId={selectedLocationId}

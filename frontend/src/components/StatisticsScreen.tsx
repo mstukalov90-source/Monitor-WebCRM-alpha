@@ -24,6 +24,10 @@ interface StatisticsScreenProps {
 type RoleFilter = '' | 'field' | 'office'
 type ObjectTypeFilter = '' | 'task' | 'order'
 
+function formatHa(value: number): string {
+  return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+}
+
 export function StatisticsScreen({
   userLogin,
   userRole,
@@ -196,12 +200,13 @@ export function StatisticsScreen({
                         <th>Отсутствие разрытия</th>
                         <th>Обнаружение разрытия</th>
                         <th>Закрытие заказа</th>
+                        <th>Площадь закрытых, га</th>
                       </tr>
                     </thead>
                     <tbody>
                       {fieldRows.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="muted">
+                          <td colSpan={6} className="muted">
                             Нет данных
                           </td>
                         </tr>
@@ -213,6 +218,7 @@ export function StatisticsScreen({
                             <td>{row.disruption_absent}</td>
                             <td>{row.disruption_found}</td>
                             <td>{row.orders_closed}</td>
+                            <td>{formatHa(row.orders_closed_ha)}</td>
                           </tr>
                         ))
                       )}
@@ -234,12 +240,13 @@ export function StatisticsScreen({
                       <th>Тип</th>
                       <th>Действие</th>
                       <th>Количество</th>
+                      <th>Площадь, га</th>
                     </tr>
                   </thead>
                   <tbody>
                     {officeRows.length === 0 ? (
                       <tr>
-                        <td colSpan={canViewAll ? 4 : 3} className="muted">
+                        <td colSpan={canViewAll ? 5 : 4} className="muted">
                           Нет данных
                         </td>
                       </tr>
@@ -282,8 +289,17 @@ function FieldMetricsCards({ row }: { row: FieldStatisticsSummary }) {
         <span className="statistics-metric-value">{row.orders_closed}</span>
         <span className="statistics-metric-label">Закрытие заказа</span>
       </div>
+      <div className="statistics-metric-card">
+        <span className="statistics-metric-value">{formatHa(row.orders_closed_ha)}</span>
+        <span className="statistics-metric-label">Площадь закрытых, га</span>
+      </div>
     </div>
   )
+}
+
+function formatOfficeAreaHa(row: OfficeStatisticsBreakdown): string {
+  if (row.object_type === 'task' || row.area_hectares === 0) return '—'
+  return formatHa(row.area_hectares)
 }
 
 function OfficeBreakdownRow({
@@ -299,6 +315,7 @@ function OfficeBreakdownRow({
       <td>{formatStatisticsObjectType(row.object_type)}</td>
       <td>{formatStatisticsAction(row.action)}</td>
       <td>{row.action_count}</td>
+      <td>{formatOfficeAreaHa(row)}</td>
     </tr>
   )
 }

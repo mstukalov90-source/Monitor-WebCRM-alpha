@@ -5,7 +5,6 @@ import {
 } from '../types'
 
 interface EmployeeLocationsPanelProps {
-  districtName: string
   locations: EmployeeLocationFeature[]
   selectedLocationId: string | null
   loading?: boolean
@@ -13,7 +12,6 @@ interface EmployeeLocationsPanelProps {
 }
 
 export function EmployeeLocationsPanel({
-  districtName,
   locations,
   selectedLocationId,
   loading,
@@ -22,7 +20,7 @@ export function EmployeeLocationsPanel({
   return (
     <div className="task-panel">
       <div className="task-panel-header">
-        <strong>{districtName}</strong>
+        <strong>Все сотрудники</strong>
         <span className="muted">Сотрудников: {locations.length}</span>
         {loading && <div className="muted small">Загрузка…</div>}
       </div>
@@ -40,7 +38,7 @@ export function EmployeeLocationsPanel({
             {locations.length === 0 && !loading ? (
               <tr>
                 <td colSpan={EMPLOYEE_LOCATION_TABLE_COLUMNS.length} className="muted">
-                  Нет сотрудников в выбранном районе
+                  Нет данных о местоположении
                 </td>
               </tr>
             ) : (

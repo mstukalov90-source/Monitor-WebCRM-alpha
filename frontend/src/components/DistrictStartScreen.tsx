@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
-import { fetchAllTasksAreaGeoJson, fetchDistricts } from '../api/client'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { fetchAllTasksAreaGeoJson, fetchDistricts, fetchEmployeeLocations } from '../api/client'
 import { DistrictPickerMap } from './DistrictPickerMap'
 import {
   areaOrderDisplayName,
   geoJsonToAreaTaskFeatures,
   groupAreaOrdersByRayon,
 } from '../lib/areaOrders'
-import type { CollectProgress } from '../types'
-import { formatAnaliseWorkflowStatus, analiseWorkflowStatus, analiseWorkflowStatusClass, normalizeRayonName } from '../types'
+import type { DistrictHoodMeta } from '../lib/hoodLayer'
+import type { CollectProgress, EmployeeLocationFeature } from '../types'
+import {
+  analiseWorkflowStatus,
+  analiseWorkflowStatusClass,
+  areaStatusFromAttributes,
+  formatAnaliseWorkflowStatus,
+  formatAreaStatus,
+  normalizeRayonName,
+} from '../types'
 
 interface DistrictStartScreenProps {
   rayon: string
@@ -51,6 +59,9 @@ export function DistrictStartScreen({
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
+  const [okrug, setOkrug] = useState('')
+  const [hoodMeta, setHoodMeta] = useState<DistrictHoodMeta>({ okrugs: [], rayonToOkrug: {} })
+  const [employeeLocations, setEmployeeLocations] = useState<EmployeeLocationFeature[]>([])
   const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
   const [areaOrdersError, setAreaOrdersError] = useState<string | null>(null)
   const [areaOrdersByRayon, setAreaOrdersByRayon] = useState<ReturnType<typeof groupAreaOrdersByRayon>>([])
@@ -61,13 +72,45 @@ export function DistrictStartScreen({
       .catch(() => setDistricts([]))
   }, [])
 
-  useEffect(() => {
-    if (!showAreaOrders) {
-      setAreaOrdersByRayon([])
-      setAreaOrdersError(null)
-      return
-    }
+  const filteredDistricts = useMemo(() => {
+    const okrugNorm = normalizeRayonName(okrug)
+    if (!okrugNorm) return districts
+    return districts.filter(
+      (d) => hoodMeta.rayonToOkrug[normalizeRayonName(d)] === okrugNorm,
+    )
+  }, [districts, okrug, hoodMeta.rayonToOkrug])
 
+  const handleOkrugChange = (value: string) => {
+    setOkrug(value)
+    if (!value) return
+    const okrugNorm = normalizeRayonName(value)
+    const rayonStillValid =
+      rayon && hoodMeta.rayonToOkrug[normalizeRayonName(rayon)] === okrugNorm
+    if (!rayonStillValid) {
+      onRayonChange('')
+    }
+  }
+
+  const handleRayonChange = (value: string) => {
+    onRayonChange(value)
+    if (!value) return
+    const matchedOkrug = hoodMeta.rayonToOkrug[normalizeRayonName(value)]
+    if (matchedOkrug && matchedOkrug !== normalizeRayonName(okrug)) {
+      setOkrug(matchedOkrug)
+    }
+  }
+
+  const handleHoodMeta = useCallback((meta: DistrictHoodMeta) => {
+    setHoodMeta(meta)
+  }, [])
+
+  useEffect(() => {
+    if (!rayon || okrug) return
+    const matched = hoodMeta.rayonToOkrug[normalizeRayonName(rayon)]
+    if (matched) setOkrug(matched)
+  }, [rayon, okrug, hoodMeta.rayonToOkrug])
+
+  useEffect(() => {
     let cancelled = false
     setAreaOrdersLoading(true)
     setAreaOrdersError(null)
@@ -90,7 +133,27 @@ export function DistrictStartScreen({
     return () => {
       cancelled = true
     }
-  }, [showAreaOrders])
+  }, [])
+
+  useEffect(() => {
+    if (!canManagePersonnel) {
+      setEmployeeLocations([])
+      return
+    }
+
+    let cancelled = false
+    fetchEmployeeLocations()
+      .then((result) => {
+        if (!cancelled) setEmployeeLocations(result.locations)
+      })
+      .catch(() => {
+        if (!cancelled) setEmployeeLocations([])
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [canManagePersonnel])
 
   const totalOrdersCount = useMemo(
     () => areaOrdersByRayon.reduce((sum, group) => sum + group.orders.length, 0),
@@ -139,19 +202,35 @@ export function DistrictStartScreen({
           <h1>Monitor Web CRM</h1>
           <p className="district-hint">
             {canCollect
-              ? 'Выберите район для загрузки задач'
-              : 'Выберите район для загрузки задач в поле'}
+              ? 'Выберите округ и район для загрузки задач'
+              : 'Выберите округ и район для загрузки задач в поле'}
           </p>
+
+          <label className="district-field">
+            <span>Округ</span>
+            <select
+              value={okrug}
+              onChange={(e) => handleOkrugChange(e.target.value)}
+              disabled={loading}
+            >
+              <option value="">— выберите округ —</option>
+              {hoodMeta.okrugs.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="district-field">
             <span>Район</span>
             <select
               value={rayon}
-              onChange={(e) => onRayonChange(e.target.value)}
+              onChange={(e) => handleRayonChange(e.target.value)}
               disabled={loading}
             >
               <option value="">— выберите район —</option>
-              {districts.map((d) => (
+              {filteredDistricts.map((d) => (
                 <option key={d} value={d}>
                   {normalizeRayonName(d)}
                 </option>
@@ -205,18 +284,28 @@ export function DistrictStartScreen({
                           const attrs = order.attributes
                           const key = order.task_key ?? String(attrs.key ?? '')
                           const name = areaOrderDisplayName(attrs)
+                          const surveyStatus = areaStatusFromAttributes(attrs)
+                          const surveyLabel = formatAreaStatus(surveyStatus) || '—'
                           const workflow = analiseWorkflowStatus(attrs)
-                          const statusLabel = formatAnaliseWorkflowStatus(attrs)
+                          const analiseLabel = formatAnaliseWorkflowStatus(attrs)
                           return (
                             <li key={key} className="district-orders-item">
                               <span className="district-orders-name" title={name}>
                                 {name}
                               </span>
-                              <span
-                                className={`area-analise-status ${analiseWorkflowStatusClass(workflow)}`}
-                                title={statusLabel}
-                              >
-                                {statusLabel}
+                              <span className="district-orders-statuses">
+                                <span
+                                  className={`area-survey-status area-survey-status-${surveyStatus}`}
+                                  title={`Полевое обследование: ${surveyLabel}`}
+                                >
+                                  {surveyLabel}
+                                </span>
+                                <span
+                                  className={`area-analise-status ${analiseWorkflowStatusClass(workflow)}`}
+                                  title={`Анализ: ${analiseLabel}`}
+                                >
+                                  {analiseLabel}
+                                </span>
                               </span>
                             </li>
                           )
@@ -243,9 +332,14 @@ export function DistrictStartScreen({
 
         <DistrictPickerMap
           selectedRayon={rayon}
-          districts={districts}
-          onRayonSelect={onRayonChange}
+          selectedOkrug={okrug}
+          districts={filteredDistricts}
+          onRayonSelect={handleRayonChange}
+          onHoodMeta={handleHoodMeta}
           disabled={loading}
+          employeeLocations={employeeLocations}
+          areaOrdersByRayon={areaOrdersByRayon}
+          areaOrdersReady={!areaOrdersLoading}
         />
       </div>
     </div>

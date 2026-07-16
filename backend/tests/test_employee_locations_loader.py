@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.crm.employee_locations_loader import fetch_employee_locations
+from app.crm.employee_locations_loader import fetch_all_employee_locations, fetch_employee_locations
 
 
 class EmployeeLocationsLoaderTests(unittest.TestCase):
@@ -48,6 +48,34 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
         self.assertEqual(locations[0]["id"], "IvanovII")
         self.assertEqual(locations[0]["attributes"], {"user": "IvanovII"})
         self.assertEqual(locations[0]["geometry"], geometry)
+
+    def test_fetch_all_returns_all_locations_without_district_filter(self) -> None:
+        geometry = {"type": "Point", "coordinates": [37.62, 55.75]}
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {
+                "location_id": "IvanovII",
+                "geometry": geometry,
+                "row_json": {"user": "IvanovII", "time": "2026-07-13T10:00:00+00:00"},
+            },
+            {
+                "location_id": "PetrovPP",
+                "geometry": {"type": "Point", "coordinates": [37.5, 55.8]},
+                "row_json": {"user": "PetrovPP", "time": "2026-07-13T11:00:00+00:00"},
+            },
+        ]
+        cursor_cm = MagicMock()
+        cursor_cm.__enter__.return_value = cursor
+        cursor_cm.__exit__.return_value = False
+
+        conn = MagicMock()
+        conn.cursor.return_value = cursor_cm
+
+        locations, errors = fetch_all_employee_locations(conn)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(locations), 2)
+        self.assertEqual({loc["id"] for loc in locations}, {"IvanovII", "PetrovPP"})
 
     @patch("app.crm.employee_locations_loader.fetch_district_wkt", return_value="POLYGON((0 0,1 0,1 1,0 1,0 0))")
     def test_parses_geometry_json_string(self, _wkt: MagicMock) -> None:

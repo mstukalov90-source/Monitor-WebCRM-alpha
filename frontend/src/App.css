@@ -273,6 +273,59 @@ body,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.district-orders-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.district-map-popup {
+  min-width: 220px;
+  max-width: 340px;
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+}
+
+.district-map-popup-title {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 2px;
+}
+
+.district-map-popup-subtitle {
+  margin: 0 0 8px;
+}
+
+.district-orders-popup .leaflet-popup-content {
+  margin: 10px 12px;
+}
+
+.area-survey-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.area-survey-status-free {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.area-survey-status-wip {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.area-survey-status-done {
+  background: #e8f5e9;
+  color: #2e7d32;
 }
 
 .collect-progress {

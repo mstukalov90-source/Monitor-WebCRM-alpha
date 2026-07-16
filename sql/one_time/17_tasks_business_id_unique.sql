@@ -1,6 +1,6 @@
 -- Deduplicate crm.tasks by business-id columns and enforce uniqueness (QGIS + WebCRM).
 -- Run once on production before deploying the fixed WebCRM backend.
--- psql -f sql/17_tasks_business_id_unique.sql
+-- Run once: ALLOW_DESTRUCTIVE_MIGRATION=1 ./scripts/run_one_time_migration.sh sql/one_time/17_tasks_business_id_unique.sql
 
 BEGIN;
 

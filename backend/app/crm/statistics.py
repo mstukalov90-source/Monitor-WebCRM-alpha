@@ -181,9 +181,16 @@ def fetch_field_statistics_summary(
             COUNT(*) FILTER (WHERE s.action = 'field_disruption_absent') AS disruption_absent,
             COUNT(*) FILTER (WHERE s.action = 'field_disruption_found') AS disruption_found,
             COUNT(*) FILTER (WHERE s.action = 'field_order_closed') AS orders_closed,
+            COALESCE(
+                SUM(ta.area) FILTER (WHERE s.action = 'field_order_closed'),
+                0
+            ) / 10000.0 AS orders_closed_ha,
             MIN(s.created_at) AS period_from,
             MAX(s.created_at) AS period_to
         FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        LEFT JOIN crm.tasks_area ta
+          ON s.object_type = 'order'
+         AND s.object_key = ta.key
         WHERE {where}
         GROUP BY s.user_login, s.user_role
         ORDER BY camera_surveys DESC, disruption_found DESC, orders_closed DESC
@@ -191,7 +198,7 @@ def fetch_field_statistics_summary(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
         rows = cur.fetchall()
-    return [_row_with_iso_dates(dict(row)) for row in rows]
+    return [_normalize_area_floats(_row_with_iso_dates(dict(row))) for row in rows]
 
 
 def fetch_office_statistics_breakdown(
@@ -232,9 +239,13 @@ def fetch_office_statistics_breakdown(
             s.object_type,
             s.action,
             COUNT(*) AS action_count,
+            COALESCE(SUM(ta.area), 0) / 10000.0 AS area_hectares,
             MIN(s.created_at) AS period_from,
             MAX(s.created_at) AS period_to
         FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        LEFT JOIN crm.tasks_area ta
+          ON s.object_type = 'order'
+         AND s.object_key = ta.key
         WHERE {where}
         GROUP BY s.user_login, s.user_role, s.object_type, s.action
         ORDER BY s.user_login,
@@ -244,7 +255,7 @@ def fetch_office_statistics_breakdown(
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
         rows = cur.fetchall()
-    return [_row_with_iso_dates(dict(row)) for row in rows]
+    return [_normalize_area_floats(_row_with_iso_dates(dict(row))) for row in rows]
 
 
 def _row_with_iso_dates(row: dict[str, Any]) -> dict[str, Any]:
@@ -252,4 +263,16 @@ def _row_with_iso_dates(row: dict[str, Any]) -> dict[str, Any]:
         value = row.get(key)
         if hasattr(value, "isoformat"):
             row[key] = value.isoformat()
+    return row
+
+
+def _normalize_area_floats(row: dict[str, Any]) -> dict[str, Any]:
+    for key in ("orders_closed_ha", "area_hectares"):
+        if key not in row:
+            continue
+        value = row.get(key)
+        if value is None:
+            row[key] = 0.0
+        else:
+            row[key] = float(value)
     return row

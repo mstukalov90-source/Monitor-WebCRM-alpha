@@ -42,7 +42,11 @@ export function areaOutlinePathStyle(attrs: Record<string, unknown>): L.PathOpti
 }
 
 export function areaHatchPathStyle(attrs: Record<string, unknown>): L.PathOptions {
-  const hatchId = parseAreaAnalise(attrs.analise) ? HATCH_GREEN_ID : HATCH_RED_ID
+  return hatchFillStyle(parseAreaAnalise(attrs.analise) ? 'green' : 'red')
+}
+
+export function hatchFillStyle(kind: 'green' | 'red'): L.PathOptions {
+  const hatchId = kind === 'green' ? HATCH_GREEN_ID : HATCH_RED_ID
   return {
     color: 'transparent',
     weight: 0,
