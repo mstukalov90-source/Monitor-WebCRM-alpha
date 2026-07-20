@@ -18,6 +18,7 @@ import type {
   PersonnelUser,
   PersonnelUserCreate,
   PersonnelStatistics,
+  GeoStatistics,
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
@@ -524,6 +525,23 @@ export function fetchPersonnelStatistics(params: {
   if (params.objectType) qs.set('object_type', params.objectType)
   if (params.userLogin) qs.set('user_login', params.userLogin)
   return request(`/api/personnel/statistics?${qs}`)
+}
+
+export function fetchPersonnelGeoStatistics(params: {
+  dateFrom: string
+  dateTo: string
+  userRole?: 'field' | 'office'
+  objectType?: 'task' | 'order'
+  userLogin?: string
+}): Promise<GeoStatistics> {
+  const qs = new URLSearchParams({
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+  })
+  if (params.userRole) qs.set('user_role', params.userRole)
+  if (params.objectType) qs.set('object_type', params.objectType)
+  if (params.userLogin) qs.set('user_login', params.userLogin)
+  return request(`/api/personnel/statistics/geo?${qs}`)
 }
 
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {

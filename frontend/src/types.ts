@@ -77,12 +77,49 @@ export interface OfficeStatisticsBreakdown {
   period_to: string | null
 }
 
+export interface StatisticsActionDetail {
+  user_login: string
+  user_role: string
+  object_type: string
+  action: string
+  object_key: string
+  created_at: string
+  task_number: string | null
+  rayon: string | null
+  area_hectares: number
+  duration_minutes: number | null
+}
+
 export interface PersonnelStatistics {
   field_summary: FieldStatisticsSummary[]
   office_breakdown: OfficeStatisticsBreakdown[]
+  action_details: StatisticsActionDetail[]
   date_from: string
   date_to: string
   scope: 'all' | 'self'
+}
+
+export interface GeoStatisticsRow {
+  okrug: string | null
+  rayon: string | null
+  orders_closed: number
+  orders_closed_ha: number
+  analise_completed: number
+  closed_legal: number
+  closed_illegal: number
+  camera_surveys: number
+  disruption_absent: number
+  disruption_found: number
+  analise_started: number
+  office_disruption_absent: number
+  camera_tasks_created: number
+}
+
+export interface GeoStatistics {
+  okrugs: GeoStatisticsRow[]
+  rayons: GeoStatisticsRow[]
+  date_from: string
+  date_to: string
 }
 
 export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks' | 'employee_locations'

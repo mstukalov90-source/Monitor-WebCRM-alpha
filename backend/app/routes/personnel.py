@@ -34,15 +34,23 @@ from app.crm.schemas import (
     DistrictOptionOut,
     FieldSnapshotLookupOut,
     FieldStatisticsSummaryOut,
+    GeoStatisticsOut,
+    GeoStatisticsRowOut,
     OfficeStatisticsBreakdownOut,
     PersonnelStatisticsOut,
     PersonnelUserOut,
     PersonnelUserCreate,
     PersonnelUserUpdate,
+    StatisticsActionDetailOut,
     TaskExecutorUpdate,
     TaskNumberUpdate,
 )
-from app.crm.statistics import fetch_field_statistics_summary, fetch_office_statistics_breakdown
+from app.crm.statistics import (
+    fetch_employee_action_details,
+    fetch_field_statistics_summary,
+    fetch_geo_statistics,
+    fetch_office_statistics_breakdown,
+)
 from app.crm.tasks_area import update_area_task_number
 from app.db import get_connection
 
@@ -97,12 +105,14 @@ def get_personnel_statistics(
     with get_connection() as conn:
         field_summary: list[dict] = []
         office_breakdown: list[dict] = []
+        action_details: list[dict] = []
+        detail_object_type = object_type if org_view else None
         if effective_role in (None, "field"):
             field_summary = fetch_field_statistics_summary(
                 conn,
                 date_from=date_from,
                 date_to=date_to,
-                object_type=object_type if org_view else None,
+                object_type=detail_object_type,
                 user_login=effective_login,
             )
         if effective_role in (None, "office"):
@@ -110,16 +120,70 @@ def get_personnel_statistics(
                 conn,
                 date_from=date_from,
                 date_to=date_to,
-                object_type=object_type if org_view else None,
+                object_type=detail_object_type,
                 user_login=effective_login,
+            )
+        if effective_login:
+            action_details = fetch_employee_action_details(
+                conn,
+                date_from=date_from,
+                date_to=date_to,
+                user_login=effective_login,
+                object_type=detail_object_type,
+                user_role=effective_role,
             )
 
     return PersonnelStatisticsOut(
         field_summary=[FieldStatisticsSummaryOut(**row) for row in field_summary],
         office_breakdown=[OfficeStatisticsBreakdownOut(**row) for row in office_breakdown],
+        action_details=[StatisticsActionDetailOut(**row) for row in action_details],
         date_from=date_from.isoformat(),
         date_to=date_to.isoformat(),
         scope=scope,
+    )
+
+
+@router.get("/statistics/geo", response_model=GeoStatisticsOut)
+def get_personnel_geo_statistics(
+    date_from: date = Query(..., description="Start date (inclusive)"),
+    date_to: date = Query(..., description="End date (inclusive)"),
+    user_role: str | None = Query(None, description="Filter by field or office"),
+    object_type: str | None = Query(None, description="Filter by task or order"),
+    user_login: str | None = Query(None, description="Filter by user login"),
+    _user: UserSession = Depends(require_manager_or_admin),
+) -> GeoStatisticsOut:
+    if date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from must be on or before date_to",
+        )
+    if object_type is not None and object_type not in ("task", "order"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="object_type must be task or order",
+        )
+    if user_role is not None and user_role not in ("field", "office"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_role must be field or office",
+        )
+
+    effective_login = user_login.strip() if user_login else None
+    with get_connection() as conn:
+        result = fetch_geo_statistics(
+            conn,
+            date_from=date_from,
+            date_to=date_to,
+            object_type=object_type,
+            user_login=effective_login,
+            user_role=user_role,
+        )
+
+    return GeoStatisticsOut(
+        okrugs=[GeoStatisticsRowOut(**row) for row in result["okrugs"]],
+        rayons=[GeoStatisticsRowOut(**row) for row in result["rayons"]],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
     )
 
 

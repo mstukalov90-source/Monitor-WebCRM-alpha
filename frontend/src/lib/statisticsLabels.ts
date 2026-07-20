@@ -24,6 +24,16 @@ export function formatStatisticsObjectType(objectType: string): string {
   return STATISTICS_OBJECT_TYPE_LABELS[objectType] ?? objectType
 }
 
+export function formatDurationMinutes(minutes: number | null | undefined): string {
+  if (minutes == null || Number.isNaN(minutes)) return '—'
+  const total = Math.max(0, Math.round(minutes))
+  const hours = Math.floor(total / 60)
+  const mins = total % 60
+  if (hours <= 0) return `${mins} мин`
+  if (mins === 0) return `${hours} ч`
+  return `${hours} ч ${mins} мин`
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }

@@ -10,6 +10,8 @@ from typing import Any, Iterator
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
+from app.config import order_tracks_config
+
 STATISTICS_SCHEMA = "crm"
 STATISTICS_TABLE = "statistics"
 
@@ -20,6 +22,14 @@ OFFICE_STATISTICS_ACTIONS = (
     "office_analise_completed",
     "office_disruption_absent",
     "office_camera_tasks_created",
+    "office_closed_illegal",
+    "office_closed_legal",
+)
+
+# Closed / analyzed actions shown in the per-employee detail list.
+DETAIL_STATISTICS_ACTIONS = (
+    "field_order_closed",
+    "office_analise_completed",
     "office_closed_illegal",
     "office_closed_legal",
 )
@@ -258,8 +268,100 @@ def fetch_office_statistics_breakdown(
     return [_normalize_area_floats(_row_with_iso_dates(dict(row))) for row in rows]
 
 
+def fetch_employee_action_details(
+    conn: PgConnection,
+    *,
+    date_from: date,
+    date_to: date,
+    user_login: str,
+    object_type: str | None = None,
+    user_role: str | None = None,
+) -> list[dict[str, Any]]:
+    """Per-object closed/analyzed events for one employee, with duration in minutes."""
+    login = (user_login or "").strip()
+    if not login:
+        return []
+
+    start, end = _period_bounds(date_from, date_to)
+    filters = [
+        "s.user_login = %s",
+        "s.created_at >= %s",
+        "s.created_at <= %s",
+    ]
+    params: list[Any] = [login, start, end]
+
+    if user_role:
+        filters.append("s.user_role = %s")
+        params.append(user_role)
+    if object_type:
+        filters.append("s.object_type = %s")
+        params.append(object_type)
+
+    action_placeholders = ", ".join(["%s"] * len(DETAIL_STATISTICS_ACTIONS))
+    filters.append(f"s.action IN ({action_placeholders})")
+    params.extend(DETAIL_STATISTICS_ACTIONS)
+
+    tracks_cfg = order_tracks_config()
+    tracks_schema = tracks_cfg.get("schema", "mggt_field")
+    tracks_table = tracks_cfg.get("table", "tracks")
+    task_col = tracks_cfg.get("task_column", "task")
+
+    where = " AND ".join(filters)
+    query = f"""
+        SELECT
+            s.user_login,
+            s.user_role,
+            s.object_type,
+            s.action,
+            s.object_key::text AS object_key,
+            s.created_at,
+            ta.task_number,
+            ta.rayon,
+            CASE
+                WHEN s.object_type = 'order' THEN COALESCE(ta.area, 0) / 10000.0
+                ELSE 0
+            END AS area_hectares,
+            CASE
+                WHEN s.action = 'field_order_closed' THEN tr.duration_sec
+                WHEN s.action = 'office_analise_completed'
+                     AND ta.analise_started_at IS NOT NULL
+                     AND ta.analise_finished_at IS NOT NULL
+                THEN EXTRACT(
+                    EPOCH FROM (ta.analise_finished_at - ta.analise_started_at)
+                )
+                ELSE NULL
+            END AS duration_seconds
+        FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        LEFT JOIN crm.tasks_area ta
+          ON s.object_type = 'order'
+         AND s.object_key = ta.key
+        LEFT JOIN (
+            SELECT
+                CASE
+                    WHEN position(':' IN NULLIF(TRIM(t."{task_col}"::text), '')) > 0
+                    THEN split_part(TRIM(t."{task_col}"::text), ':', 2)
+                    ELSE TRIM(t."{task_col}"::text)
+                END AS task_key,
+                SUM(t.duration_sec) AS duration_sec
+            FROM "{tracks_schema}"."{tracks_table}" t
+            WHERE t."{task_col}" IS NOT NULL
+              AND NULLIF(TRIM(t."{task_col}"::text), '') IS NOT NULL
+              AND t.duration_sec IS NOT NULL
+            GROUP BY 1
+        ) tr ON s.action = 'field_order_closed'
+           AND s.object_type = 'order'
+           AND s.object_key::text = tr.task_key
+        WHERE {where}
+        ORDER BY s.created_at DESC
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [_normalize_detail_row(dict(row)) for row in rows]
+
+
 def _row_with_iso_dates(row: dict[str, Any]) -> dict[str, Any]:
-    for key in ("period_from", "period_to"):
+    for key in ("period_from", "period_to", "created_at"):
         value = row.get(key)
         if hasattr(value, "isoformat"):
             row[key] = value.isoformat()
@@ -275,4 +377,200 @@ def _normalize_area_floats(row: dict[str, Any]) -> dict[str, Any]:
             row[key] = 0.0
         else:
             row[key] = float(value)
+    return row
+
+
+def _normalize_detail_row(row: dict[str, Any]) -> dict[str, Any]:
+    row = _normalize_area_floats(_row_with_iso_dates(row))
+    seconds = row.pop("duration_seconds", None)
+    if seconds is None:
+        row["duration_minutes"] = None
+    else:
+        row["duration_minutes"] = int(round(float(seconds) / 60.0))
+    if row.get("task_number") is not None:
+        row["task_number"] = str(row["task_number"]).strip() or None
+    if row.get("rayon") is not None:
+        row["rayon"] = str(row["rayon"]).strip() or None
+    return row
+
+
+_GEO_INT_METRICS = (
+    "orders_closed",
+    "analise_completed",
+    "closed_legal",
+    "closed_illegal",
+    "camera_surveys",
+    "disruption_absent",
+    "disruption_found",
+    "analise_started",
+    "office_disruption_absent",
+    "camera_tasks_created",
+)
+
+
+def fetch_geo_statistics(
+    conn: PgConnection,
+    *,
+    date_from: date,
+    date_to: date,
+    object_type: str | None = None,
+    user_login: str | None = None,
+    user_role: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Aggregate statistics by rayon and okrug (hierarchy Okrug → Rayon)."""
+    start, end = _period_bounds(date_from, date_to)
+    filters = [
+        "s.created_at >= %s",
+        "s.created_at <= %s",
+    ]
+    params: list[Any] = [start, end]
+
+    if user_role:
+        filters.append("s.user_role = %s")
+        params.append(user_role)
+    if object_type:
+        filters.append("s.object_type = %s")
+        params.append(object_type)
+    if user_login:
+        filters.append("s.user_login = %s")
+        params.append(user_login.strip())
+
+    where = " AND ".join(filters)
+    query = f"""
+        WITH events AS (
+            SELECT
+                s.action,
+                s.object_type,
+                s.object_key,
+                ta.area,
+                COALESCE(
+                    NULLIF(TRIM(ta.rayon), ''),
+                    NULLIF(TRIM(s.metadata->>'rayon'), ''),
+                    NULLIF(TRIM(tf.rayon), '')
+                ) AS raw_rayon
+            FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+            LEFT JOIN crm.tasks_area ta
+              ON s.object_type = 'order'
+             AND s.object_key = ta.key
+            LEFT JOIN LATERAL (
+                SELECT tf.rayon
+                FROM crm.tasks_field tf
+                WHERE s.object_type = 'task'
+                  AND tf.task_key = s.object_key
+                  AND NULLIF(TRIM(tf.rayon), '') IS NOT NULL
+                ORDER BY tf.sent_at DESC NULLS LAST
+                LIMIT 1
+            ) tf ON TRUE
+            WHERE {where}
+        ),
+        resolved AS (
+            SELECT
+                action,
+                object_type,
+                area,
+                NULLIF(
+                    regexp_replace(TRIM(raw_rayon), '\\s+', ' ', 'g'),
+                    ''
+                ) AS rayon_norm
+            FROM events
+        ),
+        hood AS (
+            SELECT DISTINCT ON (rayon_norm)
+                rayon_norm,
+                NULLIF(TRIM(okrug_shor), '') AS okrug
+            FROM (
+                SELECT
+                    regexp_replace(TRIM(rayon::text), '\\s+', ' ', 'g') AS rayon_norm,
+                    okrug_shor,
+                    gid
+                FROM odh_export.hood
+                WHERE rayon IS NOT NULL
+                  AND TRIM(rayon::text) <> ''
+                  AND TRIM(COALESCE(okrug_shor, '')) NOT IN ('НАО', 'ТАО')
+            ) h
+            ORDER BY rayon_norm, gid
+        ),
+        with_okrug AS (
+            SELECT
+                r.action,
+                r.object_type,
+                r.area,
+                r.rayon_norm,
+                h.okrug
+            FROM resolved r
+            LEFT JOIN hood h ON r.rayon_norm = h.rayon_norm
+        )
+        SELECT
+            COALESCE(okrug, '') AS okrug,
+            COALESCE(rayon_norm, '') AS rayon,
+            COUNT(*) FILTER (WHERE action = 'field_order_closed') AS orders_closed,
+            COALESCE(
+                SUM(area) FILTER (WHERE action = 'field_order_closed'),
+                0
+            ) / 10000.0 AS orders_closed_ha,
+            COUNT(*) FILTER (WHERE action = 'office_analise_completed') AS analise_completed,
+            COUNT(*) FILTER (WHERE action = 'office_closed_legal') AS closed_legal,
+            COUNT(*) FILTER (WHERE action = 'office_closed_illegal') AS closed_illegal,
+            COUNT(*) FILTER (WHERE action = 'field_camera_survey') AS camera_surveys,
+            COUNT(*) FILTER (WHERE action = 'field_disruption_absent') AS disruption_absent,
+            COUNT(*) FILTER (WHERE action = 'field_disruption_found') AS disruption_found,
+            COUNT(*) FILTER (WHERE action = 'office_analise_started') AS analise_started,
+            COUNT(*) FILTER (WHERE action = 'office_disruption_absent') AS office_disruption_absent,
+            COUNT(*) FILTER (WHERE action = 'office_camera_tasks_created') AS camera_tasks_created
+        FROM with_okrug
+        GROUP BY COALESCE(okrug, ''), COALESCE(rayon_norm, '')
+        ORDER BY
+            CASE WHEN COALESCE(rayon_norm, '') = '' THEN 1 ELSE 0 END,
+            orders_closed DESC,
+            orders_closed_ha DESC,
+            analise_completed DESC,
+            rayon
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rayon_rows = [_normalize_geo_row(dict(row), level="rayon") for row in cur.fetchall()]
+
+    okrug_totals: dict[str, dict[str, Any]] = {}
+    for row in rayon_rows:
+        okrug_key = row["okrug"] or ""
+        bucket = okrug_totals.get(okrug_key)
+        if bucket is None:
+            bucket = {
+                "okrug": okrug_key,
+                "rayon": None,
+                "orders_closed_ha": 0.0,
+                **{key: 0 for key in _GEO_INT_METRICS},
+            }
+            okrug_totals[okrug_key] = bucket
+        for key in _GEO_INT_METRICS:
+            bucket[key] += int(row.get(key) or 0)
+        bucket["orders_closed_ha"] += float(row.get("orders_closed_ha") or 0.0)
+
+    okrug_rows = [
+        _normalize_geo_row(bucket, level="okrug")
+        for bucket in okrug_totals.values()
+    ]
+    okrug_rows.sort(
+        key=lambda r: (
+            1 if not r["okrug"] else 0,
+            -int(r["orders_closed"]),
+            -float(r["orders_closed_ha"]),
+            r["okrug"] or "",
+        )
+    )
+    return {"okrugs": okrug_rows, "rayons": rayon_rows}
+
+
+def _normalize_geo_row(row: dict[str, Any], *, level: str) -> dict[str, Any]:
+    for key in _GEO_INT_METRICS:
+        row[key] = int(row.get(key) or 0)
+    ha = row.get("orders_closed_ha")
+    row["orders_closed_ha"] = 0.0 if ha is None else float(ha)
+    okrug = row.get("okrug")
+    row["okrug"] = (str(okrug).strip() if okrug else "") or None
+    if level == "okrug":
+        row["rayon"] = None
+    else:
+        rayon = row.get("rayon")
+        row["rayon"] = (str(rayon).strip() if rayon else "") or None
     return row

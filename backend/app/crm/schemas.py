@@ -258,12 +258,49 @@ class OfficeStatisticsBreakdownOut(BaseModel):
     period_to: str | None = None
 
 
+class StatisticsActionDetailOut(BaseModel):
+    user_login: str
+    user_role: str
+    object_type: str
+    action: str
+    object_key: str
+    created_at: str
+    task_number: str | None = None
+    rayon: str | None = None
+    area_hectares: float = 0.0
+    duration_minutes: int | None = None
+
+
 class PersonnelStatisticsOut(BaseModel):
     field_summary: list[FieldStatisticsSummaryOut] = Field(default_factory=list)
     office_breakdown: list[OfficeStatisticsBreakdownOut] = Field(default_factory=list)
+    action_details: list[StatisticsActionDetailOut] = Field(default_factory=list)
     date_from: str
     date_to: str
     scope: Literal["all", "self"] = "all"
+
+
+class GeoStatisticsRowOut(BaseModel):
+    okrug: str | None = None
+    rayon: str | None = None
+    orders_closed: int = 0
+    orders_closed_ha: float = 0.0
+    analise_completed: int = 0
+    closed_legal: int = 0
+    closed_illegal: int = 0
+    camera_surveys: int = 0
+    disruption_absent: int = 0
+    disruption_found: int = 0
+    analise_started: int = 0
+    office_disruption_absent: int = 0
+    camera_tasks_created: int = 0
+
+
+class GeoStatisticsOut(BaseModel):
+    okrugs: list[GeoStatisticsRowOut] = Field(default_factory=list)
+    rayons: list[GeoStatisticsRowOut] = Field(default_factory=list)
+    date_from: str
+    date_to: str
 
 
 class OrderTrackOut(BaseModel):

@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchPersonnelStatistics, fetchPersonnelUsers } from '../api/client'
+import {
+  fetchPersonnelGeoStatistics,
+  fetchPersonnelStatistics,
+  fetchPersonnelUsers,
+} from '../api/client'
 import {
   defaultStatisticsDateRange,
+  formatDurationMinutes,
   formatStatisticsAction,
   formatStatisticsObjectType,
 } from '../lib/statisticsLabels'
 import type {
   FieldStatisticsSummary,
+  GeoStatistics,
+  GeoStatisticsRow,
   OfficeStatisticsBreakdown,
   PersonnelStatistics,
   PersonnelUser,
+  StatisticsActionDetail,
   UserRole,
 } from '../types'
 
@@ -23,9 +31,15 @@ interface StatisticsScreenProps {
 
 type RoleFilter = '' | 'field' | 'office'
 type ObjectTypeFilter = '' | 'task' | 'order'
+type ViewMode = 'people' | 'geo'
 
 function formatHa(value: number): string {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
+}
+
+function geoPlaceLabel(value: string | null | undefined, emptyLabel: string): string {
+  const text = (value || '').trim()
+  return text || emptyLabel
 }
 
 export function StatisticsScreen({
@@ -41,8 +55,11 @@ export function StatisticsScreen({
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('')
   const [objectTypeFilter, setObjectTypeFilter] = useState<ObjectTypeFilter>('')
   const [userLoginFilter, setUserLoginFilter] = useState('')
+  const [viewMode, setViewMode] = useState<ViewMode>('people')
+  const [selectedOkrug, setSelectedOkrug] = useState<string | null>(null)
   const [users, setUsers] = useState<PersonnelUser[]>([])
   const [data, setData] = useState<PersonnelStatistics | null>(null)
+  const [geoData, setGeoData] = useState<GeoStatistics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,6 +67,8 @@ export function StatisticsScreen({
     () => users.filter((u) => u.role === 'field' || u.role === 'office'),
     [users],
   )
+
+  const effectiveViewMode: ViewMode = canViewAll ? viewMode : 'people'
 
   const showFieldSection =
     canViewAll ? roleFilter !== 'office' : userRole === 'field'
@@ -63,25 +82,44 @@ export function StatisticsScreen({
       .catch(() => setUsers([]))
   }, [canViewAll])
 
+  useEffect(() => {
+    if (!canViewAll && viewMode === 'geo') {
+      setViewMode('people')
+    }
+  }, [canViewAll, viewMode])
+
+  const filterParams = useMemo(
+    () => ({
+      dateFrom,
+      dateTo,
+      userRole: canViewAll && roleFilter ? roleFilter : undefined,
+      objectType: canViewAll && objectTypeFilter ? objectTypeFilter : undefined,
+      userLogin: canViewAll && userLoginFilter ? userLoginFilter : undefined,
+    }),
+    [canViewAll, dateFrom, dateTo, objectTypeFilter, roleFilter, userLoginFilter],
+  )
+
   const loadStatistics = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const result = await fetchPersonnelStatistics({
-        dateFrom,
-        dateTo,
-        userRole: canViewAll && roleFilter ? roleFilter : undefined,
-        objectType: canViewAll && objectTypeFilter ? objectTypeFilter : undefined,
-        userLogin: canViewAll && userLoginFilter ? userLoginFilter : undefined,
-      })
-      setData(result)
+      if (effectiveViewMode === 'geo') {
+        const result = await fetchPersonnelGeoStatistics(filterParams)
+        setGeoData(result)
+        setData(null)
+      } else {
+        const result = await fetchPersonnelStatistics(filterParams)
+        setData(result)
+        setGeoData(null)
+      }
     } catch (e) {
       setError(String(e))
       setData(null)
+      setGeoData(null)
     } finally {
       setLoading(false)
     }
-  }, [canViewAll, dateFrom, dateTo, objectTypeFilter, roleFilter, userLoginFilter])
+  }, [effectiveViewMode, filterParams])
 
   useEffect(() => {
     void loadStatistics()
@@ -89,10 +127,35 @@ export function StatisticsScreen({
 
   const fieldRows = data?.field_summary ?? []
   const officeRows = data?.office_breakdown ?? []
+  const detailRows = data?.action_details ?? []
   const selfFieldRow = fieldRows.find((r) => r.user_login === userLogin) ?? fieldRows[0]
-  const hasData =
+  const showDetails = Boolean(userLoginFilter) || !canViewAll
+
+  const okrugRows = geoData?.okrugs ?? []
+  const rayonRows = useMemo(() => {
+    const all = geoData?.rayons ?? []
+    if (selectedOkrug === null) return []
+    if (selectedOkrug === '') {
+      return all.filter((row) => !row.okrug)
+    }
+    return all.filter((row) => (row.okrug || '') === selectedOkrug)
+  }, [geoData?.rayons, selectedOkrug])
+
+  const maxOrdersClosed = useMemo(
+    () => Math.max(0, ...okrugRows.map((row) => row.orders_closed)),
+    [okrugRows],
+  )
+  const maxOrdersHa = useMemo(
+    () => Math.max(0, ...okrugRows.map((row) => row.orders_closed_ha)),
+    [okrugRows],
+  )
+
+  const hasPeopleData =
     (showFieldSection && fieldRows.length > 0) ||
-    (showOfficeSection && officeRows.length > 0)
+    (showOfficeSection && officeRows.length > 0) ||
+    (showDetails && detailRows.length > 0)
+  const hasGeoData = okrugRows.length > 0
+  const hasData = effectiveViewMode === 'geo' ? hasGeoData : hasPeopleData
 
   return (
     <div className="district-screen statistics-screen">
@@ -112,6 +175,32 @@ export function StatisticsScreen({
           </div>
 
           <h1>Статистика</h1>
+
+          {canViewAll && (
+            <div className="statistics-view-toggle" role="tablist" aria-label="Режим статистики">
+              <button
+                type="button"
+                role="tab"
+                className={`btn${effectiveViewMode === 'people' ? ' primary' : ''}`}
+                aria-selected={effectiveViewMode === 'people'}
+                onClick={() => {
+                  setViewMode('people')
+                  setSelectedOkrug(null)
+                }}
+              >
+                Сотрудники
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`btn${effectiveViewMode === 'geo' ? ' primary' : ''}`}
+                aria-selected={effectiveViewMode === 'geo'}
+                onClick={() => setViewMode('geo')}
+              >
+                Территория
+              </button>
+            </div>
+          )}
 
           <div className="personnel-filters statistics-filters">
             <label className="district-field">
@@ -185,88 +274,320 @@ export function StatisticsScreen({
             <p className="personnel-message">Нет данных за выбранный период</p>
           )}
 
-          {showFieldSection && (
-            <section className="statistics-section">
-              <h2>{canViewAll ? 'Полевые сотрудники' : 'Мои показатели'}</h2>
-              {!canViewAll && selfFieldRow ? (
-                <FieldMetricsCards row={selfFieldRow} />
-              ) : (
+          {effectiveViewMode === 'people' && (
+            <>
+              {showFieldSection && (
+                <section className="statistics-section">
+                  <h2>{canViewAll ? 'Полевые сотрудники' : 'Мои показатели'}</h2>
+                  {!canViewAll && selfFieldRow ? (
+                    <FieldMetricsCards row={selfFieldRow} />
+                  ) : (
+                    <div className="personnel-table-wrap">
+                      <table className="personnel-table statistics-table">
+                        <thead>
+                          <tr>
+                            <th>Сотрудник</th>
+                            <th>Обследование камеральной задачи</th>
+                            <th>Отсутствие разрытия</th>
+                            <th>Обнаружение разрытия</th>
+                            <th>Закрытие заказа</th>
+                            <th>Площадь закрытых, га</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fieldRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="muted">
+                                Нет данных
+                              </td>
+                            </tr>
+                          ) : (
+                            fieldRows.map((row) => (
+                              <tr key={row.user_login}>
+                                <td>{row.user_login}</td>
+                                <td>{row.camera_surveys}</td>
+                                <td>{row.disruption_absent}</td>
+                                <td>{row.disruption_found}</td>
+                                <td>{row.orders_closed}</td>
+                                <td>{formatHa(row.orders_closed_ha)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {showOfficeSection && (
+                <section className="statistics-section">
+                  <h2>{canViewAll ? 'Офис' : 'Мои действия'}</h2>
+                  <div className="personnel-table-wrap">
+                    <table className="personnel-table statistics-table">
+                      <thead>
+                        <tr>
+                          {canViewAll && <th>Сотрудник</th>}
+                          <th>Тип</th>
+                          <th>Действие</th>
+                          <th>Количество</th>
+                          <th>Площадь, га</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {officeRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={canViewAll ? 5 : 4} className="muted">
+                              Нет данных
+                            </td>
+                          </tr>
+                        ) : (
+                          officeRows.map((row) => (
+                            <OfficeBreakdownRow
+                              key={`${row.user_login}-${row.object_type}-${row.action}`}
+                              row={row}
+                              showLogin={canViewAll}
+                            />
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+
+              {showDetails && (
+                <section className="statistics-section">
+                  <h2>Закрытия и анализ</h2>
+                  <div className="personnel-table-wrap">
+                    <table className="personnel-table statistics-table statistics-details-table">
+                      <thead>
+                        <tr>
+                          <th>Дата</th>
+                          <th>Тип</th>
+                          <th>Действие</th>
+                          <th>Объект</th>
+                          <th>Площадь, га</th>
+                          <th>Длительность</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="muted">
+                              Нет закрытий и анализов за период
+                            </td>
+                          </tr>
+                        ) : (
+                          detailRows.map((row) => (
+                            <ActionDetailRow
+                              key={`${row.action}-${row.object_key}-${row.created_at}`}
+                              row={row}
+                            />
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {effectiveViewMode === 'geo' && hasGeoData && (
+            <>
+              <section className="statistics-section">
+                <h2>Округа</h2>
+                <div className="statistics-bars">
+                  <div className="statistics-bars-group">
+                    <h3 className="statistics-bars-title">Закрытие заказов</h3>
+                    {okrugRows.map((row) => (
+                      <StatisticsBar
+                        key={`orders-${row.okrug ?? ''}`}
+                        label={geoPlaceLabel(row.okrug, 'Без округа')}
+                        value={row.orders_closed}
+                        max={maxOrdersClosed}
+                        display={String(row.orders_closed)}
+                        active={selectedOkrug !== null && (row.okrug ?? '') === selectedOkrug}
+                        onClick={() =>
+                          setSelectedOkrug((prev) =>
+                            prev === (row.okrug ?? '') ? null : row.okrug ?? '',
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                  <div className="statistics-bars-group">
+                    <h3 className="statistics-bars-title">Площадь закрытых, га</h3>
+                    {okrugRows.map((row) => (
+                      <StatisticsBar
+                        key={`ha-${row.okrug ?? ''}`}
+                        label={geoPlaceLabel(row.okrug, 'Без округа')}
+                        value={row.orders_closed_ha}
+                        max={maxOrdersHa}
+                        display={formatHa(row.orders_closed_ha)}
+                        active={selectedOkrug !== null && (row.okrug ?? '') === selectedOkrug}
+                        onClick={() =>
+                          setSelectedOkrug((prev) =>
+                            prev === (row.okrug ?? '') ? null : row.okrug ?? '',
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+
                 <div className="personnel-table-wrap">
-                  <table className="personnel-table statistics-table">
+                  <table className="personnel-table statistics-table statistics-geo-table statistics-geo-table-selectable">
                     <thead>
                       <tr>
-                        <th>Сотрудник</th>
-                        <th>Обследование камеральной задачи</th>
-                        <th>Отсутствие разрытия</th>
-                        <th>Обнаружение разрытия</th>
+                        <th>Округ</th>
                         <th>Закрытие заказа</th>
-                        <th>Площадь закрытых, га</th>
+                        <th>Площадь, га</th>
+                        <th>Анализ завершён</th>
+                        <th>Легально</th>
+                        <th>Нелегально</th>
+                        <th>Камеральные</th>
+                        <th>Нет разрытия</th>
+                        <th>Разрытие</th>
+                        <th>Анализ начат</th>
+                        <th>Офис: нет разрытия</th>
+                        <th>Камер. задачи</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {fieldRows.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="muted">
-                            Нет данных
-                          </td>
-                        </tr>
-                      ) : (
-                        fieldRows.map((row) => (
-                          <tr key={row.user_login}>
-                            <td>{row.user_login}</td>
-                            <td>{row.camera_surveys}</td>
-                            <td>{row.disruption_absent}</td>
-                            <td>{row.disruption_found}</td>
-                            <td>{row.orders_closed}</td>
-                            <td>{formatHa(row.orders_closed_ha)}</td>
+                      {okrugRows.map((row) => {
+                        const key = row.okrug ?? ''
+                        const selected = selectedOkrug === key
+                        return (
+                          <tr
+                            key={`okrug-${key}`}
+                            className={selected ? 'statistics-row-selected' : undefined}
+                            onClick={() => setSelectedOkrug(selected ? null : key)}
+                          >
+                            <td>{geoPlaceLabel(row.okrug, 'Без округа')}</td>
+                            <GeoMetricCells row={row} />
                           </tr>
-                        ))
-                      )}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
-              )}
-            </section>
-          )}
+              </section>
 
-          {showOfficeSection && (
-            <section className="statistics-section">
-              <h2>{canViewAll ? 'Офис' : 'Мои действия'}</h2>
-              <div className="personnel-table-wrap">
-                <table className="personnel-table statistics-table">
-                  <thead>
-                    <tr>
-                      {canViewAll && <th>Сотрудник</th>}
-                      <th>Тип</th>
-                      <th>Действие</th>
-                      <th>Количество</th>
-                      <th>Площадь, га</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {officeRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={canViewAll ? 5 : 4} className="muted">
-                          Нет данных
-                        </td>
-                      </tr>
-                    ) : (
-                      officeRows.map((row) => (
-                        <OfficeBreakdownRow
-                          key={`${row.user_login}-${row.object_type}-${row.action}`}
-                          row={row}
-                          showLogin={canViewAll}
-                        />
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+              <section className="statistics-section">
+                <div className="statistics-section-header">
+                  <h2>
+                    {selectedOkrug === null
+                      ? 'Районы'
+                      : `Районы: ${geoPlaceLabel(selectedOkrug, 'Без округа')}`}
+                  </h2>
+                  {selectedOkrug !== null && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setSelectedOkrug(null)}
+                    >
+                      Все округа
+                    </button>
+                  )}
+                </div>
+                {selectedOkrug === null ? (
+                  <p className="muted">Выберите округ в таблице или на диаграмме, чтобы увидеть районы.</p>
+                ) : (
+                  <div className="personnel-table-wrap">
+                    <table className="personnel-table statistics-table statistics-geo-table">
+                      <thead>
+                        <tr>
+                          <th>Район</th>
+                          <th>Закрытие заказа</th>
+                          <th>Площадь, га</th>
+                          <th>Анализ завершён</th>
+                          <th>Легально</th>
+                          <th>Нелегально</th>
+                          <th>Камеральные</th>
+                          <th>Нет разрытия</th>
+                          <th>Разрытие</th>
+                          <th>Анализ начат</th>
+                          <th>Офис: нет разрытия</th>
+                          <th>Камер. задачи</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rayonRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={12} className="muted">
+                              Нет данных по районам
+                            </td>
+                          </tr>
+                        ) : (
+                          rayonRows.map((row) => (
+                            <tr key={`rayon-${row.okrug ?? ''}-${row.rayon ?? ''}`}>
+                              <td>{geoPlaceLabel(row.rayon, 'Без района')}</td>
+                              <GeoMetricCells row={row} />
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </>
           )}
         </div>
       </div>
     </div>
+  )
+}
+
+function GeoMetricCells({ row }: { row: GeoStatisticsRow }) {
+  return (
+    <>
+      <td>{row.orders_closed}</td>
+      <td>{formatHa(row.orders_closed_ha)}</td>
+      <td>{row.analise_completed}</td>
+      <td>{row.closed_legal}</td>
+      <td>{row.closed_illegal}</td>
+      <td>{row.camera_surveys}</td>
+      <td>{row.disruption_absent}</td>
+      <td>{row.disruption_found}</td>
+      <td>{row.analise_started}</td>
+      <td>{row.office_disruption_absent}</td>
+      <td>{row.camera_tasks_created}</td>
+    </>
+  )
+}
+
+function StatisticsBar({
+  label,
+  value,
+  max,
+  display,
+  active,
+  onClick,
+}: {
+  label: string
+  value: number
+  max: number
+  display: string
+  active: boolean
+  onClick: () => void
+}) {
+  const widthPct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0
+  return (
+    <button
+      type="button"
+      className={`statistics-bar${active ? ' statistics-bar-active' : ''}`}
+      onClick={onClick}
+      title={label}
+    >
+      <span className="statistics-bar-label">{label}</span>
+      <span className="statistics-bar-track">
+        <span className="statistics-bar-fill" style={{ width: `${widthPct}%` }} />
+      </span>
+      <span className="statistics-bar-value">{display}</span>
+    </button>
   )
 }
 
@@ -316,6 +637,34 @@ function OfficeBreakdownRow({
       <td>{formatStatisticsAction(row.action)}</td>
       <td>{row.action_count}</td>
       <td>{formatOfficeAreaHa(row)}</td>
+    </tr>
+  )
+}
+
+function formatDetailObjectLabel(row: StatisticsActionDetail): string {
+  const parts: string[] = []
+  if (row.task_number) parts.push(row.task_number)
+  if (row.rayon) parts.push(row.rayon)
+  if (parts.length) return parts.join(' · ')
+  return row.object_key.slice(0, 8)
+}
+
+function formatDetailDate(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('ru-RU')
+}
+
+function ActionDetailRow({ row }: { row: StatisticsActionDetail }) {
+  const areaLabel =
+    row.object_type === 'order' && row.area_hectares > 0 ? formatHa(row.area_hectares) : '—'
+  return (
+    <tr>
+      <td>{formatDetailDate(row.created_at)}</td>
+      <td>{formatStatisticsObjectType(row.object_type)}</td>
+      <td>{formatStatisticsAction(row.action)}</td>
+      <td title={row.object_key}>{formatDetailObjectLabel(row)}</td>
+      <td>{areaLabel}</td>
+      <td>{formatDurationMinutes(row.duration_minutes)}</td>
     </tr>
   )
 }
