@@ -139,6 +139,10 @@ class SendToFieldRequest(BaseModel):
     office_comment: str | None = None
 
 
+class SnapshotActionRequest(BaseModel):
+    rayon: str | None = None
+
+
 class PersonnelUserOut(BaseModel):
     uuid: str
     login: str
@@ -199,6 +203,7 @@ class BulkAssignResultOut(BaseModel):
 class BulkStatusRequest(BaseModel):
     task_keys: list[str]
     target_status: str
+    rayon: str | None = None
 
 
 class BulkStatusFailureOut(BaseModel):
@@ -233,6 +238,19 @@ class FieldPhotosResultOut(BaseModel):
     photos: list[FieldPhotoOut] = Field(default_factory=list)
     banner_missing: bool = False
     comment: str | None = None
+
+
+class FieldReportOut(BaseModel):
+    report_id: int
+    report_task: str | None = None
+    geometry: dict[str, Any]
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    comment: str | None = None
+    photo_key: str | None = None
+
+
+class FieldReportsResultOut(BaseModel):
+    reports: list[FieldReportOut] = Field(default_factory=list)
 
 
 class FieldStatisticsSummaryOut(BaseModel):
@@ -285,15 +303,10 @@ class GeoStatisticsRowOut(BaseModel):
     rayon: str | None = None
     orders_closed: int = 0
     orders_closed_ha: float = 0.0
+    orders_open: int = 0
+    orders_open_ha: float = 0.0
     analise_completed: int = 0
-    closed_legal: int = 0
-    closed_illegal: int = 0
-    camera_surveys: int = 0
-    disruption_absent: int = 0
-    disruption_found: int = 0
-    analise_started: int = 0
-    office_disruption_absent: int = 0
-    camera_tasks_created: int = 0
+    progress_pct: float | None = None
 
 
 class GeoStatisticsOut(BaseModel):

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { fetchFieldReports, fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
 import {
   buildGroupedTableRows,
   countNotificationGroup,
@@ -9,7 +9,7 @@ import {
   siblingsToLinkedFeatures,
 } from '../lib/notificationSiblings'
 import type { SelectedTaskContext, TaskFeature, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
-import { formatTaskTableCell, isAreaSource, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS, CRM_GROUP_ORDERS } from '../types'
+import { formatTaskTableCell, isAreaSource, isFieldObserved, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS, CRM_GROUP_ORDERS } from '../types'
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
@@ -23,6 +23,8 @@ interface TaskPanelProps {
   onViewArea?: (feature: TaskFeature) => void
   onSelectHighlight: (highlight: TaskHighlight | null) => void
   onRefresh: () => void | Promise<void>
+  selectFromMap?: SelectedTaskContext | null
+  onSelectFromMapConsumed?: () => void
 }
 
 export function TaskPanel({
@@ -37,6 +39,8 @@ export function TaskPanel({
   onViewArea,
   onSelectHighlight,
   onRefresh,
+  selectFromMap = null,
+  onSelectFromMapConsumed,
 }: TaskPanelProps) {
   const [selectedGroup, setSelectedGroup] = useState(0)
   const [selectedSub, setSelectedSub] = useState(0)
@@ -46,6 +50,8 @@ export function TaskPanel({
   const [linkInfo, setLinkInfo] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const selectFromMapRef = useRef(selectFromMap)
+  selectFromMapRef.current = selectFromMap
 
   useEffect(() => {
     setSelectedGroup(0)
@@ -89,21 +95,36 @@ export function TaskPanel({
   const canSendAreaToSurvey = isArea && selectedFeature && selectedStatus !== 'wip'
   const canManageAreaSurvey = isArea && selectedFeature && selectedStatus === 'wip'
 
-  const loadHighlight = async (row: number) => {
-    const feat = features[row]
-    if (!feat || !subgroup) {
+  const loadHighlight = async (
+    row: number,
+    opts?: {
+      subgroup?: typeof subgroup
+      groupName?: string
+      features?: typeof features
+    },
+  ) => {
+    const activeSubgroup = opts?.subgroup ?? subgroup
+    const activeFeatures = opts?.features ?? features
+    const activeGroupName = opts?.groupName ?? groupName
+    const feat = activeFeatures[row]
+    if (!feat || !activeSubgroup) {
       onSelectHighlight(null)
       return
     }
 
     const primary = feat.geometry ?? null
     const popup = {
-      groupName,
-      subgroupName: subgroup.name,
+      groupName: activeGroupName,
+      subgroupName: activeSubgroup.name,
       feature: feat,
       taskKey: feat.task_key ?? undefined,
     }
-    onSelectHighlight({ primary, linked: [], popup })
+    onSelectHighlight({
+      primary,
+      linked: [],
+      popup,
+      taskKey: feat.task_key ?? undefined,
+    })
     setLinkInfo(null)
 
     if (isArea) return
@@ -112,32 +133,46 @@ export function TaskPanel({
     try {
       let taskKey = feat.task_key
       if (!taskKey) {
-        const record = await lookupTaskByFeature(subgroup.name, feat.attributes, feat.layer_key)
+        const record = await lookupTaskByFeature(
+          activeSubgroup.name,
+          feat.attributes,
+          feat.layer_key,
+        )
         taskKey = record.key
       }
 
-      const { linked_features, missing_links } = await fetchLinkedFeatures(taskKey, groupName)
+      const loadReports = isFieldObserved(feat.attributes.field_observed)
+      const [linkedResult, reportsResult] = await Promise.all([
+        fetchLinkedFeatures(taskKey, activeGroupName),
+        loadReports
+          ? fetchFieldReports(taskKey).catch(() => ({ reports: [] }))
+          : Promise.resolve({ reports: [] }),
+      ])
+      const { linked_features, missing_links } = linkedResult
       let linked = linked_features
       let notificationGroup: TaskHighlight['notificationGroup']
 
-      const linkField = getSubgroupLinkField(subgroup.name)
-      if (groupName === CRM_GROUP_ORDERS && linkField) {
+      const linkField = getSubgroupLinkField(activeSubgroup.name)
+      if (activeGroupName === CRM_GROUP_ORDERS && linkField) {
         const linkValue = normalizeLinkValue(feat.attributes[linkField])
         if (linkValue) {
-          const siblings = findSiblingFeatures(features, feat, linkField, taskKey)
+          const siblings = findSiblingFeatures(activeFeatures, feat, linkField, taskKey)
           linked = [...linked, ...siblingsToLinkedFeatures(siblings, linkField, linkValue)]
-          const total = countNotificationGroup(features, linkField, linkValue)
+          const total = countNotificationGroup(activeFeatures, linkField, linkValue)
           if (total > 1) {
             notificationGroup = { value: linkValue, total }
           }
         }
       }
 
+      const fieldReports = reportsResult.reports
       onSelectHighlight({
         primary,
         linked,
+        fieldReports: fieldReports.length ? fieldReports : undefined,
         missingLinks: missing_links,
         popup,
+        taskKey,
         notificationGroup,
       })
 
@@ -146,6 +181,9 @@ export function TaskPanel({
         parts.push(`По номеру ${notificationGroup.value}: ${notificationGroup.total}`)
       } else if (linked.length) {
         parts.push(`Связано: ${linked.length}`)
+      }
+      if (fieldReports.length) {
+        parts.push(`Отчёты: ${fieldReports.length}`)
       }
       if (missing_links.length) {
         parts.push(
@@ -166,6 +204,92 @@ export function TaskPanel({
     void loadHighlight(row)
   }
 
+  useEffect(() => {
+    if (!selectFromMap || !taskResult) return
+
+    const request = selectFromMap
+    const groupsList = taskResult.groups
+    let gi = groupsList.findIndex((g) => g.name === request.groupName)
+    if (gi < 0) gi = 0
+    const group = groupsList[gi]
+    if (!group) {
+      onSelectFromMapConsumed?.()
+      return
+    }
+
+    let si = group.subgroups.findIndex((s) => s.name === request.subgroupName)
+    if (si < 0) si = 0
+    const sub = group.subgroups[si]
+    if (!sub) {
+      onSelectFromMapConsumed?.()
+      return
+    }
+
+    const target = request.feature
+    const targetKey = target.task_key ?? String(target.attributes._task_key ?? '')
+    const targetGeom = JSON.stringify(target.geometry ?? null)
+
+    let featureIndex = sub.features.findIndex((f) => {
+      const key = f.task_key ?? String(f.attributes._task_key ?? '')
+      return Boolean(targetKey) && key === targetKey && JSON.stringify(f.geometry ?? null) === targetGeom
+    })
+    if (featureIndex < 0) {
+      featureIndex = sub.features.findIndex(
+        (f) =>
+          f.layer_key === target.layer_key &&
+          JSON.stringify(f.geometry ?? null) === targetGeom,
+      )
+    }
+    if (featureIndex < 0 && targetKey) {
+      featureIndex = sub.features.findIndex(
+        (f) => (f.task_key ?? String(f.attributes._task_key ?? '')) === targetKey,
+      )
+    }
+
+    setSelectedGroup(gi)
+    setSelectedSub(si)
+    setActionMessage(null)
+
+    const consumeIfCurrent = () => {
+      onSelectFromMapConsumed?.()
+    }
+
+    if (featureIndex < 0) {
+      setSelectedRow(null)
+      onSelectHighlight(null)
+      consumeIfCurrent()
+      return
+    }
+
+    const feat = sub.features[featureIndex]
+    const linkField = getSubgroupLinkField(sub.name)
+    if (group.name === CRM_GROUP_ORDERS && linkField) {
+      const linkValue = normalizeLinkValue(feat.attributes[linkField])
+      if (linkValue) {
+        const groupKey = `${linkField}:${linkValue}`
+        setCollapsedGroups((prev) =>
+          prev[groupKey] ? { ...prev, [groupKey]: false } : prev,
+        )
+      }
+    }
+
+    setSelectedRow(featureIndex)
+    void loadHighlight(featureIndex, {
+      subgroup: sub,
+      groupName: group.name,
+      features: sub.features,
+    }).finally(() => {
+      if (selectFromMapRef.current === request) consumeIfCurrent()
+    })
+  }, [selectFromMap])
+
+  useEffect(() => {
+    if (selectedRow === null) return
+    const el = document.querySelector<HTMLElement>(
+      `.task-panel tr[data-feature-index="${selectedRow}"]`,
+    )
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedRow, selectedGroup, selectedSub, collapsedGroups])
   const handleExecute = async () => {
     if (!subgroup || selectedRow === null || !taskResult) return
     const feature = features[selectedRow]
@@ -354,6 +478,7 @@ export function TaskPanel({
               return (
                 <tr
                   key={`${feat.layer_key}-${featureIndex}`}
+                  data-feature-index={featureIndex}
                   className={`${selectedRow === featureIndex ? 'selected' : ''}${areaStatus != null ? ' area-order-row' : ''}${indent ? ' task-table-nested-row' : ''}`}
                   style={rowStyle}
                   onClick={() => handleRowClick(featureIndex)}

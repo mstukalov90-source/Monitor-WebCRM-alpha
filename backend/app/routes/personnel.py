@@ -388,5 +388,6 @@ def post_bulk_status(
             body.task_keys,
             body.target_status,  # type: ignore[arg-type]
             user.login,
+            rayon=body.rayon,
         )
     return BulkStatusResultOut(**result)

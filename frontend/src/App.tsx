@@ -12,6 +12,7 @@ import { PersonnelScreen } from './components/PersonnelScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
 import { flattenLayers } from './components/LayerControl'
 import { TaskEditModal } from './components/TaskEditModal'
+import { FieldMaterialsModal } from './components/FieldMaterialsModal'
 import { ResizeHandle } from './components/ResizeHandle'
 import { TaskPanel } from './components/TaskPanel'
 import { TaskSourceTabs } from './components/TaskSourceTabs'
@@ -41,6 +42,7 @@ function App() {
   const [panelHighlight, setPanelHighlight] = useState<TaskHighlight | null>(null)
   const [modalHighlight, setModalHighlight] = useState<TaskHighlight | null>(null)
   const [editContext, setEditContext] = useState<SelectedTaskContext | null>(null)
+  const [panelSelectFromMap, setPanelSelectFromMap] = useState<SelectedTaskContext | null>(null)
   const [pickMode, setPickMode] = useState(false)
   const [pickLayers, setPickLayers] = useState<LinkLayerInfo[]>([])
   const [pickedValue, setPickedValue] = useState<{ column: string; value: string } | null>(null)
@@ -56,6 +58,10 @@ function App() {
   const [officeOrderPickerOpen, setOfficeOrderPickerOpen] = useState(false)
   const [areaOrders, setAreaOrders] = useState<TaskFeature[]>([])
   const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
+  const [fieldMaterials, setFieldMaterials] = useState<{
+    taskKey: string
+    reportId?: number | null
+  } | null>(null)
 
   const isOfficeUser = user?.role === 'office'
 
@@ -263,7 +269,7 @@ function App() {
   const clearHighlightForTask = useCallback((taskKey: string) => {
     const clearIfMatches = (highlight: TaskHighlight | null) => {
       if (!highlight) return highlight
-      const popupKey = highlight.popup?.taskKey
+      const popupKey = highlight.taskKey ?? highlight.popup?.taskKey
       if (popupKey === taskKey) return null
       return highlight
     }
@@ -700,6 +706,8 @@ function App() {
             onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}
             onRefresh={handleRefresh}
+            selectFromMap={panelSelectFromMap}
+            onSelectFromMapConsumed={() => setPanelSelectFromMap(null)}
           />
         </aside>
         <ResizeHandle
@@ -748,6 +756,10 @@ function App() {
                 onPointPlaced={(lng, lat) => void handleMapPointPlaced(lng, lat)}
                 onExecuteTask={handleExecuteTask}
                 onViewArea={setAreaViewFeature}
+                onViewFieldReport={(taskKey, reportId) =>
+                  setFieldMaterials({ taskKey, reportId })
+                }
+                onSelectTaskFeature={setPanelSelectFromMap}
               />
             </div>
             <MapLegend
@@ -755,6 +767,7 @@ function App() {
               layerConfigByKey={layerConfigByKey}
               showAreaOverlay={areaPolygonsOnMap && !isAreaSource(taskSource)}
               isAreaMode={isAreaSource(taskSource) && areaPolygonsOnMap}
+              showFieldReports={Boolean(activeHighlight?.fieldReports?.length)}
             />
           </div>
         </main>
@@ -787,6 +800,14 @@ function App() {
         onClose={() => setAreaViewFeature(null)}
         onAttributesPatched={handleTaskAttributesPatched}
       />
+
+      {fieldMaterials && (
+        <FieldMaterialsModal
+          taskKey={fieldMaterials.taskKey}
+          reportId={fieldMaterials.reportId}
+          onClose={() => setFieldMaterials(null)}
+        />
+      )}
 
       {isOfficeUser && officeOrderPickerOpen && (
         <AreaOrderPickerModal

@@ -65,6 +65,8 @@ def fetch_tasks_area_geojson(
     *,
     field_executor_login: str | None = None,
 ) -> dict[str, Any]:
+    clear_stale_analise_locks(conn)
+
     filters = ['"geom" IS NOT NULL']
     params: list[Any] = []
 
@@ -251,6 +253,29 @@ def ensure_analise_audit_columns(conn: PgConnection) -> bool:
         return False
 
 
+def clear_stale_analise_locks(conn: PgConnection) -> int:
+    """Release incomplete analise locks started on a previous Moscow calendar day."""
+    ensure_analise_audit_columns(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE crm.tasks_area SET
+                analise_started_by = NULL,
+                analise_started_at = NULL,
+                analise_paused_by = NULL,
+                analise_paused_at = NULL
+            WHERE COALESCE(analise, FALSE) = FALSE
+              AND analise_started_at IS NOT NULL
+              AND (analise_started_at AT TIME ZONE 'Europe/Moscow')::date
+                  < (NOW() AT TIME ZONE 'Europe/Moscow')::date
+            RETURNING key
+            """
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return len(rows)
+
+
 def _fetch_analise_state(conn: PgConnection, key: str) -> dict[str, Any] | None:
     ensure_analise_audit_columns(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -274,6 +299,7 @@ def _fetch_analise_state(conn: PgConnection, key: str) -> dict[str, Any] | None:
 def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
     ensure_tasks_area_audit_columns(conn)
     ensure_analise_audit_columns(conn)
+    clear_stale_analise_locks(conn)
     state = _fetch_analise_state(conn, key)
     if state is None:
         return "not_found"

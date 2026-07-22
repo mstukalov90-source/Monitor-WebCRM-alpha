@@ -5,10 +5,11 @@ import { formatTaskTableCell, type FieldPhoto, type FieldPhotosResult } from '..
 
 interface FieldMaterialsModalProps {
   taskKey: string | null
+  reportId?: number | null
   onClose: () => void
 }
 
-export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalProps) {
+export function FieldMaterialsModal({ taskKey, reportId = null, onClose }: FieldMaterialsModalProps) {
   const [result, setResult] = useState<FieldPhotosResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +42,7 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
     setGalleryIndex(0)
     setImageError(false)
 
-    fetchFieldPhotos(taskKey)
+    fetchFieldPhotos(taskKey, { reportId })
       .then((data) => {
         if (!cancelled) setResult(data)
       })
@@ -58,7 +59,7 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
     return () => {
       cancelled = true
     }
-  }, [taskKey])
+  }, [taskKey, reportId])
 
   useEffect(() => {
     setImageError(false)
@@ -89,7 +90,7 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal photo-modal field-materials-modal" onClick={(e) => e.stopPropagation()}>
         <div className="photo-modal-header">
-          <h2>Просмотр полевых материалов</h2>
+          <h2>{reportId != null ? 'Фото полевого отчёта' : 'Просмотр полевых материалов'}</h2>
           <button type="button" className="btn ghost small" onClick={onClose}>
             Закрыть
           </button>
@@ -108,38 +109,42 @@ export function FieldMaterialsModal({ taskKey, onClose }: FieldMaterialsModalPro
 
         {result && !error && hasPhotos && (
           <>
-            <section className="field-materials-banner">
-              <h3 className="field-materials-section-title">Фото баннера</h3>
-              {bannerPhoto ? (
-                <>
-                  <p className="muted small photo-modal-meta">
-                    {[
-                      bannerPhoto.label,
-                      bannerPhoto.created_at
-                        ? `Дата: ${formatTaskTableCell(bannerPhoto.created_at, 'date')}`
-                        : null,
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </p>
-                  <div className="photo-modal-body">
-                    <PhotoLightboxImage
-                      src={bannerPhoto.image_url}
-                      alt={bannerPhoto.label ?? bannerPhoto.file_path}
-                      className="photo-modal-image"
-                    />
-                  </div>
-                </>
-              ) : (
-                <p className="field-materials-banner-missing">Фото баннера отсутствует</p>
-              )}
-            </section>
+            {(bannerPhoto || reportId == null) && (
+              <section className="field-materials-banner">
+                <h3 className="field-materials-section-title">Фото баннера</h3>
+                {bannerPhoto ? (
+                  <>
+                    <p className="muted small photo-modal-meta">
+                      {[
+                        bannerPhoto.label,
+                        bannerPhoto.created_at
+                          ? `Дата: ${formatTaskTableCell(bannerPhoto.created_at, 'date')}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                    <div className="photo-modal-body">
+                      <PhotoLightboxImage
+                        src={bannerPhoto.image_url}
+                        alt={bannerPhoto.label ?? bannerPhoto.file_path}
+                        className="photo-modal-image"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <p className="field-materials-banner-missing">Фото баннера отсутствует</p>
+                )}
+              </section>
+            )}
 
-            {galleryPhotos.length > 0 && (
+            {(galleryPhotos.length > 0 || (reportId != null && !bannerPhoto && hasPhotos)) && (
               <section className="field-materials-gallery">
                 <div className="field-materials-gallery-header">
                   <h3 className="field-materials-section-title">
-                    {galleryPhotos.length === 1 ? 'Фото' : `Фото (${galleryIndex + 1} из ${galleryPhotos.length})`}
+                    {galleryPhotos.length <= 1
+                      ? 'Фото'
+                      : `Фото (${galleryIndex + 1} из ${galleryPhotos.length})`}
                   </h3>
                   {galleryPhotos.length > 1 && (
                     <div className="field-materials-nav">

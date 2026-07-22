@@ -80,15 +80,13 @@ def report_row_to_attributes(row: dict[str, Any]) -> dict[str, Any]:
     return attrs
 
 
-def fetch_field_report_row(
+def fetch_field_report_rows(
     conn: PgConnection,
     task_key: str,
     store_cfg: dict[str, Any],
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
+    """All mggt_field.reports rows with geometry for a crm.tasks key."""
     mapping = _field_data_mapping(store_cfg)
-    if mapping.get("source") != "field_data":
-        return None
-
     reports_table = _reports_qualified_table(mapping)
     tasks_key_col = mapping.get("reports_tasks_key", "tasks_key")
     geom_col = mapping.get("reports_geometry", "point")
@@ -99,12 +97,22 @@ def fetch_field_report_row(
         FROM {reports_table} r
         WHERE r."{tasks_key_col}" = %s::uuid
           AND r."{geom_col}" IS NOT NULL
-        LIMIT 1
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, (task_key,))
-        row = cur.fetchone()
-    return dict(row) if row else None
+        return [dict(row) for row in cur.fetchall()]
+
+
+def fetch_field_report_row(
+    conn: PgConnection,
+    task_key: str,
+    store_cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    mapping = _field_data_mapping(store_cfg)
+    if mapping.get("source") != "field_data":
+        return None
+    rows = fetch_field_report_rows(conn, task_key, store_cfg)
+    return rows[0] if rows else None
 
 
 def mark_discovered_field_data_tasks(

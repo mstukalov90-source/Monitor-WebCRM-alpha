@@ -51,6 +51,8 @@ interface MapViewProps {
   onPointPlaced?: (lng: number, lat: number) => void
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onViewFieldReport?: (taskKey: string, reportId: number) => void
+  onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
 }
 
 const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
@@ -267,21 +269,24 @@ function bindTaskPopup(
   options?: {
     onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
     onViewArea?: (feature: TaskFeature) => void
+    onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
   },
 ) {
+  const ctx: SelectedTaskContext = {
+    groupName: taskFeat.groupName,
+    subgroupName: taskFeat.subgroupName,
+    feature: taskFeat,
+    taskKey: taskFeat.task_key ?? undefined,
+    taskSource,
+  }
   const popupHtml = buildTaskPopupHtml(taskFeat, taskFeat.subgroupName, taskSource)
-  bindMapPopup(
-    layer,
-    popupHtml,
-    {
-      groupName: taskFeat.groupName,
-      subgroupName: taskFeat.subgroupName,
-      feature: taskFeat,
-      taskKey: taskFeat.task_key ?? undefined,
-      taskSource,
-    },
-    options,
-  )
+  bindMapPopup(layer, popupHtml, ctx, options)
+
+  if (options?.onSelectTaskFeature) {
+    layer.on('click', () => {
+      options.onSelectTaskFeature!(ctx)
+    })
+  }
 }
 
 function TaskFeaturesLayer({
@@ -292,6 +297,7 @@ function TaskFeaturesLayer({
   showAreaPolygons = true,
   onExecuteTask,
   onViewArea,
+  onSelectTaskFeature,
 }: {
   taskFeatures: TaskFeatureOnMap[]
   layerConfigByKey: Map<string, LayerConfig>
@@ -300,6 +306,7 @@ function TaskFeaturesLayer({
   showAreaPolygons?: boolean
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
 }) {
   const map = useMap()
   const groupRef = useRef<L.FeatureGroup | null>(null)
@@ -333,6 +340,8 @@ function TaskFeaturesLayer({
       rendererRef.current = areaRenderer
     }
 
+    const popupOptions = { onExecuteTask, onViewArea, onSelectTaskFeature }
+
     sortedFeatures.forEach((taskFeat) => {
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
       const isAreaLayer = taskFeat.layer_key === 'tasks_area'
@@ -358,7 +367,7 @@ function TaskFeaturesLayer({
             interactive: areaInteractive,
             onEachFeature: (layer) => {
               if (!showAreaPopups) return
-              bindTaskPopup(layer, taskFeat, taskSource, { onExecuteTask, onViewArea })
+              bindTaskPopup(layer, taskFeat, taskSource, popupOptions)
             },
           },
         )
@@ -381,7 +390,7 @@ function TaskFeaturesLayer({
           style: () => styleForGeometryType(geomType, symbology),
           onEachFeature: (_feature, layer) => {
             if (isAreaLayer && !showAreaPopups) return
-            bindTaskPopup(layer, taskFeat, taskSource, { onExecuteTask, onViewArea })
+            bindTaskPopup(layer, taskFeat, taskSource, popupOptions)
           },
         },
       )
@@ -400,7 +409,17 @@ function TaskFeaturesLayer({
       if (groupRef.current) map.removeLayer(groupRef.current)
       if (rendererRef.current) map.removeLayer(rendererRef.current)
     }
-  }, [map, taskFeatures, layerConfigByKey, taskSource, showAreaPopups, showAreaPolygons, onExecuteTask, onViewArea])
+  }, [
+    map,
+    taskFeatures,
+    layerConfigByKey,
+    taskSource,
+    showAreaPopups,
+    showAreaPolygons,
+    onExecuteTask,
+    onViewArea,
+    onSelectTaskFeature,
+  ])
 
   return null
 }
@@ -523,6 +542,28 @@ const HIGHLIGHT_LINKED = {
   dashArray: '8 6' as const,
   fillOpacity: 0.12,
 }
+const REPORT_OUTLINE_STYLE: L.PathOptions = {
+  color: '#333333',
+  weight: 2,
+  dashArray: '6 4',
+  fillColor: '#333333',
+  fillOpacity: 0.08,
+  interactive: false,
+}
+const REPORT_CONNECTOR_STYLE: L.PolylineOptions = {
+  color: '#333333',
+  weight: 2,
+  dashArray: '6 6',
+  opacity: 0.85,
+  interactive: false,
+}
+
+const REPORT_TRIANGLE_ICON = L.divIcon({
+  className: 'field-report-marker',
+  html: '<span class="field-report-triangle" aria-hidden="true"></span>',
+  iconSize: [18, 16],
+  iconAnchor: [9, 14],
+})
 
 function isPointGeometry(geometry: GeoJSON.Geometry): boolean {
   return geometry.type === 'Point' || geometry.type === 'MultiPoint'
@@ -535,13 +576,29 @@ function highlightPathStyle(
   const isPolygon = geometry.type === 'Polygon' || geometry.type === 'MultiPolygon'
   const isLine =
     geometry.type === 'LineString' || geometry.type === 'MultiLineString'
+  const dashArray = 'dashArray' in palette ? palette.dashArray : undefined
   return {
     color: palette.color,
     weight: isLine ? Math.max(palette.weight, MIN_LINE_WEIGHT) : palette.weight,
-    dashArray: isLine && palette === HIGHLIGHT_LINKED ? HIGHLIGHT_LINKED.dashArray : undefined,
+    dashArray: isLine ? dashArray : undefined,
     fillColor: palette.color,
     fillOpacity: isPolygon ? palette.fillOpacity : 0,
   }
+}
+
+function representativeLatLng(geometry: GeoJSON.Geometry): L.LatLng | null {
+  if (geometry.type === 'Point') {
+    const [lng, lat] = geometry.coordinates
+    return L.latLng(lat, lng)
+  }
+  if (geometry.type === 'MultiPoint' && geometry.coordinates.length) {
+    const [lng, lat] = geometry.coordinates[0]
+    return L.latLng(lat, lng)
+  }
+  const layer = L.geoJSON({ type: 'Feature', geometry, properties: {} } as GeoJSON.Feature)
+  const bounds = layer.getBounds()
+  if (!bounds.isValid()) return null
+  return bounds.getCenter()
 }
 
 function addHighlightFeature(
@@ -553,6 +610,7 @@ function addHighlightFeature(
     popupCtx?: SelectedTaskContext
     onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
     onViewArea?: (feature: TaskFeature) => void
+    onClick?: () => void
   },
 ): L.GeoJSON | null {
   let primaryLayer: L.GeoJSON | null = null
@@ -565,7 +623,8 @@ function addHighlightFeature(
           color: palette.color,
           weight: palette === HIGHLIGHT_PRIMARY ? 3 : 2,
           dashArray: palette === HIGHLIGHT_LINKED ? '4 4' : undefined,
-          fillOpacity: palette === HIGHLIGHT_PRIMARY ? 0.3 : 0.25,
+          fillColor: palette.color,
+          fillOpacity: palette === HIGHLIGHT_PRIMARY ? 0.3 : palette.fillOpacity,
         }),
       style: (feature) => {
         if (!feature?.geometry || isPointGeometry(feature.geometry)) {
@@ -573,18 +632,24 @@ function addHighlightFeature(
         }
         return highlightPathStyle(feature.geometry, palette)
       },
-      onEachFeature: options?.popupHtml
-        ? (_feature, pathLayer) => {
-            if (options.popupCtx) {
-              bindMapPopup(pathLayer, options.popupHtml!, options.popupCtx, {
-                onExecuteTask: options.onExecuteTask,
-                onViewArea: options.onViewArea,
-              })
-            } else {
-              pathLayer.bindPopup(options.popupHtml!)
-            }
+      onEachFeature: (_feature, pathLayer) => {
+        if (options?.onClick) {
+          pathLayer.on('click', (e) => {
+            L.DomEvent.stopPropagation(e)
+            options.onClick?.()
+          })
+        }
+        if (options?.popupHtml) {
+          if (options.popupCtx) {
+            bindMapPopup(pathLayer, options.popupHtml, options.popupCtx, {
+              onExecuteTask: options.onExecuteTask,
+              onViewArea: options.onViewArea,
+            })
+          } else {
+            pathLayer.bindPopup(options.popupHtml)
           }
-        : undefined,
+        }
+      },
     },
   )
   layer.addTo(group)
@@ -592,16 +657,48 @@ function addHighlightFeature(
   return primaryLayer
 }
 
+function addFieldReportMarker(
+  group: L.FeatureGroup,
+  geometry: GeoJSON.Geometry,
+  options?: { onClick?: () => void },
+): void {
+  const anchor = representativeLatLng(geometry)
+  if (!anchor) return
+
+  if (!isPointGeometry(geometry)) {
+    L.geoJSON({ type: 'Feature', geometry, properties: {} } as GeoJSON.Feature, {
+      style: () => REPORT_OUTLINE_STYLE,
+      interactive: false,
+    }).addTo(group)
+  }
+
+  const marker = L.marker(anchor, {
+    icon: REPORT_TRIANGLE_ICON,
+    interactive: true,
+    keyboard: true,
+    title: 'Полевой отчёт — фото',
+  })
+  if (options?.onClick) {
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e)
+      options.onClick?.()
+    })
+  }
+  marker.addTo(group)
+}
+
 function TaskHighlightLayer({
   highlight,
   taskSource,
   onExecuteTask,
   onViewArea,
+  onViewFieldReport,
 }: {
   highlight?: TaskHighlight | null
   taskSource: TaskSource
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onViewFieldReport?: (taskKey: string, reportId: number) => void
 }) {
   const map = useMap()
   const groupRef = useRef<L.FeatureGroup | null>(null)
@@ -611,12 +708,14 @@ function TaskHighlightLayer({
       map.removeLayer(groupRef.current)
       groupRef.current = null
     }
-    if (!highlight?.primary && !highlight?.linked.length) return
+    const fieldReports = highlight?.fieldReports ?? []
+    if (!highlight?.primary && !highlight?.linked.length && !fieldReports.length) return
 
     const group = L.featureGroup()
     let primaryLayer: L.GeoJSON | null = null
+    const primaryAnchor = highlight?.primary ? representativeLatLng(highlight.primary) : null
 
-    if (highlight.primary) {
+    if (highlight?.primary) {
       const popup = highlight.popup
       const popupHtml = popup
         ? buildTaskPopupHtml(popup.feature, popup.subgroupName, taskSource)
@@ -638,7 +737,7 @@ function TaskHighlightLayer({
       })
     }
 
-    highlight.linked.forEach((linked) => {
+    highlight?.linked.forEach((linked) => {
       if (!linked.geometry) return
       const popupTitle =
         linked.link_kind === 'sibling'
@@ -654,6 +753,24 @@ function TaskHighlightLayer({
       )
     })
 
+    const taskKey = highlight?.taskKey ?? highlight?.popup?.taskKey
+    fieldReports.forEach((report) => {
+      if (!report.geometry) return
+      const reportPoint = representativeLatLng(report.geometry)
+      if (primaryAnchor && reportPoint) {
+        L.polyline(
+          [primaryAnchor, reportPoint],
+          REPORT_CONNECTOR_STYLE,
+        ).addTo(group)
+      }
+      addFieldReportMarker(group, report.geometry, {
+        onClick:
+          taskKey && report.report_id != null && onViewFieldReport
+            ? () => onViewFieldReport(taskKey, report.report_id)
+            : undefined,
+      })
+    })
+
     group.addTo(map)
     groupRef.current = group
 
@@ -662,7 +779,7 @@ function TaskHighlightLayer({
       map.flyToBounds(bounds, { padding: [40, 40] })
     }
 
-    if (primaryLayer && highlight.popup) {
+    if (primaryLayer && highlight?.popup) {
       primaryLayer.eachLayer((layer) => {
         layer.openPopup()
       })
@@ -671,7 +788,7 @@ function TaskHighlightLayer({
     return () => {
       if (groupRef.current) map.removeLayer(groupRef.current)
     }
-  }, [highlight, map, taskSource, onExecuteTask, onViewArea])
+  }, [highlight, map, taskSource, onExecuteTask, onViewArea, onViewFieldReport])
 
   return null
 }
@@ -694,6 +811,8 @@ export function MapView({
   onPointPlaced,
   onExecuteTask,
   onViewArea,
+  onViewFieldReport,
+  onSelectTaskFeature,
 }: MapViewProps) {
   return (
     <MapContainer
@@ -728,6 +847,7 @@ export function MapView({
             showAreaPolygons={showAreaPolygons}
             onExecuteTask={onExecuteTask}
             onViewArea={onViewArea}
+            onSelectTaskFeature={onSelectTaskFeature}
           />
         </>
       )}
@@ -742,6 +862,7 @@ export function MapView({
         taskSource={taskSource}
         onExecuteTask={onExecuteTask}
         onViewArea={onViewArea}
+        onViewFieldReport={onViewFieldReport}
       />
     </MapContainer>
   )

@@ -149,6 +149,10 @@ export function StatisticsScreen({
     () => Math.max(0, ...okrugRows.map((row) => row.orders_closed_ha)),
     [okrugRows],
   )
+  const maxOrdersOpen = useMemo(
+    () => Math.max(0, ...okrugRows.map((row) => row.orders_open)),
+    [okrugRows],
+  )
 
   const hasPeopleData =
     (showFieldSection && fieldRows.length > 0) ||
@@ -435,6 +439,24 @@ export function StatisticsScreen({
                       />
                     ))}
                   </div>
+                  <div className="statistics-bars-group">
+                    <h3 className="statistics-bars-title">Незакрытые заказы</h3>
+                    {okrugRows.map((row) => (
+                      <StatisticsBar
+                        key={`open-${row.okrug ?? ''}`}
+                        label={geoPlaceLabel(row.okrug, 'Без округа')}
+                        value={row.orders_open}
+                        max={maxOrdersOpen}
+                        display={String(row.orders_open)}
+                        active={selectedOkrug !== null && (row.okrug ?? '') === selectedOkrug}
+                        onClick={() =>
+                          setSelectedOkrug((prev) =>
+                            prev === (row.okrug ?? '') ? null : row.okrug ?? '',
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 <div className="personnel-table-wrap">
@@ -442,17 +464,12 @@ export function StatisticsScreen({
                     <thead>
                       <tr>
                         <th>Округ</th>
-                        <th>Закрытие заказа</th>
-                        <th>Площадь, га</th>
+                        <th>Закрыто</th>
+                        <th>Площадь закрытых, га</th>
+                        <th>Незакрыто</th>
+                        <th>Площадь незакрытых, га</th>
+                        <th>Прогресс</th>
                         <th>Анализ завершён</th>
-                        <th>Легально</th>
-                        <th>Нелегально</th>
-                        <th>Камеральные</th>
-                        <th>Нет разрытия</th>
-                        <th>Разрытие</th>
-                        <th>Анализ начат</th>
-                        <th>Офис: нет разрытия</th>
-                        <th>Камер. задачи</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -500,23 +517,18 @@ export function StatisticsScreen({
                       <thead>
                         <tr>
                           <th>Район</th>
-                          <th>Закрытие заказа</th>
-                          <th>Площадь, га</th>
+                          <th>Закрыто</th>
+                          <th>Площадь закрытых, га</th>
+                          <th>Незакрыто</th>
+                          <th>Площадь незакрытых, га</th>
+                          <th>Прогресс</th>
                           <th>Анализ завершён</th>
-                          <th>Легально</th>
-                          <th>Нелегально</th>
-                          <th>Камеральные</th>
-                          <th>Нет разрытия</th>
-                          <th>Разрытие</th>
-                          <th>Анализ начат</th>
-                          <th>Офис: нет разрытия</th>
-                          <th>Камер. задачи</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rayonRows.length === 0 ? (
                           <tr>
-                            <td colSpan={12} className="muted">
+                            <td colSpan={7} className="muted">
                               Нет данных по районам
                             </td>
                           </tr>
@@ -541,20 +553,20 @@ export function StatisticsScreen({
   )
 }
 
+function formatProgressPct(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return '—'
+  return `${value.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`
+}
+
 function GeoMetricCells({ row }: { row: GeoStatisticsRow }) {
   return (
     <>
       <td>{row.orders_closed}</td>
       <td>{formatHa(row.orders_closed_ha)}</td>
+      <td>{row.orders_open}</td>
+      <td>{formatHa(row.orders_open_ha)}</td>
+      <td>{formatProgressPct(row.progress_pct)}</td>
       <td>{row.analise_completed}</td>
-      <td>{row.closed_legal}</td>
-      <td>{row.closed_illegal}</td>
-      <td>{row.camera_surveys}</td>
-      <td>{row.disruption_absent}</td>
-      <td>{row.disruption_found}</td>
-      <td>{row.analise_started}</td>
-      <td>{row.office_disruption_absent}</td>
-      <td>{row.camera_tasks_created}</td>
     </>
   )
 }

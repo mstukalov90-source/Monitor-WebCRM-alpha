@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   closeTaskIllegal,
   closeTaskLegal,
+  fetchFieldReports,
   fetchLinkedFeatures,
   fetchTask,
   fetchTaskFormFields,
@@ -252,9 +253,22 @@ export function TaskEditModal({
     setPhotoUuid(uuid)
   }
 
-  async function refreshHighlight(ctx: SelectedTaskContext, recordKey: string) {
+  async function refreshHighlight(
+    ctx: SelectedTaskContext,
+    recordKey: string,
+    fieldObserved?: unknown,
+  ) {
     try {
-      const { linked_features, missing_links } = await fetchLinkedFeatures(recordKey, ctx.groupName)
+      const loadReports =
+        isFieldObserved(fieldObserved) ||
+        isFieldObserved(ctx.feature.attributes.field_observed)
+      const [linkedResult, reportsResult] = await Promise.all([
+        fetchLinkedFeatures(recordKey, ctx.groupName),
+        loadReports
+          ? fetchFieldReports(recordKey).catch(() => ({ reports: [] }))
+          : Promise.resolve({ reports: [] }),
+      ])
+      const { linked_features, missing_links } = linkedResult
       let linked = linked_features
       let notificationGroup: TaskHighlight['notificationGroup']
 
@@ -276,10 +290,13 @@ export function TaskEditModal({
         }
       }
 
+      const fieldReports = reportsResult.reports
       onHighlightChange({
         primary: ctx.feature.geometry ?? null,
         linked,
+        fieldReports: fieldReports.length ? fieldReports : undefined,
         missingLinks: missing_links,
+        taskKey: recordKey,
         notificationGroup,
       })
     } catch {
@@ -326,7 +343,7 @@ export function TaskEditModal({
           initial[f] = String((data.record as unknown as Record<string, unknown>)[f] ?? '')
         })
         setForm(initial)
-        await refreshHighlight(context, data.record.key)
+        await refreshHighlight(context, data.record.key, data.record.field_observed)
       })
       .catch((e) => setMessage(String(e)))
       .finally(() => {
@@ -434,7 +451,7 @@ export function TaskEditModal({
       })
       setRecord(updated)
       setMessage('Сохранено')
-      if (context) await refreshHighlight(context, updated.key)
+      if (context) await refreshHighlight(context, updated.key, updated.field_observed)
     } catch (e) {
       setMessage(String(e))
     } finally {
@@ -470,9 +487,9 @@ export function TaskEditModal({
         }
         result = await sendTaskToField(record.key, officeComment, sessionRayon)
       }
-      else if (action === 'legal') result = await closeTaskLegal(record.key)
-      else if (action === 'illegal') result = await closeTaskIllegal(record.key)
-      else if (action === 'clear') result = await markDisruptionAbsent(record.key)
+      else if (action === 'legal') result = await closeTaskLegal(record.key, sessionRayon || undefined)
+      else if (action === 'illegal') result = await closeTaskIllegal(record.key, sessionRayon || undefined)
+      else if (action === 'clear') result = await markDisruptionAbsent(record.key, sessionRayon || undefined)
       else result = await returnTaskToActive(record.key)
 
       if (action === 'clear') {

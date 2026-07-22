@@ -87,47 +87,153 @@ def _normalize_comment(value: Any) -> str | None:
     return text or None
 
 
-def fetch_field_photos(conn: PgConnection, task_key: str) -> FieldPhotosResult:
-    comment_query = """
-        SELECT comment
-        FROM mggt_field.reports
-        WHERE tasks_key = %s::uuid
-          AND comment IS NOT NULL
-          AND TRIM(comment) <> ''
-        LIMIT 1
+def fetch_field_photos(
+    conn: PgConnection,
+    task_key: str,
+    *,
+    report_id: int | None = None,
+    report_task: str | None = None,
+) -> FieldPhotosResult:
+    """Load field photos for a CRM task.
+
+    Per-report geometry photos are linked via ``reports.photo = photos.photo_key``.
+    Banner photos (``photos.banner``) share the field-session ``task`` id and usually
+    do **not** appear in ``reports.photo`` — include them both for a single report
+    (via that report's ``task``) and for the whole-task view.
     """
-    query = """
-        SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
-        FROM mggt_field.reports r
-        JOIN mggt_field.photos p ON p.task = r.task
-        WHERE r.tasks_key = %s::uuid
-          AND p.file_path IS NOT NULL
-          AND TRIM(p.file_path) <> ''
-        ORDER BY p.banner DESC, p.created_at ASC
-    """
+    del report_task  # legacy query param ignored; use report_id
+
     photos: list[FieldPhotoItem] = []
     comment: str | None = None
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(comment_query, (task_key,))
-        comment_row = cur.fetchone()
-        if comment_row:
-            comment = _normalize_comment(comment_row.get("comment"))
 
-        cur.execute(query, (task_key,))
-        for row in cur.fetchall():
-            file_path = str(row["file_path"]).strip()
-            if not file_path:
-                continue
-            photos.append(
-                FieldPhotoItem(
-                    id=int(row["id"]),
-                    file_path=Path(file_path).name,
-                    banner=bool(row["banner"]),
-                    created_at=_format_created_at(row.get("created_at")),
-                    photo_key=row.get("photo_key"),
-                    username=row.get("username"),
-                )
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        if report_id is not None:
+            cur.execute(
+                """
+                SELECT comment
+                FROM mggt_field.reports
+                WHERE id = %s
+                  AND tasks_key = %s::uuid
+                LIMIT 1
+                """,
+                (report_id, task_key),
             )
+            comment_row = cur.fetchone()
+            if comment_row:
+                comment = _normalize_comment(comment_row.get("comment"))
+
+            # Geometry photo via photo_key + session banner via the report's task.
+            cur.execute(
+                """
+                SELECT DISTINCT ON (p.id)
+                       p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                FROM (
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM mggt_field.reports r
+                    JOIN mggt_field.photos p ON p.photo_key = r.photo
+                    WHERE r.id = %s
+                      AND r.tasks_key = %s::uuid
+                      AND r.photo IS NOT NULL
+                      AND TRIM(r.photo) <> ''
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
+
+                    UNION ALL
+
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM mggt_field.reports r
+                    JOIN mggt_field.photos p
+                      ON p.banner
+                     AND p.task = r.task
+                    WHERE r.id = %s
+                      AND r.tasks_key = %s::uuid
+                      AND r.task IS NOT NULL
+                      AND TRIM(r.task) <> ''
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
+                ) p
+                ORDER BY p.id
+                """,
+                (report_id, task_key, report_id, task_key),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT comment
+                FROM mggt_field.reports
+                WHERE tasks_key = %s::uuid
+                  AND comment IS NOT NULL
+                  AND TRIM(comment) <> ''
+                ORDER BY id
+                LIMIT 1
+                """,
+                (task_key,),
+            )
+            comment_row = cur.fetchone()
+            if comment_row:
+                comment = _normalize_comment(comment_row.get("comment"))
+
+            # Geometry photos via photo_key + session banner photos via task.
+            cur.execute(
+                """
+                SELECT DISTINCT ON (p.id)
+                       p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                FROM (
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM mggt_field.reports r
+                    JOIN mggt_field.photos p ON p.photo_key = r.photo
+                    WHERE r.tasks_key = %s::uuid
+                      AND r.photo IS NOT NULL
+                      AND TRIM(r.photo) <> ''
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
+
+                    UNION ALL
+
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM mggt_field.photos p
+                    WHERE p.banner
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
+                      AND p.task IN (
+                          SELECT DISTINCT r.task
+                          FROM mggt_field.reports r
+                          WHERE r.tasks_key = %s::uuid
+                            AND r.task IS NOT NULL
+                            AND TRIM(r.task) <> ''
+                      )
+                ) p
+                ORDER BY p.id
+                """,
+                (task_key, task_key),
+            )
+
+        rows = list(cur.fetchall())
+
+    rows.sort(
+        key=lambda row: (
+            0 if row.get("banner") else 1,
+            row.get("created_at") is None,
+            row.get("created_at") or "",
+            int(row["id"]),
+        )
+    )
+
+    for row in rows:
+        file_path = str(row["file_path"]).strip()
+        if not file_path:
+            continue
+        photos.append(
+            FieldPhotoItem(
+                id=int(row["id"]),
+                file_path=Path(file_path).name,
+                banner=bool(row["banner"]),
+                created_at=_format_created_at(row.get("created_at")),
+                photo_key=row.get("photo_key"),
+                username=row.get("username"),
+            )
+        )
+
     has_banner = any(p.banner for p in photos)
     return FieldPhotosResult(photos=photos, banner_missing=not has_banner, comment=comment)
 

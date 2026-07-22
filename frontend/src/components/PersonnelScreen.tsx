@@ -263,7 +263,11 @@ export function PersonnelScreen({
     setTasksError(null)
     setTasksMessage(null)
     try {
-      const result = await bulkChangePersonnelTaskStatus(selectedTaskKeys, target)
+      const result = await bulkChangePersonnelTaskStatus(
+        selectedTaskKeys,
+        target,
+        filterRayon || undefined,
+      )
       const failedCount = result.failed.length
       const parts = [
         `Обновлено: ${result.updated}`,

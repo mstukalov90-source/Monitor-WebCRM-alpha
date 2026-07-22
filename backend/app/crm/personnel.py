@@ -120,14 +120,27 @@ def list_clear_tasks_for_management(
     store_cfg = crm_task_store_config()
     schema = store_cfg.get("schema", "crm")
     table = store_cfg.get("clear_table", "tasks_clear")
+    from app.crm.store import ensure_rayon_column
+    from app.layers.geojson import normalize_rayon_name
+
+    ensure_rayon_column(conn, schema, table)
+
+    filters: list[str] = []
+    params: list[Any] = []
+    if rayon:
+        rayon_norm = normalize_rayon_name(rayon)
+        filters.append("(rayon = %s OR rayon IS NULL)")
+        params.append(rayon_norm)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
     query = f"""
-        SELECT key::text, task_key::text, type, sent_at
+        SELECT key::text, task_key::text, type, sent_at, rayon
         FROM "{schema}"."{table}"
+        {where}
         ORDER BY sent_at DESC NULLS LAST
         LIMIT 2000
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query)
+        cur.execute(query, params)
         rows = cur.fetchall()
 
     if not rayon:
@@ -142,20 +155,32 @@ def list_clear_tasks_for_management(
     if not district_wkt:
         return []
 
-    key_set = {r["key"] for r in rows}
-    snaps = fetch_snapshot_rows_by_keys(
-        conn, store_cfg, "clear_table", "tasks_clear", list(key_set)
-    )
-    snap_by_key = {s.snapshot_key: s for s in snaps}
+    rayon_norm = normalize_rayon_name(rayon)
     matched: list[dict[str, Any]] = []
+    need_geometry: list[dict[str, Any]] = []
     for row in rows:
-        snap = snap_by_key.get(row["key"])
-        if snap is None:
-            continue
-        feat = snapshot_row_to_feature(conn, snap, store_cfg, district_wkt, metric_srid)
-        if feat is None:
-            continue
-        matched.append(_clear_task_row(row, rayon=rayon))
+        row_rayon = row.get("rayon")
+        if row_rayon and normalize_rayon_name(str(row_rayon)) == rayon_norm:
+            matched.append(_clear_task_row(row, rayon=rayon))
+        elif not row_rayon:
+            need_geometry.append(row)
+
+    if need_geometry:
+        key_set = {r["key"] for r in need_geometry}
+        snaps = fetch_snapshot_rows_by_keys(
+            conn, store_cfg, "clear_table", "tasks_clear", list(key_set)
+        )
+        snap_by_key = {s.snapshot_key: s for s in snaps}
+        for row in need_geometry:
+            snap = snap_by_key.get(row["key"])
+            if snap is None:
+                continue
+            feat = snapshot_row_to_feature(
+                conn, snap, store_cfg, district_wkt, metric_srid, requested_rayon=rayon
+            )
+            if feat is None:
+                continue
+            matched.append(_clear_task_row(row, rayon=rayon))
     return matched
 
 
@@ -164,6 +189,8 @@ def bulk_change_task_workflow_status(
     task_keys: list[str],
     target_status: WorkflowTarget,
     login: str,
+    *,
+    rayon: str | None = None,
 ) -> dict[str, Any]:
     store_cfg = crm_task_store_config()
     updated = 0
@@ -205,6 +232,7 @@ def bulk_change_task_workflow_status(
                 login,
                 current=current,
                 ensure_snapshot=False,
+                rayon=rayon,
             )
             if result == "skipped":
                 skipped += 1

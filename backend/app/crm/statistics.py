@@ -396,15 +396,19 @@ def _normalize_detail_row(row: dict[str, Any]) -> dict[str, Any]:
 
 _GEO_INT_METRICS = (
     "orders_closed",
+    "orders_open",
     "analise_completed",
-    "closed_legal",
-    "closed_illegal",
-    "camera_surveys",
-    "disruption_absent",
-    "disruption_found",
-    "analise_started",
-    "office_disruption_absent",
-    "camera_tasks_created",
+)
+
+_GEO_HA_METRICS = (
+    "orders_closed_ha",
+    "orders_open_ha",
+)
+
+_GEO_ORDER_ACTIONS = (
+    "field_order_closed",
+    "office_analise_completed",
+    "office_analise_started",
 )
 
 
@@ -417,64 +421,48 @@ def fetch_geo_statistics(
     user_login: str | None = None,
     user_role: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Aggregate statistics by rayon and okrug (hierarchy Okrug → Rayon)."""
+    """Aggregate order statistics by rayon and okrug (hierarchy Okrug → Rayon).
+
+    Point/task metrics are excluded — only area orders. Open orders come from
+    current ``crm.tasks_area`` (status free/wip) for progress context.
+    """
+    # Territory view is order-centric; task filter yields empty order stats.
+    if object_type == "task":
+        return {"okrugs": [], "rayons": []}
+
     start, end = _period_bounds(date_from, date_to)
-    filters = [
+    event_filters = [
         "s.created_at >= %s",
         "s.created_at <= %s",
+        "s.object_type = 'order'",
     ]
-    params: list[Any] = [start, end]
+    event_params: list[Any] = [start, end]
 
     if user_role:
-        filters.append("s.user_role = %s")
-        params.append(user_role)
-    if object_type:
-        filters.append("s.object_type = %s")
-        params.append(object_type)
+        event_filters.append("s.user_role = %s")
+        event_params.append(user_role)
     if user_login:
-        filters.append("s.user_login = %s")
-        params.append(user_login.strip())
+        event_filters.append("s.user_login = %s")
+        event_params.append(user_login.strip())
 
-    where = " AND ".join(filters)
+    action_placeholders = ", ".join(["%s"] * len(_GEO_ORDER_ACTIONS))
+    event_filters.append(f"s.action IN ({action_placeholders})")
+    event_params.extend(_GEO_ORDER_ACTIONS)
+
+    open_filters = [
+        "ta.status IN ('free', 'wip')",
+        "NULLIF(TRIM(ta.rayon), '') IS NOT NULL",
+    ]
+    open_params: list[Any] = []
+    if user_login:
+        open_filters.append("NULLIF(TRIM(ta.executor), '') = %s")
+        open_params.append(user_login.strip())
+
+    event_where = " AND ".join(event_filters)
+    open_where = " AND ".join(open_filters)
+
     query = f"""
-        WITH events AS (
-            SELECT
-                s.action,
-                s.object_type,
-                s.object_key,
-                ta.area,
-                COALESCE(
-                    NULLIF(TRIM(ta.rayon), ''),
-                    NULLIF(TRIM(s.metadata->>'rayon'), ''),
-                    NULLIF(TRIM(tf.rayon), '')
-                ) AS raw_rayon
-            FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
-            LEFT JOIN crm.tasks_area ta
-              ON s.object_type = 'order'
-             AND s.object_key = ta.key
-            LEFT JOIN LATERAL (
-                SELECT tf.rayon
-                FROM crm.tasks_field tf
-                WHERE s.object_type = 'task'
-                  AND tf.task_key = s.object_key
-                  AND NULLIF(TRIM(tf.rayon), '') IS NOT NULL
-                ORDER BY tf.sent_at DESC NULLS LAST
-                LIMIT 1
-            ) tf ON TRUE
-            WHERE {where}
-        ),
-        resolved AS (
-            SELECT
-                action,
-                object_type,
-                area,
-                NULLIF(
-                    regexp_replace(TRIM(raw_rayon), '\\s+', ' ', 'g'),
-                    ''
-                ) AS rayon_norm
-            FROM events
-        ),
-        hood AS (
+        WITH hood AS (
             SELECT DISTINCT ON (rayon_norm)
                 rayon_norm,
                 NULLIF(TRIM(okrug_shor), '') AS okrug
@@ -490,44 +478,74 @@ def fetch_geo_statistics(
             ) h
             ORDER BY rayon_norm, gid
         ),
-        with_okrug AS (
+        events AS (
             SELECT
-                r.action,
-                r.object_type,
-                r.area,
-                r.rayon_norm,
-                h.okrug
-            FROM resolved r
-            LEFT JOIN hood h ON r.rayon_norm = h.rayon_norm
+                s.action,
+                ta.area,
+                NULLIF(
+                    regexp_replace(
+                        TRIM(COALESCE(NULLIF(TRIM(ta.rayon), ''), s.metadata->>'rayon')),
+                        '\\s+', ' ', 'g'
+                    ),
+                    ''
+                ) AS rayon_norm
+            FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+            LEFT JOIN crm.tasks_area ta
+              ON s.object_key = ta.key
+            WHERE {event_where}
+        ),
+        closed AS (
+            SELECT
+                rayon_norm,
+                COUNT(*) FILTER (WHERE action = 'field_order_closed') AS orders_closed,
+                COALESCE(
+                    SUM(area) FILTER (WHERE action = 'field_order_closed'),
+                    0
+                ) / 10000.0 AS orders_closed_ha,
+                COUNT(*) FILTER (WHERE action = 'office_analise_completed') AS analise_completed
+            FROM events
+            WHERE rayon_norm IS NOT NULL
+            GROUP BY rayon_norm
+        ),
+        open_orders AS (
+            SELECT
+                regexp_replace(TRIM(ta.rayon), '\\s+', ' ', 'g') AS rayon_norm,
+                COUNT(*) AS orders_open,
+                COALESCE(SUM(ta.area), 0) / 10000.0 AS orders_open_ha
+            FROM crm.tasks_area ta
+            WHERE {open_where}
+            GROUP BY 1
+        ),
+        combined AS (
+            SELECT
+                COALESCE(c.rayon_norm, o.rayon_norm) AS rayon_norm,
+                COALESCE(c.orders_closed, 0) AS orders_closed,
+                COALESCE(c.orders_closed_ha, 0) AS orders_closed_ha,
+                COALESCE(c.analise_completed, 0) AS analise_completed,
+                COALESCE(o.orders_open, 0) AS orders_open,
+                COALESCE(o.orders_open_ha, 0) AS orders_open_ha
+            FROM closed c
+            FULL OUTER JOIN open_orders o ON c.rayon_norm = o.rayon_norm
         )
         SELECT
-            COALESCE(okrug, '') AS okrug,
-            COALESCE(rayon_norm, '') AS rayon,
-            COUNT(*) FILTER (WHERE action = 'field_order_closed') AS orders_closed,
-            COALESCE(
-                SUM(area) FILTER (WHERE action = 'field_order_closed'),
-                0
-            ) / 10000.0 AS orders_closed_ha,
-            COUNT(*) FILTER (WHERE action = 'office_analise_completed') AS analise_completed,
-            COUNT(*) FILTER (WHERE action = 'office_closed_legal') AS closed_legal,
-            COUNT(*) FILTER (WHERE action = 'office_closed_illegal') AS closed_illegal,
-            COUNT(*) FILTER (WHERE action = 'field_camera_survey') AS camera_surveys,
-            COUNT(*) FILTER (WHERE action = 'field_disruption_absent') AS disruption_absent,
-            COUNT(*) FILTER (WHERE action = 'field_disruption_found') AS disruption_found,
-            COUNT(*) FILTER (WHERE action = 'office_analise_started') AS analise_started,
-            COUNT(*) FILTER (WHERE action = 'office_disruption_absent') AS office_disruption_absent,
-            COUNT(*) FILTER (WHERE action = 'office_camera_tasks_created') AS camera_tasks_created
-        FROM with_okrug
-        GROUP BY COALESCE(okrug, ''), COALESCE(rayon_norm, '')
+            h.okrug,
+            c.rayon_norm AS rayon,
+            c.orders_closed,
+            c.orders_closed_ha,
+            c.orders_open,
+            c.orders_open_ha,
+            c.analise_completed
+        FROM combined c
+        LEFT JOIN hood h ON c.rayon_norm = h.rayon_norm
         ORDER BY
-            CASE WHEN COALESCE(rayon_norm, '') = '' THEN 1 ELSE 0 END,
-            orders_closed DESC,
-            orders_closed_ha DESC,
-            analise_completed DESC,
-            rayon
+            CASE WHEN h.okrug IS NULL OR TRIM(h.okrug) = '' THEN 1 ELSE 0 END,
+            c.orders_closed DESC,
+            c.orders_closed_ha DESC,
+            c.orders_open DESC,
+            c.rayon_norm
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query, params)
+        cur.execute(query, event_params + open_params)
         rayon_rows = [_normalize_geo_row(dict(row), level="rayon") for row in cur.fetchall()]
 
     okrug_totals: dict[str, dict[str, Any]] = {}
@@ -538,13 +556,14 @@ def fetch_geo_statistics(
             bucket = {
                 "okrug": okrug_key,
                 "rayon": None,
-                "orders_closed_ha": 0.0,
                 **{key: 0 for key in _GEO_INT_METRICS},
+                **{key: 0.0 for key in _GEO_HA_METRICS},
             }
             okrug_totals[okrug_key] = bucket
         for key in _GEO_INT_METRICS:
             bucket[key] += int(row.get(key) or 0)
-        bucket["orders_closed_ha"] += float(row.get("orders_closed_ha") or 0.0)
+        for key in _GEO_HA_METRICS:
+            bucket[key] += float(row.get(key) or 0.0)
 
     okrug_rows = [
         _normalize_geo_row(bucket, level="okrug")
@@ -555,6 +574,7 @@ def fetch_geo_statistics(
             1 if not r["okrug"] else 0,
             -int(r["orders_closed"]),
             -float(r["orders_closed_ha"]),
+            -int(r["orders_open"]),
             r["okrug"] or "",
         )
     )
@@ -564,8 +584,9 @@ def fetch_geo_statistics(
 def _normalize_geo_row(row: dict[str, Any], *, level: str) -> dict[str, Any]:
     for key in _GEO_INT_METRICS:
         row[key] = int(row.get(key) or 0)
-    ha = row.get("orders_closed_ha")
-    row["orders_closed_ha"] = 0.0 if ha is None else float(ha)
+    for key in _GEO_HA_METRICS:
+        value = row.get(key)
+        row[key] = 0.0 if value is None else float(value)
     okrug = row.get("okrug")
     row["okrug"] = (str(okrug).strip() if okrug else "") or None
     if level == "okrug":
@@ -573,4 +594,16 @@ def _normalize_geo_row(row: dict[str, Any], *, level: str) -> dict[str, Any]:
     else:
         rayon = row.get("rayon")
         row["rayon"] = (str(rayon).strip() if rayon else "") or None
+    closed_ha = float(row["orders_closed_ha"])
+    open_ha = float(row["orders_open_ha"])
+    total_ha = closed_ha + open_ha
+    if total_ha > 0:
+        row["progress_pct"] = round(100.0 * closed_ha / total_ha, 1)
+    else:
+        closed_n = int(row["orders_closed"])
+        open_n = int(row["orders_open"])
+        total_n = closed_n + open_n
+        row["progress_pct"] = (
+            round(100.0 * closed_n / total_n, 1) if total_n > 0 else None
+        )
     return row

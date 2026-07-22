@@ -136,14 +136,32 @@ def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     ) + user_audit_migration_statements(schema, table)
 
 
+_SNAPSHOT_RAYON_TABLES = (
+    "tasks_field",
+    "tasks_clear",
+    "tasks_done_legal",
+    "tasks_done_illegal",
+)
+
+
 def _field_only_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     if table != "tasks_field":
         return ()
     return (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS office_comment TEXT",
+    )
+
+
+def _snapshot_rayon_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
+    if table not in _SNAPSHOT_RAYON_TABLES:
+        return ()
+    index_name = f"idx_{schema}_{table}_rayon"
+    return (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS rayon TEXT",
+        f'CREATE INDEX IF NOT EXISTS {index_name} '
+        f'ON "{schema}"."{table}" (rayon)',
     )
 
 
@@ -163,6 +181,8 @@ def ensure_office_comment_column(conn: PgConnection, schema: str, table: str) ->
         with conn.cursor() as cur:
             for stmt in _field_only_migration_statements(schema, table):
                 cur.execute(stmt)
+            for stmt in _snapshot_rayon_migration_statements(schema, table):
+                cur.execute(stmt)
         conn.commit()
         _office_comment_ready.add(key)
         _rayon_column_ready.add(key)
@@ -173,12 +193,23 @@ def ensure_office_comment_column(conn: PgConnection, schema: str, table: str) ->
 
 
 def ensure_rayon_column(conn: PgConnection, schema: str, table: str) -> bool:
-    if table != "tasks_field":
+    if table not in _SNAPSHOT_RAYON_TABLES:
         return True
     key = f"{schema}.{table}"
     if key in _rayon_column_ready:
         return True
-    return ensure_office_comment_column(conn, schema, table)
+    if table == "tasks_field":
+        return ensure_office_comment_column(conn, schema, table)
+    try:
+        with conn.cursor() as cur:
+            for stmt in _snapshot_rayon_migration_statements(schema, table):
+                cur.execute(stmt)
+        conn.commit()
+        _rayon_column_ready.add(key)
+        return True
+    except Exception:
+        conn.rollback()
+        return False
 
 
 def _snapshot_ddl_statements(
@@ -713,7 +744,13 @@ def ensure_task_snapshot_table(
                 cur.execute(stmt)
             for stmt in _field_only_migration_statements(snapshot_schema, snapshot_table):
                 cur.execute(stmt)
+            for stmt in _snapshot_rayon_migration_statements(snapshot_schema, snapshot_table):
+                cur.execute(stmt)
         conn.commit()
+        if snapshot_table in _SNAPSHOT_RAYON_TABLES:
+            _rayon_column_ready.add(f"{snapshot_schema}.{snapshot_table}")
+        if snapshot_table == "tasks_field":
+            _office_comment_ready.add(f"{snapshot_schema}.{snapshot_table}")
         return True
     except Exception as exc:
         conn.rollback()
@@ -993,6 +1030,9 @@ def send_task_snapshot(
     if not task_type:
         raise ValueError("type cannot be empty")
 
+    from app.layers.geojson import normalize_rayon_name
+
+    ensure_rayon_column(conn, schema, table)
     audit = make_user_audit(login)
     columns = (
         ["task_key", "type"]
@@ -1006,14 +1046,16 @@ def send_task_snapshot(
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
     ] + [bool(record.is_field_data), bool(record.is_office_task)] + [audit, audit]
+    rayon_norm = normalize_rayon_name(rayon or "") or None
     if default_table == "tasks_field":
-        from app.layers.geojson import normalize_rayon_name
-
         columns = list(columns) + ["office_comment", "rayon"]
         values = list(values) + [
             _normalize_id_value(office_comment),
-            normalize_rayon_name(rayon or "") or None,
+            rayon_norm,
         ]
+    elif table in _SNAPSHOT_RAYON_TABLES:
+        columns = list(columns) + ["rayon"]
+        values = list(values) + [rayon_norm]
     placeholders = ", ".join(["%s"] * len(columns))
     col_list = ", ".join(f'"{col}"' for col in columns)
     query = f'INSERT INTO "{schema}"."{table}" ({col_list}) VALUES ({placeholders})'
@@ -1053,13 +1095,46 @@ def send_task_to_field(
     )
 
 
+def fetch_field_rayon_for_task(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    task_key: str,
+) -> str | None:
+    """Read rayon from tasks_field for a task (before it is removed)."""
+    schema, table = _snapshot_table_ref(store_cfg, "field_table", "tasks_field")
+    ensure_rayon_column(conn, schema, table)
+    query = f'SELECT rayon FROM "{schema}"."{table}" WHERE task_key = %s::uuid LIMIT 1'
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (task_key,))
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        from app.layers.geojson import normalize_rayon_name
+
+        return normalize_rayon_name(str(row[0])) or None
+    except Exception:
+        return None
+
+
 def send_task_to_done_legal(
     conn: PgConnection,
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
+    *,
+    rayon: str | None = None,
 ) -> SendTaskSnapshotResult:
-    return send_task_snapshot(conn, record, store_cfg, "done_legal_table", "tasks_done_legal", login)
+    resolved = rayon or fetch_field_rayon_for_task(conn, store_cfg, record.key)
+    return send_task_snapshot(
+        conn,
+        record,
+        store_cfg,
+        "done_legal_table",
+        "tasks_done_legal",
+        login,
+        rayon=resolved,
+    )
 
 
 def send_task_to_done_illegal(
@@ -1067,10 +1142,21 @@ def send_task_to_done_illegal(
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
+    *,
+    rayon: str | None = None,
 ) -> SendTaskSnapshotResult:
     if record.field_observed is False:
         raise ValueError(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
-    return send_task_snapshot(conn, record, store_cfg, "done_illegal_table", "tasks_done_illegal", login)
+    resolved = rayon or fetch_field_rayon_for_task(conn, store_cfg, record.key)
+    return send_task_snapshot(
+        conn,
+        record,
+        store_cfg,
+        "done_illegal_table",
+        "tasks_done_illegal",
+        login,
+        rayon=resolved,
+    )
 
 
 def send_task_to_clear(
@@ -1080,9 +1166,18 @@ def send_task_to_clear(
     login: str,
     *,
     ensure_table: bool = True,
+    rayon: str | None = None,
 ) -> SendTaskSnapshotResult:
+    resolved = rayon or fetch_field_rayon_for_task(conn, store_cfg, record.key)
     return send_task_snapshot(
-        conn, record, store_cfg, "clear_table", "tasks_clear", login, ensure_table=ensure_table
+        conn,
+        record,
+        store_cfg,
+        "clear_table",
+        "tasks_clear",
+        login,
+        ensure_table=ensure_table,
+        rayon=resolved,
     )
 
 
@@ -1215,6 +1310,7 @@ def set_task_workflow_status(
     *,
     current: WorkflowStatus | None = None,
     ensure_snapshot: bool = True,
+    rayon: str | None = None,
 ) -> str:
     if current is None:
         current = detect_task_workflow_status(conn, store_cfg, record.key)
@@ -1236,7 +1332,12 @@ def set_task_workflow_status(
         if current == "clear":
             remove_task_from_clear(conn, record, store_cfg, login)
         result = send_task_to_field(
-            conn, record, store_cfg, login, ensure_table=ensure_snapshot
+            conn,
+            record,
+            store_cfg,
+            login,
+            ensure_table=ensure_snapshot,
+            rayon=rayon,
         )
         if result in ("inserted", "skipped"):
             return "updated"
@@ -1245,11 +1346,19 @@ def set_task_workflow_status(
     if current == "clear":
         return "skipped"
     if current == "field":
+        # Capture rayon before deleting field row.
+        if not rayon:
+            rayon = fetch_field_rayon_for_task(conn, store_cfg, record.key)
         remove_task_from_field(
             conn, record, store_cfg, login, log_return_to_active=False
         )
     result = send_task_to_clear(
-        conn, record, store_cfg, login, ensure_table=ensure_snapshot
+        conn,
+        record,
+        store_cfg,
+        login,
+        ensure_table=ensure_snapshot,
+        rayon=rayon,
     )
     if result in ("inserted", "skipped"):
         return "updated"

@@ -12,6 +12,7 @@ import type {
   CollectProgress,
   AiPhotoMeta,
   FieldPhotosResult,
+  FieldReportFeature,
   AssignableTask,
   AuthUser,
   DistrictOption,
@@ -178,7 +179,7 @@ export function fetchActiveTasks(rayon: string, applyDateFilter: boolean): Promi
     rayon,
     apply_date_filter: String(applyDateFilter),
   })
-  return request(`/api/tasks/active?${params}`)
+  return request(`/api/tasks/active?${params}`, undefined, 90_000)
 }
 
 export function fetchSnapshotTasks(
@@ -186,7 +187,7 @@ export function fetchSnapshotTasks(
   source: 'field' | 'done_legal' | 'done_illegal' | 'clear',
 ): Promise<TaskResult> {
   const params = new URLSearchParams({ rayon, source })
-  return request(`/api/tasks/snapshot?${params}`)
+  return request(`/api/tasks/snapshot?${params}`, undefined, 90_000)
 }
 
 export function fetchTasksArea(rayon: string, status?: AreaStatus): Promise<TaskResult> {
@@ -278,16 +279,25 @@ export function sendTaskToField(
   })
 }
 
-export function closeTaskLegal(key: string): Promise<{ status: string }> {
-  return request(`/api/tasks/${key}/close-legal`, { method: 'POST' })
+export function closeTaskLegal(key: string, rayon?: string): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/close-legal`, {
+    method: 'POST',
+    body: JSON.stringify({ rayon: rayon || null }),
+  })
 }
 
-export function closeTaskIllegal(key: string): Promise<{ status: string }> {
-  return request(`/api/tasks/${key}/close-illegal`, { method: 'POST' })
+export function closeTaskIllegal(key: string, rayon?: string): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/close-illegal`, {
+    method: 'POST',
+    body: JSON.stringify({ rayon: rayon || null }),
+  })
 }
 
-export function markDisruptionAbsent(key: string): Promise<{ status: string }> {
-  return request(`/api/tasks/${key}/disruption-absent`, { method: 'POST' })
+export function markDisruptionAbsent(key: string, rayon?: string): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/disruption-absent`, {
+    method: 'POST',
+    body: JSON.stringify({ rayon: rayon || null }),
+  })
 }
 
 export function returnTaskToActive(key: string): Promise<{ status: string }> {
@@ -357,8 +367,23 @@ export function aiPhotoImageUrl(uuid: string): string {
   return `/api/photos/ai/${encodeURIComponent(uuid)}/image`
 }
 
-export function fetchFieldPhotos(taskKey: string): Promise<FieldPhotosResult> {
-  return request(`/api/tasks/${encodeURIComponent(taskKey)}/field-photos`)
+export function fetchFieldPhotos(
+  taskKey: string,
+  options?: { reportId?: number | null; reportTask?: string | null },
+): Promise<FieldPhotosResult> {
+  const params = new URLSearchParams()
+  if (options?.reportId != null) params.set('report_id', String(options.reportId))
+  else if (options?.reportTask) params.set('report_task', options.reportTask)
+  const qs = params.toString()
+  return request(
+    `/api/tasks/${encodeURIComponent(taskKey)}/field-photos${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export function fetchFieldReports(
+  taskKey: string,
+): Promise<{ reports: FieldReportFeature[] }> {
+  return request(`/api/tasks/${encodeURIComponent(taskKey)}/field-reports`)
 }
 
 export function fieldPhotoImageUrl(filePath: string): string {
@@ -447,12 +472,17 @@ export function fetchPersonnelAreaTasks(params: {
 export function bulkChangePersonnelTaskStatus(
   taskKeys: string[],
   targetStatus: WorkflowTargetStatus,
+  rayon?: string,
 ): Promise<BulkStatusResult> {
   return request(
     '/api/personnel/tasks/bulk-status',
     {
       method: 'POST',
-      body: JSON.stringify({ task_keys: taskKeys, target_status: targetStatus }),
+      body: JSON.stringify({
+        task_keys: taskKeys,
+        target_status: targetStatus,
+        rayon: rayon || null,
+      }),
     },
     personnelBulkTimeout(taskKeys.length),
   )

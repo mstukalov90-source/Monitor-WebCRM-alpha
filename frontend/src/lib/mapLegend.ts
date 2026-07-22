@@ -17,6 +17,7 @@ export type LegendSwatchKind =
   | 'polygon'
   | 'highlight-primary'
   | 'highlight-linked'
+  | 'highlight-report'
   | 'area-hatch'
 
 export interface MapLegendItem {
@@ -49,6 +50,12 @@ const HIGHLIGHT_LINKED_ITEM: MapLegendItem = {
   id: 'highlight_linked',
   label: 'Привязанные объекты',
   kind: 'highlight-linked',
+}
+
+const HIGHLIGHT_REPORT_ITEM: MapLegendItem = {
+  id: 'highlight_report',
+  label: 'Полевые отчёты',
+  kind: 'highlight-report',
 }
 
 function areaStatusLegendItems(): MapLegendItem[] {
@@ -92,7 +99,12 @@ function cssRgba(hex: string, alpha: number): string {
 export function buildMapLegendItems(
   taskFeatures: TaskFeatureOnMap[],
   layerConfigByKey: Map<string, LayerConfig>,
-  options: { showAreaOverlay: boolean; isAreaMode?: boolean; showDistrictBoundary?: boolean },
+  options: {
+    showAreaOverlay: boolean
+    isAreaMode?: boolean
+    showDistrictBoundary?: boolean
+    showFieldReports?: boolean
+  },
 ): MapLegendItem[] {
   const items: MapLegendItem[] = []
   const seen = new Set<string>()
@@ -136,6 +148,9 @@ export function buildMapLegendItems(
   }
 
   items.push(HIGHLIGHT_PRIMARY_ITEM, HIGHLIGHT_LINKED_ITEM)
+  if (options.showFieldReports) {
+    items.push(HIGHLIGHT_REPORT_ITEM)
+  }
   return items
 }
 
@@ -189,6 +204,22 @@ export function swatchStyles(item: MapLegendItem): {
         borderColor: '#0066cc',
         borderWidth: 2,
         borderStyle: 'dashed',
+      },
+    }
+  }
+
+  if (item.kind === 'highlight-report') {
+    return {
+      point: {
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
+        borderWidth: 0,
+        width: 0,
+        height: 0,
+        borderLeft: '7px solid transparent',
+        borderRight: '7px solid transparent',
+        borderBottom: '12px solid #111111',
+        borderRadius: 0,
       },
     }
   }

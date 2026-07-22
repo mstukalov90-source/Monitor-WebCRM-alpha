@@ -36,7 +36,10 @@ from app.crm.schemas import (
     CollectTasksRequest,
     CreateOfficeTaskRequest,
     FieldPhotosResultOut,
+    FieldReportOut,
+    FieldReportsResultOut,
     SendToFieldRequest,
+    SnapshotActionRequest,
     SnapshotResultOut,
     TaskFormFieldsOut,
     TaskRecordOut,
@@ -62,6 +65,10 @@ from app.crm.link_resolver import (
     resolve_linked_features,
 )
 from app.crm.office_tasks import create_office_task
+from app.crm.field_data_loader import (
+    fetch_field_report_rows,
+    report_row_to_attributes,
+)
 from app.photos.field_photo import _field_image_url, fetch_field_photos
 from app.crm.tasks_area import (
     AREA_STATUSES,
@@ -396,15 +403,63 @@ def get_task_form_fields(
 
 
 @router.get("/tasks/{key}/field-photos")
-def get_task_field_photos(key: str) -> FieldPhotosResultOut:
+def get_task_field_photos(
+    key: str,
+    report_id: int | None = Query(None),
+    report_task: str | None = Query(None),
+) -> FieldPhotosResultOut:
     store_cfg = crm_task_store_config()
     with get_connection() as conn:
         record = fetch_task_by_key(conn, store_cfg, key)
         if record is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        result = fetch_field_photos(conn, key)
+        result = fetch_field_photos(
+            conn,
+            key,
+            report_id=report_id,
+            report_task=report_task,
+        )
     data = result.to_dict(_field_image_url)
     return FieldPhotosResultOut(**data)
+
+
+@router.get("/tasks/{key}/field-reports")
+def get_task_field_reports(key: str) -> FieldReportsResultOut:
+    import json
+
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        rows = fetch_field_report_rows(conn, key, store_cfg)
+
+    reports: list[FieldReportOut] = []
+    for row in rows:
+        geometry = row.pop("_geometry", None)
+        if isinstance(geometry, str):
+            geometry = json.loads(geometry)
+        if not geometry:
+            continue
+        report_id_raw = row.get("id")
+        if report_id_raw is None:
+            continue
+        attrs = report_row_to_attributes(row)
+        report_task = str(attrs.get("task") or "").strip() or None
+        photo_key = str(attrs.get("photo") or "").strip() or None
+        comment_raw = attrs.get("comment")
+        comment = str(comment_raw).strip() if comment_raw is not None else None
+        reports.append(
+            FieldReportOut(
+                report_id=int(report_id_raw),
+                report_task=report_task,
+                geometry=geometry,
+                attributes=attrs,
+                comment=comment or None,
+                photo_key=photo_key,
+            )
+        )
+    return FieldReportsResultOut(reports=reports)
 
 
 @router.get("/tasks/{key}/linked-features")
@@ -494,11 +549,15 @@ def post_send_to_field(
 def post_close_legal(
     key: str,
     user: UserSession = Depends(get_current_user),
+    body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
+    rayon = body.rayon if body else None
+    if rayon:
+        check_rayon(user, rayon)
     return _send_snapshot(
         key,
-        send_task_to_done_legal,
+        partial(send_task_to_done_legal, rayon=rayon),
         user.login,
         user=user,
         remove_from_field_after=True,
@@ -509,11 +568,15 @@ def post_close_legal(
 def post_close_illegal(
     key: str,
     user: UserSession = Depends(get_current_user),
+    body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
+    rayon = body.rayon if body else None
+    if rayon:
+        check_rayon(user, rayon)
     return _send_snapshot(
         key,
-        send_task_to_done_illegal,
+        partial(send_task_to_done_illegal, rayon=rayon),
         user.login,
         user=user,
         remove_from_field_after=True,
@@ -524,11 +587,15 @@ def post_close_illegal(
 def post_disruption_absent(
     key: str,
     user: UserSession = Depends(get_current_user),
+    body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
     check_task_source_any(user, ["active", "field"])
+    rayon = body.rayon if body else None
+    if rayon:
+        check_rayon(user, rayon)
     return _send_snapshot(
         key,
-        send_task_to_clear,
+        partial(send_task_to_clear, rayon=rayon),
         user.login,
         user=user,
         remove_from_field_after=True,

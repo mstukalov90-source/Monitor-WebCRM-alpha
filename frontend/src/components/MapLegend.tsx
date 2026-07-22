@@ -9,6 +9,7 @@ interface MapLegendProps {
   showAreaOverlay: boolean
   isAreaMode?: boolean
   showDistrictBoundary?: boolean
+  showFieldReports?: boolean
 }
 
 function LegendSwatch({ item }: { item: MapLegendItem }) {
@@ -26,6 +27,9 @@ function LegendSwatch({ item }: { item: MapLegendItem }) {
   if (item.kind === 'highlight-linked') {
     return <span className="legend-swatch legend-swatch-line" style={styles.line} />
   }
+  if (item.kind === 'highlight-report') {
+    return <span className="legend-swatch legend-swatch-report-triangle" style={styles.point} />
+  }
   if (item.kind === 'highlight-primary') {
     return <span className="legend-swatch legend-swatch-polygon" style={styles.polygon} />
   }
@@ -39,6 +43,7 @@ export function MapLegend({
   showAreaOverlay,
   isAreaMode = false,
   showDistrictBoundary = true,
+  showFieldReports = false,
 }: MapLegendProps) {
   const items = useMemo(
     () =>
@@ -46,8 +51,9 @@ export function MapLegend({
         showAreaOverlay,
         isAreaMode,
         showDistrictBoundary,
+        showFieldReports,
       }),
-    [taskFeatures, layerConfigByKey, showAreaOverlay, isAreaMode, showDistrictBoundary],
+    [taskFeatures, layerConfigByKey, showAreaOverlay, isAreaMode, showDistrictBoundary, showFieldReports],
   )
 
   if (!items.length) return null

@@ -104,15 +104,10 @@ export interface GeoStatisticsRow {
   rayon: string | null
   orders_closed: number
   orders_closed_ha: number
+  orders_open: number
+  orders_open_ha: number
   analise_completed: number
-  closed_legal: number
-  closed_illegal: number
-  camera_surveys: number
-  disruption_absent: number
-  disruption_found: number
-  analise_started: number
-  office_disruption_absent: number
-  camera_tasks_created: number
+  progress_pct: number | null
 }
 
 export interface GeoStatistics {
@@ -299,6 +294,15 @@ export interface LinkedTaskFeature {
   link_kind?: 'link' | 'sibling'
 }
 
+export interface FieldReportFeature {
+  report_id: number
+  report_task?: string | null
+  geometry: GeoJSON.Geometry
+  attributes: Record<string, unknown>
+  comment?: string | null
+  photo_key?: string | null
+}
+
 export interface MissingLink {
   link_column: string
   business_id: string
@@ -314,8 +318,11 @@ export interface TaskHighlightPopup {
 export interface TaskHighlight {
   primary?: GeoJSON.Geometry | null
   linked: LinkedTaskFeature[]
+  fieldReports?: FieldReportFeature[]
   missingLinks?: MissingLink[]
   popup?: TaskHighlightPopup
+  /** Task key for field-report photo clicks (set even when popup is omitted). */
+  taskKey?: string
   notificationGroup?: {
     value: string
     total: number
