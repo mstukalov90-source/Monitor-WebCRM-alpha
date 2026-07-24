@@ -42,7 +42,11 @@ from app.letters.oati import (
     LetterError,
     _lookup_engineering,
     _lookup_executor,
+    _lookup_mos_simple_address,
     _validate_photo_ids,
+    merge_engineering_values,
+    pick_default_address,
+    resolve_incident_datetime,
 )
 from fastapi import HTTPException
 
@@ -271,6 +275,163 @@ class SourceLookupTests(unittest.TestCase):
             return_value={"attributes": {"something_else": "x"}},
         ):
             self.assertEqual(_lookup_engineering(conn, record, {}), "")
+
+    def test_engineering_merges_report_comm_type(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"engineering_net_obj": "Тепловая сеть"}},
+        ):
+            self.assertEqual(
+                _lookup_engineering(conn, record, {}, report_comm_type="Теплосеть"),
+                "Тепловая сеть, Теплосеть",
+            )
+
+    def test_engineering_uses_comm_type_when_source_empty(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {}},
+        ):
+            self.assertEqual(
+                _lookup_engineering(conn, record, {}, report_comm_type="Газопровод"),
+                "Газопровод",
+            )
+
+    def test_merge_engineering_values(self) -> None:
+        self.assertEqual(merge_engineering_values("", ""), "")
+        self.assertEqual(merge_engineering_values("A", ""), "A")
+        self.assertEqual(merge_engineering_values("", "B"), "B")
+        self.assertEqual(merge_engineering_values("Теплосеть", "теплосеть"), "Теплосеть")
+        self.assertEqual(merge_engineering_values("A", "B"), "A, B")
+
+
+class IncidentDatetimeTests(unittest.TestCase):
+    def test_prefers_taken_at_over_created_at(self) -> None:
+        from app.photos.field_photo import FieldPhotoItem
+
+        photos = [
+            FieldPhotoItem(
+                id=1,
+                file_path="a.jpg",
+                banner=False,
+                created_at="2026-07-23T16:40:00+03:00",
+                photo_key=None,
+                username=None,
+                taken_at=None,
+            ),
+            FieldPhotoItem(
+                id=2,
+                file_path="b.jpg",
+                banner=False,
+                created_at="2026-07-23T10:00:00+03:00",
+                photo_key=None,
+                username=None,
+                taken_at="2026-07-22T12:30:00+03:00",
+            ),
+        ]
+        self.assertEqual(resolve_incident_datetime(photos), "22.07.2026 12:30")
+
+    def test_falls_back_to_created_at_when_taken_at_null(self) -> None:
+        from app.photos.field_photo import FieldPhotoItem
+
+        photos = [
+            FieldPhotoItem(
+                id=1,
+                file_path="a.jpg",
+                banner=False,
+                created_at="2026-07-23T16:40:00+03:00",
+                photo_key=None,
+                username=None,
+                taken_at=None,
+            ),
+        ]
+        self.assertEqual(resolve_incident_datetime(photos), "23.07.2026 16:40")
+
+    def test_preferred_ids_order_for_taken_at(self) -> None:
+        from app.photos.field_photo import FieldPhotoItem
+
+        photos = [
+            FieldPhotoItem(
+                id=1,
+                file_path="a.jpg",
+                banner=False,
+                created_at=None,
+                photo_key=None,
+                username=None,
+                taken_at="2026-07-21T09:00:00+03:00",
+            ),
+            FieldPhotoItem(
+                id=2,
+                file_path="b.jpg",
+                banner=False,
+                created_at=None,
+                photo_key=None,
+                username=None,
+                taken_at="2026-07-22T11:00:00+03:00",
+            ),
+        ]
+        self.assertEqual(
+            resolve_incident_datetime(photos, preferred_ids=[2, 1]),
+            "22.07.2026 11:00",
+        )
+
+
+class MosAddressLookupTests(unittest.TestCase):
+    def test_contains_hit(self) -> None:
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.return_value = ("Енисейская улица, дом 39А",)
+        conn.cursor.return_value.__enter__.return_value = cur
+        self.assertEqual(_lookup_mos_simple_address(conn, 37.5, 55.8), "Енисейская улица, дом 39А")
+        self.assertEqual(cur.execute.call_count, 1)
+
+    def test_contains_miss_falls_back_to_nearest(self) -> None:
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchone.side_effect = [None, ("Соловьиный проезд, дом 2",)]
+        conn.cursor.return_value.__enter__.return_value = cur
+        self.assertEqual(_lookup_mos_simple_address(conn, 37.5, 55.8), "Соловьиный проезд, дом 2")
+        self.assertEqual(cur.execute.call_count, 2)
+        nearest_sql = cur.execute.call_args_list[1][0][0]
+        self.assertIn("<->", nearest_sql)
+
+    def test_db_error_returns_empty(self) -> None:
+        conn = MagicMock()
+        conn.cursor.side_effect = OSError("db down")
+        self.assertEqual(_lookup_mos_simple_address(conn, 37.5, 55.8), "")
+
+    def test_pick_default_address_prefers_geocode_with_house(self) -> None:
+        self.assertEqual(
+            pick_default_address(
+                address_geocode="ул. А, 1",
+                address_mos="ул. Б, дом 2",
+                address_has_house=True,
+            ),
+            "ул. А, 1",
+        )
+
+    def test_pick_default_address_prefers_mos_without_house(self) -> None:
+        self.assertEqual(
+            pick_default_address(
+                address_geocode="ул. А",
+                address_mos="ул. Б, дом 2",
+                address_has_house=False,
+            ),
+            "ул. Б, дом 2",
+        )
+
+    def test_pick_default_address_geocode_when_mos_empty(self) -> None:
+        self.assertEqual(
+            pick_default_address(
+                address_geocode="ул. А",
+                address_mos="",
+                address_has_house=False,
+            ),
+            "ул. А",
+        )
 
 
 class PhotoValidationTests(unittest.TestCase):

@@ -8,6 +8,8 @@ interface OatiLetterFormProps {
   onClose: () => void
 }
 
+type AddressSource = 'geocode' | 'mos' | 'manual'
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -19,10 +21,22 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-function addressHint(draft: OatiLetterDraft): string {
-  if (!draft.address_auto) return ' (укажите вручную при необходимости)'
-  if (draft.address_has_house) return ' (авто, ближайший адрес)'
-  return ' (авто, без номера дома — дополните вручную)'
+function defaultAddressSource(draft: OatiLetterDraft): AddressSource {
+  const geocode = (draft.address_geocode ?? '').trim()
+  const mos = (draft.address_mos ?? '').trim()
+  if (geocode && draft.address_has_house) return 'geocode'
+  if (mos) return 'mos'
+  if (geocode) return 'geocode'
+  return 'manual'
+}
+
+function addressSourceHint(source: AddressSource, draft: OatiLetterDraft): string {
+  if (source === 'geocode') {
+    if (draft.address_has_house) return ' (ближайший адрес)'
+    return ' (ближайший адрес, без номера дома)'
+  }
+  if (source === 'mos') return ' (реестр адресов)'
+  return ' (вручную)'
 }
 
 export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormProps) {
@@ -34,6 +48,7 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
 
   const [executor, setExecutor] = useState('')
   const [address, setAddress] = useState('')
+  const [addressSource, setAddressSource] = useState<AddressSource>('manual')
   const [engineering, setEngineering] = useState('')
   const [description, setDescription] = useState('')
   const [violation, setViolation] = useState('')
@@ -47,6 +62,7 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         setDraft(data)
         setExecutor(data.executor ?? '')
         setAddress(data.address ?? '')
+        setAddressSource(defaultAddressSource(data))
         setEngineering(data.engineering ?? '')
         setDescription(data.description ?? '')
         setViolation(data.violation ?? '')
@@ -78,6 +94,16 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
     if (!draft?.photos.length) return false
     return draft.photos.every((p) => selectedPhotoIds.includes(p.id))
   }, [draft, selectedPhotoIds])
+
+  const geocodeAvailable = Boolean((draft?.address_geocode ?? '').trim())
+  const mosAvailable = Boolean((draft?.address_mos ?? '').trim())
+
+  const selectAddressSource = (source: AddressSource) => {
+    if (!draft) return
+    setAddressSource(source)
+    if (source === 'geocode') setAddress(draft.address_geocode ?? '')
+    else if (source === 'mos') setAddress(draft.address_mos ?? '')
+  }
 
   const togglePhoto = (id: number) => {
     setSelectedPhotoIds((prev) =>
@@ -176,25 +202,75 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                 />
               </label>
 
-              <label className="form-row">
-                <span>3. Адрес{addressHint(draft)}</span>
+              <div className="form-row oati-address-block">
+                <span>3. Адрес{addressSourceHint(addressSource, draft)}</span>
+                <div className="oati-address-sources" role="radiogroup" aria-label="Источник адреса">
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-address-source"
+                      checked={addressSource === 'geocode'}
+                      disabled={submitting || !geocodeAvailable}
+                      onChange={() => selectAddressSource('geocode')}
+                    />
+                    <span>
+                      Ближайший адрес
+                      {geocodeAvailable ? `: ${draft.address_geocode}` : ' (не найден)'}
+                    </span>
+                  </label>
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-address-source"
+                      checked={addressSource === 'mos'}
+                      disabled={submitting || !mosAvailable}
+                      onChange={() => selectAddressSource('mos')}
+                    />
+                    <span>
+                      Адрес по реестру адресов
+                      {mosAvailable ? `: ${draft.address_mos}` : ' (не найден)'}
+                    </span>
+                  </label>
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-address-source"
+                      checked={addressSource === 'manual'}
+                      disabled={submitting}
+                      onChange={() => selectAddressSource('manual')}
+                    />
+                    <span>Ввести вручную</span>
+                  </label>
+                </div>
                 <input
                   type="text"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddressSource('manual')
+                    setAddress(e.target.value)
+                  }}
                   disabled={submitting}
                   placeholder="улица, дом"
                 />
-              </label>
+              </div>
 
               <label className="form-row">
-                <span>5. Вид коммуникаций (engineering_net_obj)</span>
+                <span>5. Вид коммуникаций</span>
                 <input
                   type="text"
+                  list="oati-comms-options"
                   value={engineering}
                   onChange={(e) => setEngineering(e.target.value)}
                   disabled={submitting}
+                  placeholder="Выберите или введите вручную"
                 />
+                {draft.engineering_options.length > 0 && (
+                  <datalist id="oati-comms-options">
+                    {draft.engineering_options.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                )}
               </label>
 
               <label className="form-row">

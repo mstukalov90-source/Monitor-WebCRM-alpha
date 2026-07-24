@@ -29,7 +29,7 @@ from app.letters.docx_fill import (
 )
 from app.letters.geocode import reverse_geocode_parts
 from app.letters.map_image import classify_geometry_visibility, render_situational_map
-from app.photos.field_photo import fetch_field_photos, read_field_photo
+from app.photos.field_photo import FieldPhotoItem, fetch_field_photos, read_field_photo
 from app.photos.sftp_fetch import SftpPhotoError
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,9 @@ class LetterDraft:
     task_geometry_visibility: str = "missing"
     address_auto: bool = False
     address_has_house: bool = False
+    address_geocode: str = ""
+    address_mos: str = ""
+    engineering_options: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +113,9 @@ class LetterDraft:
             "task_geometry_visibility": self.task_geometry_visibility,
             "address_auto": self.address_auto,
             "address_has_house": self.address_has_house,
+            "address_geocode": self.address_geocode,
+            "address_mos": self.address_mos,
+            "engineering_options": list(self.engineering_options),
         }
 
 
@@ -225,7 +231,11 @@ def _lookup_executor(
     return _lookup_field_assignee(conn, record.key)
 
 
-def _lookup_engineering(conn: PgConnection, record: TaskRecord, store_cfg: dict[str, Any]) -> str:
+def _lookup_source_engineering(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+) -> str:
     """Only engineering_net_obj from source feature — never TaskRecord.type."""
     feature = _lookup_source_feature(conn, record, store_cfg)
     if not feature:
@@ -234,6 +244,50 @@ def _lookup_engineering(conn: PgConnection, record: TaskRecord, store_cfg: dict[
     if not isinstance(attrs, dict):
         return ""
     return _attr_text(attrs, "engineering_net_obj", "engineering_net", "eng_net_obj")
+
+
+def merge_engineering_values(source: str, report_comm_type: str) -> str:
+    """Combine source engineering_net_obj and reports.comm_type."""
+    a = (source or "").strip()
+    b = (report_comm_type or "").strip()
+    if a and b:
+        if a.casefold() == b.casefold():
+            return a
+        return f"{a}, {b}"
+    return a or b
+
+
+def _lookup_engineering(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+    report_comm_type: str = "",
+) -> str:
+    """Merge source engineering_net_obj with reports.comm_type for the letter draft."""
+    source = _lookup_source_engineering(conn, record, store_cfg)
+    return merge_engineering_values(source, report_comm_type)
+
+
+def _fetch_comms_full_names(conn: PgConnection) -> list[str]:
+    """Names from dict.comms_full for the form datalist; empty on any DB error."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM dict.comms_full ORDER BY name")
+            rows = cur.fetchall()
+        names: list[str] = []
+        for row in rows:
+            value = row[0] if row else None
+            text = str(value).strip() if value is not None else ""
+            if text:
+                names.append(text)
+        return names
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dict.comms_full unavailable: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return []
 
 
 def _lookup_task_geometry(
@@ -253,12 +307,13 @@ def _lookup_task_geometry(
     return geometry if isinstance(geometry, dict) else None
 
 
-def _load_report_geometry(
+def _load_report_row(
     conn: PgConnection,
     task_key: str,
     report_id: int,
     store_cfg: dict[str, Any],
 ) -> dict[str, Any]:
+    """Load mggt_field.reports row for task/report; ensures geometry is present."""
     rows = fetch_field_report_rows(conn, task_key, store_cfg)
     for row in rows:
         rid = row.get("id")
@@ -267,10 +322,118 @@ def _load_report_geometry(
         geometry = row.get("_geometry")
         if isinstance(geometry, str):
             geometry = json.loads(geometry)
-        if not isinstance(geometry, dict):
+            row = dict(row)
+            row["_geometry"] = geometry
+        if not isinstance(row.get("_geometry"), dict):
             raise LetterError("У выбранного отчёта отсутствует геометрия", status_code=400)
-        return geometry
+        return row
     raise LetterError("Отчёт не найден или не связан с задачей", status_code=404)
+
+
+def _load_report_geometry(
+    conn: PgConnection,
+    task_key: str,
+    report_id: int,
+    store_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    return _load_report_row(conn, task_key, report_id, store_cfg)["_geometry"]
+
+
+def _lookup_mos_simple_address(conn: PgConnection, lon: float, lat: float) -> str:
+    """simple_address from data_mos.items_60562: contains, else nearest by boundary."""
+    point_sql = "ST_SetSRID(ST_MakePoint(%s, %s), 4326)"
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT simple_address
+                FROM data_mos.items_60562
+                WHERE geom IS NOT NULL
+                  AND simple_address IS NOT NULL
+                  AND TRIM(simple_address) <> ''
+                  AND ST_Contains(geom, {point_sql})
+                ORDER BY ST_Area(geom::geography) ASC
+                LIMIT 1
+                """,
+                (lon, lat),
+            )
+            row = cur.fetchone()
+            if row and row[0] and str(row[0]).strip():
+                return str(row[0]).strip()
+
+            cur.execute(
+                f"""
+                SELECT simple_address
+                FROM data_mos.items_60562
+                WHERE geom IS NOT NULL
+                  AND simple_address IS NOT NULL
+                  AND TRIM(simple_address) <> ''
+                ORDER BY geom <-> {point_sql}
+                LIMIT 1
+                """,
+                (lon, lat),
+            )
+            row = cur.fetchone()
+            if row and row[0] and str(row[0]).strip():
+                return str(row[0]).strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("data_mos.items_60562 address lookup failed: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+    return ""
+
+
+def pick_default_address(
+    *,
+    address_geocode: str,
+    address_mos: str,
+    address_has_house: bool,
+) -> str:
+    """Default address: geocode with house > mos > geocode without house > empty."""
+    geocode = (address_geocode or "").strip()
+    mos = (address_mos or "").strip()
+    if geocode and address_has_house:
+        return geocode
+    if mos:
+        return mos
+    if geocode:
+        return geocode
+    return ""
+
+
+def _report_comm_type(row: dict[str, Any]) -> str:
+    value = row.get("comm_type")
+    return str(value).strip() if value is not None and str(value).strip() else ""
+
+
+def resolve_incident_datetime(
+    photos: list[FieldPhotoItem],
+    *,
+    preferred_ids: list[int] | None = None,
+) -> str:
+    """Дата фиксации: taken_at любой фото reports, иначе created_at (как раньше)."""
+    by_id = {p.id: p for p in photos}
+    ordered: list[FieldPhotoItem] = []
+    seen: set[int] = set()
+    if preferred_ids:
+        for pid in preferred_ids:
+            photo = by_id.get(pid)
+            if photo is not None and photo.id not in seen:
+                seen.add(photo.id)
+                ordered.append(photo)
+    for photo in photos:
+        if photo.id not in seen:
+            ordered.append(photo)
+
+    for photo in ordered:
+        if photo.taken_at:
+            return format_ru_datetime(photo.taken_at)
+    for photo in ordered:
+        if photo.created_at:
+            return format_ru_datetime(photo.created_at)
+    return ""
 
 
 def _map_warning_for_visibility(visibility: str) -> str | None:
@@ -303,7 +466,8 @@ def build_letter_draft(
     if record is None:
         raise LetterError("Задача не найдена", status_code=404)
 
-    report_geometry = _load_report_geometry(conn, task_key, report_id, store_cfg)
+    report_row = _load_report_row(conn, task_key, report_id, store_cfg)
+    report_geometry = report_row["_geometry"]
     lon, lat = _geometry_centroid_lonlat(report_geometry)
 
     photos_result = fetch_field_photos(conn, task_key, report_id=report_id)
@@ -321,17 +485,20 @@ def build_letter_draft(
             )
         )
 
-    incident_dt = ""
-    for photo in photos_result.photos:
-        if photo.created_at:
-            incident_dt = format_ru_datetime(photo.created_at)
-            break
+    incident_dt = resolve_incident_datetime(photos_result.photos)
 
     task_geometry = _lookup_task_geometry(conn, record, store_cfg)
     visibility = classify_geometry_visibility(task_geometry, lon, lat)
 
     geo = reverse_geocode_parts(lon, lat, settings)
     description = (photos_result.comment or "").strip()
+    address_geocode = (geo.address or "").strip()
+    address_mos = _lookup_mos_simple_address(conn, lon, lat)
+    address = pick_default_address(
+        address_geocode=address_geocode,
+        address_mos=address_mos,
+        address_has_house=geo.has_house,
+    )
 
     return LetterDraft(
         task_key=task_key,
@@ -344,15 +511,23 @@ def build_letter_draft(
         lat=lat,
         incident_datetime=incident_dt,
         executor=_lookup_executor(conn, record, store_cfg),
-        address=geo.address,
-        engineering=_lookup_engineering(conn, record, store_cfg),
+        address=address,
+        engineering=_lookup_engineering(
+            conn,
+            record,
+            store_cfg,
+            report_comm_type=_report_comm_type(report_row),
+        ),
         description=description,
         violation=DEFAULT_VIOLATION,
         photos=photos,
         map_warning=_map_warning_for_visibility(visibility),
         task_geometry_visibility=visibility,
-        address_auto=bool(geo.address),
+        address_auto=bool(address_geocode),
         address_has_house=geo.has_house,
+        address_geocode=address_geocode,
+        address_mos=address_mos,
+        engineering_options=_fetch_comms_full_names(conn),
     )
 
 
@@ -443,17 +618,10 @@ def generate_letter_docx(
     photos_result = fetch_field_photos(conn, task_key, report_id=report_id)
     photos_by_id = {p.id: p for p in photos_result.photos}
 
-    incident_dt = ""
-    for pid in ordered_ids:
-        photo = photos_by_id.get(pid)
-        if photo and photo.created_at:
-            incident_dt = format_ru_datetime(photo.created_at)
-            break
-    if not incident_dt:
-        for photo in photos_result.photos:
-            if photo.created_at:
-                incident_dt = format_ru_datetime(photo.created_at)
-                break
+    incident_dt = resolve_incident_datetime(
+        photos_result.photos,
+        preferred_ids=ordered_ids,
+    )
 
     geo = reverse_geocode_parts(lon, lat, settings)
     street = geo.street

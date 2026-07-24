@@ -332,6 +332,9 @@ export interface OatiLetterDraft {
   task_geometry_visibility: string
   address_auto: boolean
   address_has_house: boolean
+  address_geocode: string
+  address_mos: string
+  engineering_options: string[]
 }
 
 export interface OatiLetterGeneratePayload {

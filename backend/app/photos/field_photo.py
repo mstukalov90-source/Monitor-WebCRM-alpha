@@ -37,6 +37,7 @@ class FieldPhotoItem:
     created_at: str | None
     photo_key: str | None
     username: str | None
+    taken_at: str | None = None
 
     def to_dict(self, image_url: str) -> dict[str, Any]:
         return {
@@ -44,6 +45,7 @@ class FieldPhotoItem:
             "file_path": self.file_path,
             "banner": self.banner,
             "created_at": self.created_at,
+            "taken_at": self.taken_at,
             "photo_key": self.photo_key,
             "username": self.username,
             "label": BANNER_LABEL if self.banner else None,
@@ -78,6 +80,9 @@ def _format_created_at(value: Any) -> str | None:
     if isinstance(value, datetime):
         return value.isoformat()
     return str(value)
+
+
+_format_timestamp = _format_created_at
 
 
 def _normalize_comment(value: Any) -> str | None:
@@ -150,10 +155,10 @@ def fetch_field_photos(
                     FROM target t
                 )
                 SELECT DISTINCT ON (p.id)
-                       p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                       p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                 FROM (
                     -- New model / unique task: all photos for the report's task
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                     FROM task_scope t
                     JOIN mggt_field.photos p ON p.task = t.task
                     WHERE t.reports_same_task = 1
@@ -165,7 +170,7 @@ def fetch_field_photos(
                     UNION ALL
 
                     -- Shared-task legacy: banners for the session task
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                     FROM task_scope t
                     JOIN mggt_field.photos p
                       ON p.banner
@@ -179,7 +184,7 @@ def fetch_field_photos(
                     UNION ALL
 
                     -- Legacy geometry photo via reports.photo = photos.photo_key
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                     FROM task_scope t
                     JOIN mggt_field.photos p ON p.photo_key = t.photo
                     WHERE t.photo IS NOT NULL
@@ -212,9 +217,9 @@ def fetch_field_photos(
             cur.execute(
                 """
                 SELECT DISTINCT ON (p.id)
-                       p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                       p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                 FROM (
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                     FROM mggt_field.photos p
                     WHERE p.file_path IS NOT NULL
                       AND TRIM(p.file_path) <> ''
@@ -228,7 +233,7 @@ def fetch_field_photos(
 
                     UNION ALL
 
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.taken_at, p.photo_key, p.username
                     FROM mggt_field.reports r
                     JOIN mggt_field.photos p ON p.photo_key = r.photo
                     WHERE r.tasks_key = %s::uuid
@@ -262,7 +267,8 @@ def fetch_field_photos(
                 id=int(row["id"]),
                 file_path=Path(file_path).name,
                 banner=bool(row["banner"]),
-                created_at=_format_created_at(row.get("created_at")),
+                created_at=_format_timestamp(row.get("created_at")),
+                taken_at=_format_timestamp(row.get("taken_at")),
                 photo_key=row.get("photo_key"),
                 username=row.get("username"),
             )

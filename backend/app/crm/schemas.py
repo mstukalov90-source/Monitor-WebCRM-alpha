@@ -228,6 +228,7 @@ class FieldPhotoOut(BaseModel):
     file_path: str
     banner: bool
     created_at: str | None = None
+    taken_at: str | None = None
     photo_key: str | None = None
     username: str | None = None
     label: str | None = None
@@ -369,6 +370,9 @@ class OatiLetterDraftOut(BaseModel):
     task_geometry_visibility: str = "missing"
     address_auto: bool = False
     address_has_house: bool = False
+    address_geocode: str = ""
+    address_mos: str = ""
+    engineering_options: list[str] = Field(default_factory=list)
 
 
 class OatiLetterGenerateRequest(BaseModel):

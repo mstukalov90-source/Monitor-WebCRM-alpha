@@ -1427,6 +1427,36 @@ body,
   box-sizing: border-box;
 }
 
+.oati-address-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.oati-address-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.oati-address-source {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.oati-address-source input[type='radio'] {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.oati-address-source input[type='radio']:disabled + span {
+  opacity: 0.55;
+}
+
 .oati-letter-photos {
   margin-bottom: 16px;
 }
