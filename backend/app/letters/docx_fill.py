@@ -9,13 +9,18 @@ from zoneinfo import ZoneInfo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from docx.text.paragraph import Paragraph
+from docx.text.run import Run
 
 MSK = ZoneInfo("Europe/Moscow")
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "oati_letter.docx"
 MAP_WIDTH_CM_DOCX = 16.0
+BODY_FONT_NAME = "Times New Roman"
+BODY_FONT_SIZE = Pt(14)
 
 DEFAULT_VIOLATION = (
     "нормативный правовой акт города Москвы, требования которого были нарушены - "
@@ -109,23 +114,49 @@ def _ensure_structural_breaks(text: str) -> str:
     return result
 
 
-def _set_paragraph_text(paragraph: Paragraph, text: str) -> None:
-    """Replace paragraph runs; ``\\n`` becomes a Word soft line break."""
-    parts = text.split("\n")
-    if not paragraph.runs:
-        run = paragraph.add_run(parts[0])
-        for part in parts[1:]:
-            run.add_break(WD_BREAK.LINE)
-            run = paragraph.add_run(part)
-        return
+def _apply_body_font(run: Run) -> None:
+    """Force Times New Roman 14 on a run (incl. complex-script / East Asian)."""
+    run.font.name = BODY_FONT_NAME
+    run.font.size = BODY_FONT_SIZE
+    r_pr = run._element.get_or_add_rPr()
+    r_fonts = r_pr.get_or_add_rFonts()
+    r_fonts.set(qn("w:ascii"), BODY_FONT_NAME)
+    r_fonts.set(qn("w:hAnsi"), BODY_FONT_NAME)
+    r_fonts.set(qn("w:cs"), BODY_FONT_NAME)
+    r_fonts.set(qn("w:eastAsia"), BODY_FONT_NAME)
+    # Mirror size for complex script (half-points: 14pt → 28).
+    existing = r_pr.find(qn("w:szCs"))
+    if existing is None:
+        existing = OxmlElement("w:szCs")
+        r_pr.append(existing)
+    existing.set(qn("w:val"), "28")
 
-    paragraph.runs[0].text = parts[0]
-    for run in paragraph.runs[1:]:
-        run.text = ""
-    run = paragraph.runs[0]
-    for part in parts[1:]:
-        run.add_break(WD_BREAK.LINE)
+
+def _clear_paragraph_runs(paragraph: Paragraph) -> None:
+    p_el = paragraph._p
+    for child in list(p_el):
+        if child.tag == qn("w:r"):
+            p_el.remove(child)
+
+
+def _set_paragraph_text(paragraph: Paragraph, text: str) -> None:
+    """Replace paragraph runs; ``\\n`` becomes a Word soft line break at TNR 14."""
+    _clear_paragraph_runs(paragraph)
+    parts = text.split("\n")
+    for i, part in enumerate(parts):
         run = paragraph.add_run(part)
+        _apply_body_font(run)
+        if i < len(parts) - 1:
+            run.add_break(WD_BREAK.LINE)
+
+
+def _normalize_body_paragraph_fonts(document: Document) -> None:
+    """Ensure letter body paragraphs (not letterhead tables) are TNR 14."""
+    for paragraph in document.paragraphs:
+        if not paragraph.text.strip():
+            continue
+        for run in paragraph.runs:
+            _apply_body_font(run)
 
 
 def _replace_in_paragraph(paragraph: Paragraph, mapping: dict[str, str]) -> None:
@@ -186,6 +217,7 @@ def fill_letter_template(
     }
     for paragraph in _iter_all_paragraphs(document):
         _replace_in_paragraph(paragraph, unique_map)
+    _normalize_body_paragraph_fonts(document)
     return document
 
 
@@ -201,7 +233,7 @@ def append_map_page(document: Document, map_png: bytes, title: str = "Ситуа
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = heading.add_run(title)
     run.bold = True
-    run.font.size = Pt(14)
+    _apply_body_font(run)
 
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -211,6 +243,7 @@ def append_map_page(document: Document, map_png: bytes, title: str = "Ситуа
     caption = document.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
     cap = caption.add_run("Масштаб 1:1000. Красный маркер — объект reports; синий — объект задачи.")
+    cap.font.name = BODY_FONT_NAME
     cap.font.size = Pt(9)
 
 
@@ -223,7 +256,8 @@ def append_photo_pages(
         _add_page_break(document)
         p = document.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.add_run("Фотофиксация: фотографии не выбраны.")
+        run = p.add_run("Фотофиксация: фотографии не выбраны.")
+        _apply_body_font(run)
         return
 
     _add_page_break(document)
@@ -231,7 +265,7 @@ def append_photo_pages(
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = heading.add_run("Фотофиксация")
     run.bold = True
-    run.font.size = Pt(14)
+    _apply_body_font(run)
 
     for index, (image_bytes, label) in enumerate(photos):
         if index > 0 and index % 2 == 0:
@@ -240,11 +274,12 @@ def append_photo_pages(
             h.alignment = WD_ALIGN_PARAGRAPH.CENTER
             r = h.add_run("Фотофиксация (продолжение)")
             r.bold = True
-            r.font.size = Pt(14)
+            _apply_body_font(r)
 
         caption = document.add_paragraph()
         caption.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        caption.add_run(label)
+        label_run = caption.add_run(label)
+        _apply_body_font(label_run)
 
         paragraph = document.add_paragraph()
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER

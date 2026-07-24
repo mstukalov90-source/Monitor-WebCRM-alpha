@@ -11,6 +11,8 @@ from xml.etree import ElementTree as ET
 from app.auth.deps import require_manager_or_admin
 from app.auth.session import UserSession
 from app.letters.docx_fill import (
+    BODY_FONT_NAME,
+    BODY_FONT_SIZE,
     DEFAULT_VIOLATION,
     PH_DESCRIPTION,
     PH_DOC_DATE,
@@ -105,6 +107,29 @@ class DocxFillTests(unittest.TestCase):
             "\n7. Данные, указывающие на признаки наличия события административного правонарушения:",
             joined,
         )
+
+        # Body text (report + appendix) must be Times New Roman 14.
+        body_markers = (
+            "ГБУ «Мосгоргеотрест»",
+            "Отчёт об инциденте",
+            "1. Сведения о производителе работ",
+            "2. Дата и время",
+            "7. Данные, указывающие",
+            "Приложение:",
+            "1. Ситуационный план:",
+        )
+        for paragraph in doc.paragraphs:
+            if not any(m in paragraph.text for m in body_markers):
+                continue
+            for run in paragraph.runs:
+                if not (run.text or "").strip():
+                    continue
+                self.assertEqual(run.font.name, BODY_FONT_NAME, msg=repr(run.text[:40]))
+                self.assertEqual(
+                    run.font.size.pt if run.font.size else None,
+                    BODY_FONT_SIZE.pt,
+                    msg=repr(run.text[:40]),
+                )
 
     def test_format_helpers(self) -> None:
         self.assertEqual(format_wgs84(37.5, 55.8), "55.800000, 37.500000")
