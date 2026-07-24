@@ -1332,6 +1332,13 @@ body,
   overflow-y: auto;
 }
 
+.field-materials-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
 .field-materials-section-title {
   margin: 0 0 8px;
   font-size: 0.95rem;
@@ -1382,6 +1389,104 @@ body,
 .field-materials-nav {
   display: flex;
   gap: 6px;
+}
+
+.field-materials-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.oati-letter-modal {
+  max-width: 760px;
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.oati-letter-meta {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  font-size: 0.92rem;
+}
+
+.oati-letter-meta p {
+  margin: 0;
+}
+
+.oati-letter-form-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.oati-letter-form-grid textarea,
+.oati-letter-form-grid input[type='text'] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.oati-letter-photos {
+  margin-bottom: 16px;
+}
+
+.oati-letter-photo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.oati-letter-photo-item {
+  margin: 0;
+}
+
+.oati-letter-photo-label {
+  display: grid;
+  grid-template-columns: auto 72px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.oati-letter-photo-thumb {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #e2e8f0;
+}
+
+.oati-letter-photo-meta {
+  font-size: 0.85rem;
+}
+
+.oati-letter-actions {
+  justify-content: flex-end;
+}
+
+.warning-banner {
+  background: #fff7ed;
+  color: #9a3412;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+
+.success-banner {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
 }
 
 .resize-handle {

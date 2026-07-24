@@ -24,6 +24,8 @@ import type {
   BulkStatusResult,
   OrderTracksResult,
   EmployeeLocationsResult,
+  OatiLetterDraft,
+  OatiLetterGeneratePayload,
 } from '../types'
 
 const API_BASE = ''
@@ -384,6 +386,77 @@ export function fetchFieldReports(
   taskKey: string,
 ): Promise<{ reports: FieldReportFeature[] }> {
   return request(`/api/tasks/${encodeURIComponent(taskKey)}/field-reports`)
+}
+
+export function fetchOatiLetterDraft(
+  taskKey: string,
+  reportId: number,
+): Promise<OatiLetterDraft> {
+  return request(
+    `/api/tasks/${encodeURIComponent(taskKey)}/field-reports/${reportId}/letter-draft`,
+  )
+}
+
+export async function generateOatiLetter(
+  taskKey: string,
+  reportId: number,
+  payload: OatiLetterGeneratePayload,
+): Promise<{ blob: Blob; filename: string; fid: number | null }> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 120_000)
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/tasks/${encodeURIComponent(taskKey)}/field-reports/${reportId}/letters`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      },
+    )
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      try {
+        const parsed = JSON.parse(text) as { detail?: string }
+        throw new Error(parsed.detail || text || res.statusText)
+      } catch (e) {
+        if (e instanceof Error && e.message !== text && !e.message.startsWith('Unexpected token')) {
+          throw e
+        }
+        throw new Error(text || res.statusText)
+      }
+    }
+    const blob = await res.blob()
+    const fidHeader = res.headers.get('X-Oati-Letter-Fid')
+    const fid = fidHeader ? Number(fidHeader) : null
+    let filename = fid != null && !Number.isNaN(fid) ? `Письмо_ОАТИ_${fid}.docx` : 'Письмо_ОАТИ.docx'
+    const disposition = res.headers.get('Content-Disposition')
+    if (disposition) {
+      const utfMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+      const plainMatch = /filename="?([^";]+)"?/i.exec(disposition)
+      if (utfMatch?.[1]) {
+        try {
+          filename = decodeURIComponent(utfMatch[1])
+        } catch {
+          filename = utfMatch[1]
+        }
+      } else if (plainMatch?.[1]) {
+        filename = plainMatch[1]
+      }
+    }
+    return { blob, filename, fid: fid != null && !Number.isNaN(fid) ? fid : null }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера')
+    }
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 export function fieldPhotoImageUrl(filePath: string): string {

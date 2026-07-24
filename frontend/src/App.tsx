@@ -805,6 +805,7 @@ function App() {
         <FieldMaterialsModal
           taskKey={fieldMaterials.taskKey}
           reportId={fieldMaterials.reportId}
+          canGenerateLetter={user.can_manage_personnel}
           onClose={() => setFieldMaterials(null)}
         />
       )}

@@ -837,6 +837,7 @@ export function TaskEditModal({
       {fieldMaterialsKey && (
         <FieldMaterialsModal
           taskKey={fieldMaterialsKey}
+          canGenerateLetter={canManagePersonnel}
           onClose={() => setFieldMaterialsKey(null)}
         />
       )}

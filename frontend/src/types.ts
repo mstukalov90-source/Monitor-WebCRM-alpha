@@ -303,6 +303,46 @@ export interface FieldReportFeature {
   photo_key?: string | null
 }
 
+export interface OatiLetterPhoto {
+  id: number
+  file_path: string
+  banner: boolean
+  created_at?: string | null
+  label?: string | null
+  image_url: string
+}
+
+export interface OatiLetterDraft {
+  task_key: string
+  report_id: number
+  rayon: string
+  street: string
+  today: string
+  coordinates: string
+  lon: number
+  lat: number
+  incident_datetime: string
+  executor: string
+  address: string
+  engineering: string
+  description: string
+  violation: string
+  photos: OatiLetterPhoto[]
+  map_warning?: string | null
+  task_geometry_visibility: string
+  address_auto: boolean
+  address_has_house: boolean
+}
+
+export interface OatiLetterGeneratePayload {
+  executor: string
+  address: string
+  engineering: string
+  description: string
+  violation: string
+  photo_ids: number[]
+}
+
 export interface MissingLink {
   link_column: string
   business_id: string

@@ -96,10 +96,15 @@ def fetch_field_photos(
 ) -> FieldPhotosResult:
     """Load field photos for a CRM task.
 
-    Per-report geometry photos are linked via ``reports.photo = photos.photo_key``.
-    Banner photos (``photos.banner``) share the field-session ``task`` id and usually
-    do **not** appear in ``reports.photo`` — include them both for a single report
-    (via that report's ``task``) and for the whole-task view.
+    Canonical links:
+    - ``crm.tasks.key`` → ``mggt_field.reports.tasks_key``
+    - ``mggt_field.reports.task`` → ``mggt_field.photos.task`` (N photos per report)
+
+    Legacy: ``reports.photo = photos.photo_key`` — always unioned so old rows stay visible.
+
+    Per-report scoping: when several reports share one ``task`` (legacy sessions),
+    only the geometry photo via ``photo_key`` plus banners for that ``task`` are shown.
+    When the report's ``task`` is unique, all photos for that ``task`` are returned.
     """
     del report_task  # legacy query param ignored; use report_id
 
@@ -122,39 +127,69 @@ def fetch_field_photos(
             if comment_row:
                 comment = _normalize_comment(comment_row.get("comment"))
 
-            # Geometry photo via photo_key + session banner via the report's task.
+            # Unique task → all photos by task + legacy photo_key.
+            # Shared task → photo_key geometry + banners by task + legacy photo_key.
             cur.execute(
                 """
+                WITH target AS (
+                    SELECT r.id, r.task, r.photo, r.tasks_key
+                    FROM mggt_field.reports r
+                    WHERE r.id = %s
+                      AND r.tasks_key = %s::uuid
+                ),
+                task_scope AS (
+                    SELECT
+                        t.*,
+                        (
+                            SELECT COUNT(*)::int
+                            FROM mggt_field.reports r2
+                            WHERE r2.task = t.task
+                              AND t.task IS NOT NULL
+                              AND TRIM(t.task) <> ''
+                        ) AS reports_same_task
+                    FROM target t
+                )
                 SELECT DISTINCT ON (p.id)
                        p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
                 FROM (
+                    -- New model / unique task: all photos for the report's task
                     SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
-                    FROM mggt_field.reports r
-                    JOIN mggt_field.photos p ON p.photo_key = r.photo
-                    WHERE r.id = %s
-                      AND r.tasks_key = %s::uuid
-                      AND r.photo IS NOT NULL
-                      AND TRIM(r.photo) <> ''
+                    FROM task_scope t
+                    JOIN mggt_field.photos p ON p.task = t.task
+                    WHERE t.reports_same_task = 1
+                      AND t.task IS NOT NULL
+                      AND TRIM(t.task) <> ''
                       AND p.file_path IS NOT NULL
                       AND TRIM(p.file_path) <> ''
 
                     UNION ALL
 
+                    -- Shared-task legacy: banners for the session task
                     SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
-                    FROM mggt_field.reports r
+                    FROM task_scope t
                     JOIN mggt_field.photos p
                       ON p.banner
-                     AND p.task = r.task
-                    WHERE r.id = %s
-                      AND r.tasks_key = %s::uuid
-                      AND r.task IS NOT NULL
-                      AND TRIM(r.task) <> ''
+                     AND p.task = t.task
+                    WHERE t.reports_same_task > 1
+                      AND t.task IS NOT NULL
+                      AND TRIM(t.task) <> ''
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
+
+                    UNION ALL
+
+                    -- Legacy geometry photo via reports.photo = photos.photo_key
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM task_scope t
+                    JOIN mggt_field.photos p ON p.photo_key = t.photo
+                    WHERE t.photo IS NOT NULL
+                      AND TRIM(t.photo) <> ''
                       AND p.file_path IS NOT NULL
                       AND TRIM(p.file_path) <> ''
                 ) p
                 ORDER BY p.id
                 """,
-                (report_id, task_key, report_id, task_key),
+                (report_id, task_key),
             )
         else:
             cur.execute(
@@ -173,27 +208,15 @@ def fetch_field_photos(
             if comment_row:
                 comment = _normalize_comment(comment_row.get("comment"))
 
-            # Geometry photos via photo_key + session banner photos via task.
+            # Whole-task: all photos by report tasks + legacy photo_key links.
             cur.execute(
                 """
                 SELECT DISTINCT ON (p.id)
                        p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
                 FROM (
                     SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
-                    FROM mggt_field.reports r
-                    JOIN mggt_field.photos p ON p.photo_key = r.photo
-                    WHERE r.tasks_key = %s::uuid
-                      AND r.photo IS NOT NULL
-                      AND TRIM(r.photo) <> ''
-                      AND p.file_path IS NOT NULL
-                      AND TRIM(p.file_path) <> ''
-
-                    UNION ALL
-
-                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
                     FROM mggt_field.photos p
-                    WHERE p.banner
-                      AND p.file_path IS NOT NULL
+                    WHERE p.file_path IS NOT NULL
                       AND TRIM(p.file_path) <> ''
                       AND p.task IN (
                           SELECT DISTINCT r.task
@@ -202,6 +225,17 @@ def fetch_field_photos(
                             AND r.task IS NOT NULL
                             AND TRIM(r.task) <> ''
                       )
+
+                    UNION ALL
+
+                    SELECT p.id, p.file_path, p.banner, p.created_at, p.photo_key, p.username
+                    FROM mggt_field.reports r
+                    JOIN mggt_field.photos p ON p.photo_key = r.photo
+                    WHERE r.tasks_key = %s::uuid
+                      AND r.photo IS NOT NULL
+                      AND TRIM(r.photo) <> ''
+                      AND p.file_path IS NOT NULL
+                      AND TRIM(p.file_path) <> ''
                 ) p
                 ORDER BY p.id
                 """,

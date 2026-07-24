@@ -338,3 +338,43 @@ class EmployeeLocationsResultOut(BaseModel):
     district_name: str
     locations: list[EmployeeLocationOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class OatiLetterPhotoOut(BaseModel):
+    id: int
+    file_path: str
+    banner: bool = False
+    created_at: str | None = None
+    label: str | None = None
+    image_url: str
+
+
+class OatiLetterDraftOut(BaseModel):
+    task_key: str
+    report_id: int
+    rayon: str = ""
+    street: str = ""
+    today: str = ""
+    coordinates: str = ""
+    lon: float
+    lat: float
+    incident_datetime: str = ""
+    executor: str = ""
+    address: str = ""
+    engineering: str = ""
+    description: str = ""
+    violation: str = ""
+    photos: list[OatiLetterPhotoOut] = Field(default_factory=list)
+    map_warning: str | None = None
+    task_geometry_visibility: str = "missing"
+    address_auto: bool = False
+    address_has_house: bool = False
+
+
+class OatiLetterGenerateRequest(BaseModel):
+    executor: str = ""
+    address: str = ""
+    engineering: str = ""
+    description: str = ""
+    violation: str = ""
+    photo_ids: list[int] = Field(default_factory=list)

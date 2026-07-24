@@ -21,6 +21,10 @@ merge_env_key() {
 
 merge_env_key FIELD_PHOTO_STORAGE_DIR /opt/monitor/mggtfield_photo
 merge_env_key FIELD_PHOTO_SFTP_REMOTE_DIR /opt/monitor/mggtfield_photo
+merge_env_key OSM_TILE_URL 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+merge_env_key NOMINATIM_URL 'https://nominatim.openstreetmap.org/reverse'
+merge_env_key GEOCODE_USER_AGENT '"MONITOR-WebCRM/1.0 (oati-letters)"'
+merge_env_key GEOCODE_TIMEOUT_SECONDS 8.0
 
 cd backend
 source venv/bin/activate
