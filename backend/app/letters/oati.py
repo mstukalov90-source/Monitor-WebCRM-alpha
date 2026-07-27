@@ -26,6 +26,7 @@ from app.letters.docx_fill import (
     format_ru_date,
     format_ru_datetime,
     format_wgs84,
+    letter_download_filename,
 )
 from app.letters.geocode import reverse_geocode_parts
 from app.letters.map_image import (
@@ -718,7 +719,7 @@ def generate_letter_docx(
 
     append_photo_pages(document, photo_payloads)
 
-    filename = f"Письмо_ОАТИ_{fid}.docx"
+    filename = letter_download_filename(street=street or "__________", today=today, fid=fid)
     return fid, document_to_bytes(document), filename
 
 

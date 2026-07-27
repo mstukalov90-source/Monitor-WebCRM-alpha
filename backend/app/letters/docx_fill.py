@@ -102,6 +102,16 @@ def format_wgs84(lon: float, lat: float) -> str:
     return f"{lat:.6f}, {lon:.6f}"
 
 
+def letter_download_filename(*, street: str, today: str, fid: int | str) -> str:
+    """Download name: ``Об инциденте {street} от {today} №{fid}.docx``."""
+    street_part = (street or "").strip() or "__________"
+    for ch in '<>:"/\\|?*':
+        street_part = street_part.replace(ch, "")
+    street_part = " ".join(street_part.split())
+    name = f"Об инциденте {street_part} от {today} №{fid}.docx"
+    return " ".join(name.split())
+
+
 def yandex_maps_url(lon: float, lat: float) -> str:
     return f"https://yandex.ru/maps/?pt={lon},{lat}&z=17&l=map"
 

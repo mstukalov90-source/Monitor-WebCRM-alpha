@@ -18,6 +18,7 @@ from app.letters.docx_fill import (
     PH_DOC_DATE,
     PH_STREET,
     PH_VIOLATION,
+    TEMPLATE_PATH,
     append_map_page,
     append_photo_pages,
     document_to_bytes,
@@ -25,6 +26,7 @@ from app.letters.docx_fill import (
     format_ru_date,
     format_ru_datetime,
     format_wgs84,
+    letter_download_filename,
     map_caption_text,
     yandex_maps_url,
 )
@@ -194,6 +196,25 @@ class DocxFillTests(unittest.TestCase):
         self.assertEqual(format_wgs84(37.5, 55.8), "55.800000, 37.500000")
         self.assertRegex(format_ru_date(), r"\d{2}\.\d{2}\.\d{4}")
         self.assertEqual(format_ru_datetime("2026-07-22T12:30:00+03:00"), "22.07.2026 12:30")
+        self.assertEqual(
+            letter_download_filename(street="улица Фомичёвой", today="27.07.2026", fid=15),
+            "Об инциденте улица Фомичёвой от 27.07.2026 №15.docx",
+        )
+        self.assertEqual(
+            letter_download_filename(street='ул. A/B:C', today="01.01.2026", fid=1),
+            "Об инциденте ул. ABC от 01.01.2026 №1.docx",
+        )
+
+    def test_template_has_no_empty_tables(self) -> None:
+        from docx import Document
+
+        doc = Document(str(TEMPLATE_PATH))
+        self.assertEqual(len(doc.tables), 2)
+        for table in doc.tables:
+            text = "\n".join(
+                p.text for row in table.rows for cell in row.cells for p in cell.paragraphs
+            ).strip()
+            self.assertTrue(text, msg="empty table left in letter template")
 
 
 class MapScaleTests(unittest.TestCase):
