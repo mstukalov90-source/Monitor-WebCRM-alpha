@@ -558,11 +558,12 @@ const REPORT_CONNECTOR_STYLE: L.PolylineOptions = {
   interactive: false,
 }
 
-const REPORT_TRIANGLE_ICON = L.divIcon({
+const REPORT_ICON_SIZE: [number, number] = [28, 25]
+const REPORT_ICON = L.icon({
+  iconUrl: '/report.png',
+  iconSize: REPORT_ICON_SIZE,
+  iconAnchor: [REPORT_ICON_SIZE[0] / 2, REPORT_ICON_SIZE[1]],
   className: 'field-report-marker',
-  html: '<span class="field-report-triangle" aria-hidden="true"></span>',
-  iconSize: [18, 16],
-  iconAnchor: [9, 14],
 })
 
 function isPointGeometry(geometry: GeoJSON.Geometry): boolean {
@@ -673,7 +674,7 @@ function addFieldReportMarker(
   }
 
   const marker = L.marker(anchor, {
-    icon: REPORT_TRIANGLE_ICON,
+    icon: REPORT_ICON,
     interactive: true,
     keyboard: true,
     title: 'Полевой отчёт — фото',

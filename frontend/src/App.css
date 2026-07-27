@@ -935,6 +935,32 @@ body,
   font-size: 0.9rem;
 }
 
+.form-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.form-section-toggle h4 {
+  margin: 0;
+}
+
+.form-section-toggle-icon {
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.35rem;
+  flex-shrink: 0;
+}
+
 .form-row {
   display: flex;
   flex-direction: column;
@@ -1120,22 +1146,11 @@ body,
   border: none !important;
 }
 
-.field-report-triangle {
-  display: block;
-  width: 0;
-  height: 0;
-  border-left: 9px solid transparent;
-  border-right: 9px solid transparent;
-  border-bottom: 16px solid #111111;
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
-  cursor: pointer;
-}
-
-.legend-swatch-report-triangle {
-  width: 0 !important;
-  height: 0 !important;
-  border-radius: 0 !important;
-  box-sizing: content-box;
+.legend-swatch-report {
+  width: 1.25em;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0;
 }
 
 .field-observed {
@@ -1459,6 +1474,39 @@ body,
 
 .oati-letter-photos {
   margin-bottom: 16px;
+}
+
+.oati-letter-map-scale {
+  margin-bottom: 16px;
+}
+
+.oati-map-scale-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.oati-map-scale-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.oati-map-preview {
+  min-height: 120px;
+}
+
+.oati-map-preview-img {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  border: 1px solid #dde3ea;
+  border-radius: 6px;
+  background: #f1f5f9;
 }
 
 .oati-letter-photo-list {

@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.auth.deps import require_manager_or_admin
 from app.auth.session import UserSession
 from app.crm.schemas import OatiLetterDraftOut, OatiLetterGenerateRequest
 from app.db import get_connection
-from app.letters.oati import LetterError, build_letter_draft, generate_letter_docx
+from app.letters.map_image import DEFAULT_MAP_SCALE
+from app.letters.oati import (
+    LetterError,
+    build_letter_draft,
+    generate_letter_docx,
+    render_letter_map_preview,
+)
 
 router = APIRouter(
     prefix="/api/tasks",
@@ -34,6 +40,21 @@ def get_oati_letter_draft(
     return OatiLetterDraftOut(**draft.to_dict())
 
 
+@router.get("/{key}/field-reports/{report_id}/map-preview")
+def get_oati_map_preview(
+    key: str,
+    report_id: int,
+    scale: int = Query(DEFAULT_MAP_SCALE),
+    _user: UserSession = Depends(require_manager_or_admin),
+) -> Response:
+    try:
+        with get_connection() as conn:
+            png = render_letter_map_preview(conn, key, report_id, scale=scale)
+    except LetterError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return Response(content=png, media_type="image/png")
+
+
 @router.post("/{key}/field-reports/{report_id}/letters")
 def post_oati_letter(
     key: str,
@@ -54,6 +75,7 @@ def post_oati_letter(
                 description=body.description or "",
                 violation=body.violation or "",
                 photo_ids=list(body.photo_ids or []),
+                map_scale=body.map_scale,
             )
     except LetterError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

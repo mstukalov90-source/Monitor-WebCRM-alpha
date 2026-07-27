@@ -25,6 +25,8 @@ from app.letters.docx_fill import (
     format_ru_date,
     format_ru_datetime,
     format_wgs84,
+    map_caption_text,
+    yandex_maps_url,
 )
 from app.letters.geocode import (
     HOUSE_SEARCH_RADIUS_M,
@@ -33,10 +35,14 @@ from app.letters.geocode import (
     reverse_geocode_parts,
 )
 from app.letters.map_image import (
+    ALLOWED_MAP_SCALES,
+    DEFAULT_MAP_SCALE,
     GROUND_WIDTH_M,
     MAP_SCALE,
     classify_geometry_visibility,
+    ground_width_m,
     map_bbox_mercator,
+    normalize_map_scale,
 )
 from app.letters.oati import (
     LetterError,
@@ -48,6 +54,8 @@ from app.letters.oati import (
     pick_default_address,
     resolve_incident_datetime,
 )
+from app.crm.schemas import OatiLetterGenerateRequest
+from pydantic import ValidationError
 from fastapi import HTTPException
 
 
@@ -86,7 +94,7 @@ class DocxFillTests(unittest.TestCase):
         buf = io.BytesIO()
         Image.new("RGB", (40, 40), (180, 180, 180)).save(buf, format="PNG")
         png = buf.getvalue()
-        append_map_page(doc, png)
+        append_map_page(doc, png, scale=2000, lon=37.5, lat=55.8)
         append_photo_pages(doc, [(png, "Фото 1")])
         data = document_to_bytes(doc)
         text = _docx_text(data)
@@ -102,6 +110,8 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("описание А", text)
         self.assertIn(DEFAULT_VIOLATION, text)
         self.assertIn("Ситуационный план", text)
+        self.assertIn("О предоставлении информации", text)
+        self.assertIn("об инциденте ул. Ленина от 23.07.2026 №7", text)
         self.assertGreaterEqual(_docx_image_count(data), 2)
 
         # Soft breaks before items 1 and 7 must survive fill.
@@ -111,6 +121,12 @@ class DocxFillTests(unittest.TestCase):
             "\n7. Данные, указывающие на признаки наличия события административного правонарушения:",
             joined,
         )
+
+        # Subject soft break in letterhead table.
+        subject_joined = "\n".join(
+            p.text for table in doc.tables for row in table.rows for cell in row.cells for p in cell.paragraphs
+        )
+        self.assertIn("О предоставлении информации\nоб инциденте ул. Ленина", subject_joined)
 
         # Body text (report + appendix) must be Times New Roman 14.
         body_markers = (
@@ -135,6 +151,45 @@ class DocxFillTests(unittest.TestCase):
                     msg=repr(run.text[:40]),
                 )
 
+    def test_map_caption_and_yandex_link(self) -> None:
+        self.assertEqual(
+            yandex_maps_url(37.5, 55.8),
+            "https://yandex.ru/maps/?pt=37.5,55.8&z=17&l=map",
+        )
+        caption = map_caption_text(1000, 55.8, 37.5)
+        self.assertIn("Масштаб 1:1000", caption)
+        self.assertIn("разрытие", caption)
+        self.assertIn("55.800000, 37.500000", caption)
+        self.assertIn("https://yandex.ru/maps/?pt=37.5,55.8&z=17&l=map", caption)
+
+        from PIL import Image
+
+        doc = fill_letter_template(
+            street="ул. А",
+            today="24.07.2026",
+            fid=1,
+            executor="",
+            incident_datetime="",
+            address="",
+            coordinates="",
+            engineering="",
+            description="",
+            violation="",
+        )
+        buf = io.BytesIO()
+        Image.new("RGB", (20, 20), (100, 100, 100)).save(buf, format="PNG")
+        append_map_page(doc, buf.getvalue(), scale=5000, lon=37.5, lat=55.8)
+        data = document_to_bytes(doc)
+        text = _docx_text(data)
+        self.assertIn("Масштаб 1:5000", text)
+        self.assertIn("разрытие", text)
+        self.assertIn("yandex.ru/maps", text)
+
+        # Hyperlink relationship must exist in the package.
+        with ZipFile(io.BytesIO(data)) as zf:
+            rels = zf.read("word/_rels/document.xml.rels").decode("utf-8")
+        self.assertIn("yandex.ru/maps", rels)
+
     def test_format_helpers(self) -> None:
         self.assertEqual(format_wgs84(37.5, 55.8), "55.800000, 37.500000")
         self.assertRegex(format_ru_date(), r"\d{2}\.\d{2}\.\d{4}")
@@ -144,13 +199,46 @@ class DocxFillTests(unittest.TestCase):
 class MapScaleTests(unittest.TestCase):
     def test_ground_extent_matches_scale_1000(self) -> None:
         self.assertEqual(MAP_SCALE, 1000)
+        self.assertEqual(DEFAULT_MAP_SCALE, 1000)
         self.assertEqual(GROUND_WIDTH_M, 160.0)
+        self.assertEqual(ground_width_m(1000), 160.0)
+        self.assertEqual(ground_width_m(2000), 320.0)
+        self.assertEqual(ground_width_m(5000), 800.0)
+        self.assertEqual(ground_width_m(10000), 1600.0)
+        self.assertEqual(ALLOWED_MAP_SCALES, (1000, 2000, 5000, 10000))
+
+    def test_report_marker_asset_loads(self) -> None:
+        from app.letters.map_image import REPORT_MARKER_PATH, REPORT_MARKER_WIDTH_PX, _load_report_marker
+
+        self.assertTrue(REPORT_MARKER_PATH.is_file())
+        icon = _load_report_marker()
+        self.assertEqual(icon.mode, "RGBA")
+        self.assertEqual(icon.size[0], REPORT_MARKER_WIDTH_PX)
+
+    def test_bbox_width_scales(self) -> None:
+        lon, lat = 37.5, 55.8
+        for scale, expected in ((1000, 160.0), (2000, 320.0), (5000, 800.0), (10000, 1600.0)):
+            minx, miny, maxx, maxy = map_bbox_mercator(lon, lat, scale=scale)
+            self.assertAlmostEqual(maxx - minx, expected, places=3, msg=f"scale={scale}")
+            self.assertAlmostEqual(maxy - miny, expected, places=3, msg=f"scale={scale}")
 
     def test_bbox_centered_on_report(self) -> None:
         lon, lat = 37.5, 55.8
         minx, miny, maxx, maxy = map_bbox_mercator(lon, lat)
         self.assertAlmostEqual(maxx - minx, GROUND_WIDTH_M, places=3)
         self.assertAlmostEqual(maxy - miny, GROUND_WIDTH_M, places=3)
+
+    def test_normalize_map_scale_rejects_invalid(self) -> None:
+        self.assertEqual(normalize_map_scale(None), 1000)
+        self.assertEqual(normalize_map_scale(2000), 2000)
+        with self.assertRaises(ValueError):
+            normalize_map_scale(1500)
+
+    def test_generate_request_rejects_invalid_scale(self) -> None:
+        with self.assertRaises(ValidationError):
+            OatiLetterGenerateRequest(map_scale=1234)
+        req = OatiLetterGenerateRequest(map_scale=5000)
+        self.assertEqual(req.map_scale, 5000)
 
     def test_geometry_visibility_clipping_states(self) -> None:
         center_lon, center_lat = 37.5, 55.8

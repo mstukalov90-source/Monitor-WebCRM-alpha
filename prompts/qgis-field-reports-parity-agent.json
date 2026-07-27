@@ -1,0 +1,188 @@
+{
+  "title": "QGIS: паритет заказов/задач и модели mggt_field.reports с WebCRM",
+  "repository": "MONITOR_QGIS",
+  "language": "ru",
+  "summary": "Выровнять QGIS-плагин monitor_db_loader с эталоном WebCRM только по работе с CRM-заказами и задачами. Главный gap — устаревшая модель чтения mggt_field.reports / photos (один JOIN по task на всю задачу). Нужны: несколько reports на tasks_key, выбор по report_id, legacy photo_key, unique/shared task scoping, переключатель отчётов в UI материалов. Дополнительно: expiry блокировки analise площадного заказа по московскому дню. Письма ОАТИ, персонал, дашборд статистики, GPS-треки и realtime-локации НЕ переносить.",
+  "versions": {
+    "webcrm_repo": "MONITOR_WEBCRM",
+    "webcrm_head_at_analysis": "f16a79c (2026-07-24)",
+    "qgis_repo": "MONITOR_QGIS",
+    "qgis_head_at_analysis": "9d73146 v1.30.3 (2026-07-21)",
+    "key_webcrm_commit": "a140a03 Improve field reports, snapshot loading, and order geo stats (2026-07-22); текущий field_photo.py уже с unique/shared task"
+  },
+  "context": {
+    "shared_database": "monitor @ production/staging",
+    "parallel_clients": [
+      "WebCRM",
+      "QGIS monitor_db_loader",
+      "MGGT Field mobile (пишет mggt_field.reports / photos)"
+    ],
+    "reference_repo": "MONITOR_WEBCRM",
+    "scope_in": [
+      "Чтение и отображение полевых материалов по crm.tasks.key через mggt_field.reports + mggt_field.photos",
+      "Список reports на задачу и фильтрация фото по report_id",
+      "Подгруппа «Полевые данные» / геометрия reports (все строки, не LIMIT 1, где это влияет на UI)",
+      "Блокировка анализа площадного заказа: clear_stale_analise_locks по календарному дню Europe/Moscow",
+      "Сверка записи/чтения rayon в snapshot-таблицах задач, если расходится с WebCRM и ломает загрузку задач района"
+    ],
+    "scope_out": [
+      "Письма ОАТИ / DOCX / webcrm.oati_letters / OatiLetterForm",
+      "Экран персонала, создание пользователей, bulk assign executor",
+      "Дашборд статистики (UI); запись log_statistic уже есть — не трогать без нужды",
+      "Экран order tracks (mggt_field.tracks) и employee locations (track_real_time)",
+      "Любые менеджерские экраны вне исполнения заказов и задач"
+    ]
+  },
+  "gap_analysis": {
+    "verdict": "Ядро CRM (сбор/исполнение, роли, поле/офис, площадные, scoped id) в QGIS уже близко к WebCRM. Критическое отставание — модель полевых отчётов и фото. Блокировка analise в QGIS не сбрасывается на новый московский день.",
+    "reports_model_webcrm": {
+      "canonical_links": [
+        "crm.tasks.key → mggt_field.reports.tasks_key (N reports на одну задачу)",
+        "reports.task → photos.task (N фото на report/сессию)",
+        "Legacy всегда в UNION: reports.photo = photos.photo_key"
+      ],
+      "per_report_scoping": [
+        "Если COUNT(reports with same task)=1 (unique task): вернуть все photos WHERE photos.task = report.task PLUS legacy photo_key",
+        "Если reports_same_task > 1 (shared/legacy session): banners по task + geometry photo через photo_key + legacy photo_key",
+        "Без report_id (вся задача): все photos по DISTINCT reports.task для tasks_key UNION legacy photo_key"
+      ],
+      "ui": "FieldMaterialsModal: вкладки «Все материалы» и по каждому report (подпись: comment / тип геометрии). Кнопку «Сформировать письмо» в QGIS НЕ делать."
+    },
+    "reports_model_qgis_now": {
+      "field_photo.py": "Только JOIN photos ON p.task = r.task WHERE r.tasks_key = …; нет report_id; нет UNION с photo_key; comment — LIMIT 1 без ORDER BY id",
+      "field_materials_dialog.py": "Один набор материалов на задачу; нет переключателя отчётов",
+      "crm_field_data.py": "fetch_field_report_row с LIMIT 1 — теряется множественность reports"
+    },
+    "orders_gap": {
+      "analise_lock_expiry": "WebCRM clear_stale_analise_locks сбрасывает незавершённые analise_started_* если день старта (Europe/Moscow) < сегодня. QGIS start_area_analise не вызывает сброс — чужая вчерашняя блокировка остаётся conflict.",
+      "snapshot_rayon": "WebCRM: rayon + index на tasks_field/tasks_clear/tasks_done_legal/tasks_done_illegal; фильтр загрузки снимка по rayon. QGIS: rayon в snapshot loader есть частично (field_table). Сверить и выровнять только если загрузка задач района/снимков расходится с WebCRM."
+    }
+  },
+  "reports_photo_rules": {
+    "must": [
+      "Одна CRM-задача может иметь несколько строк mggt_field.reports с одним tasks_key.",
+      "fetch_field_photos(conn, task_key, report_id=None) — сигнатура как в WebCRM.",
+      "При report_id: проверять tasks_key совпадает с задачей; иначе пустой результат / ошибка.",
+      "Всегда включать legacy-ветку reports.photo = photos.photo_key (старые данные).",
+      "DISTINCT ON (p.id) или эквивалент, чтобы UNION не дублировал фото.",
+      "Сортировка: banner DESC, затем created_at ASC, затем id.",
+      "Комментарий: при report_id — comment этой строки; без report_id — первый непустой comment ORDER BY id."
+    ],
+    "must_not": [
+      "Не джойнить все фото сессии через простой JOIN p.task = r.task без учёта unique/shared и без photo_key — это смешивает геометрию разных reports.",
+      "Не удалять и не переписывать mggt_field.reports / photos.",
+      "Не добавлять генерацию писем ОАТИ."
+    ]
+  },
+  "files_to_change": [
+    {
+      "path": "monitor_db_loader/core/field_photo.py",
+      "action": "port_from",
+      "source": "MONITOR_WEBCRM/backend/app/photos/field_photo.py → fetch_field_photos",
+      "changes": [
+        "Добавить параметр report_id: Optional[int] = None",
+        "Портировать CTE target/task_scope и ветки unique/shared + legacy photo_key",
+        "Портировать whole-task UNION (photos by report.task + legacy photo_key)",
+        "Сохранить SFTP-загрузку байтов fetch_field_photo_bytes без изменений контракта UI"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/core/crm_field_data.py",
+      "action": "port_from",
+      "source": "MONITOR_WEBCRM/backend/app/crm/field_data_loader.py",
+      "changes": [
+        "Добавить fetch_field_report_rows (все reports с геометрией для tasks_key)",
+        "fetch_field_report_row оставить как rows[0] для обратной совместимости callers",
+        "Убедиться что collect_field_data_tasks / карта полевых точек корректно работают при нескольких reports (если UI/карта показывают одну точку — явно задокументировать выбор; предпочтительно все геометрии reports на карте, как WebCRM field-reports)"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/ui/field_materials_dialog.py",
+      "action": "align_ui_with",
+      "source": "MONITOR_WEBCRM/frontend/src/components/FieldMaterialsModal.tsx",
+      "changes": [
+        "Загрузить список reports через fetch_field_report_rows",
+        "Переключатель: «Все материалы» + кнопка/вкладка на каждый report (label: comment truncate / «Точка|Линия|Полигон N»)",
+        "При смене active report_id перезагружать fetch_field_photos(..., report_id=...)",
+        "НЕ добавлять кнопку «Сформировать письмо» / OatiLetterForm"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/core/crm_tasks_area.py",
+      "action": "port_from",
+      "source": "MONITOR_WEBCRM/backend/app/crm/tasks_area.py → clear_stale_analise_locks",
+      "changes": [
+        "Добавить clear_stale_analise_locks: UPDATE crm.tasks_area сброс analise_started_*/paused_* WHERE analise IS NOT TRUE AND started_at MSK date < today MSK",
+        "Вызывать перед start_area_analise и при загрузке списка/геометрий площадных заказов (как WebCRM fetch_tasks_area_geojson)"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/core/crm_snapshot_loader.py",
+      "action": "verify_and_align_if_needed",
+      "source": "MONITOR_WEBCRM/backend/app/crm/snapshot_loader.py + store.ensure_rayon_column",
+      "changes": [
+        "Сверить фильтрацию снимков по rayon с WebCRM",
+        "Если QGIS фильтрует rayon только для field_table — расширить на clear/done_* при наличии колонки, как WebCRM _SNAPSHOT_RAYON_TABLES",
+        "Не менять identity/scoped id модель задач"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/core/crm_task_store.py",
+      "action": "verify_and_align_if_needed",
+      "source": "MONITOR_WEBCRM/backend/app/crm/store.py (rayon на snapshot insert)",
+      "changes": [
+        "При INSERT в snapshot-таблицы писать rayon, если колонка есть (паритет с WebCRM)",
+        "Не трогать ETL ownership / scoped business id"
+      ]
+    },
+    {
+      "path": "monitor_db_loader/metadata.txt",
+      "action": "bump",
+      "changes": [
+        "Поднять version (например 1.30.4 или 1.31.0) после готовности",
+        "Кратко описать: multi-report field materials + analise lock day expiry"
+      ]
+    }
+  ],
+  "webcrm_reference_implementation": {
+    "photos": "MONITOR_WEBCRM/backend/app/photos/field_photo.py — fetch_field_photos",
+    "field_reports_list": "MONITOR_WEBCRM/backend/app/crm/field_data_loader.py — fetch_field_report_rows, report_row_to_attributes",
+    "api_contracts": [
+      "GET /api/tasks/{key}/field-reports",
+      "GET /api/tasks/{key}/field-photos?report_id="
+    ],
+    "ui": "MONITOR_WEBCRM/frontend/src/components/FieldMaterialsModal.tsx (игнорировать OatiLetterForm и canGenerateLetter)",
+    "analise_expiry": "MONITOR_WEBCRM/backend/app/crm/tasks_area.py — clear_stale_analise_locks; tests: backend/tests/test_analise_lock_expiry.py",
+    "snapshot_rayon": "MONITOR_WEBCRM/backend/app/crm/store.py — ensure_rayon_column, _SNAPSHOT_RAYON_TABLES"
+  },
+  "implementation_notes": [
+    "QGIS ходит в БД напрямую (psycopg2), не через HTTP WebCRM — портировать SQL-логику, не вызывать API.",
+    "Сохранять Qt5/Qt6 совместимость через существующие qt_compat / dialog_exec.",
+    "После изменений: bump version + publish на VPS по README (git push server / publish_plugin_repo.sh).",
+    "Писать metadata source=qgis в статистике не требуется для этой задачи."
+  ],
+  "do_not": [
+    "Не переносить функционал писем ОАТИ / DOCX / geocode / map_image",
+    "Не добавлять экраны персонала, статистики, треков, локаций сотрудников",
+    "Не ломать scoped business id и ETL-защиту полей crm.tasks",
+    "Не удалять legacy-связь reports.photo = photos.photo_key",
+    "Не использовать простой JOIN p.task = r.task как единственный способ загрузки фото",
+    "Не коммитить секреты / id_rsa / .env"
+  ],
+  "acceptance": [
+    "Задача с несколькими mggt_field.reports: в диалоге материалов видны вкладки всех отчётов + «Все материалы».",
+    "Выбор конкретного report показывает только фото по правилам unique/shared + legacy photo_key; comment этого отчёта.",
+    "Старые строки, связанные только через reports.photo = photos.photo_key, видны.",
+    "Блокировка analise, начатая вчера по Москве и не завершённая, снимается при старте анализа / загрузке заказов; сегодняшняя чужая блокировка остаётся conflict.",
+    "Письма / персонал / статистика UI / треки / локации не появились в плагине.",
+    "Версия в metadata.txt повышена."
+  ],
+  "test_plan": [
+    "Найти задачу с ≥2 reports (один tasks_key): открыть «Полевые материалы» в QGIS — переключатель отчётов, смена набора фото.",
+    "Задача с legacy photo_key без полного набора photos.task — фото геометрии видно.",
+    "Несколько reports с одним shared task — на вкладке report не смешиваются чужие geometry-фото сессии (только banner + photo_key).",
+    "Площадный заказ: начать analise, в БД выставить analise_started_at на вчера MSK, analise=false — повторный «В работу» другим пользователем успешен после clear_stale.",
+    "Регрессия: сбор задач района, отправка в поле, закрытие, площадной анализ pause/complete — без ошибок.",
+    "Сравнить набор photo id для одной задачи: WebCRM field-photos API vs QGIS fetch_field_photos (одинаковый report_id / без него)."
+  ]
+}

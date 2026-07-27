@@ -7,6 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SSH_KEY="${SSH_KEY:-$ROOT/id_rsa/id_rsa}"
 RSYNC_EXCLUDES=(
   --exclude backend/venv
+  --exclude backend/.env
   --exclude backend/data/photo_cache
   --exclude frontend/node_modules
   --exclude frontend/dist
@@ -14,6 +15,8 @@ RSYNC_EXCLUDES=(
   --exclude tmp
   --exclude id_rsa
   --exclude .codegraph
+  --exclude graphify-out
+  --exclude frontend/graphify-out
 )
 
 SERVERS=(

@@ -28,7 +28,14 @@ function LegendSwatch({ item }: { item: MapLegendItem }) {
     return <span className="legend-swatch legend-swatch-line" style={styles.line} />
   }
   if (item.kind === 'highlight-report') {
-    return <span className="legend-swatch legend-swatch-report-triangle" style={styles.point} />
+    return (
+      <img
+        className="legend-swatch legend-swatch-report"
+        src="/report.png"
+        alt=""
+        aria-hidden="true"
+      />
+    )
   }
   if (item.kind === 'highlight-primary') {
     return <span className="legend-swatch legend-swatch-polygon" style={styles.polygon} />

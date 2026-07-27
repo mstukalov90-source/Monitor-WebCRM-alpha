@@ -1,4 +1,4 @@
-"""Situational plan image at fixed map scale 1:1000."""
+"""Situational plan image at a selectable map scale (default 1:1000)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import logging
 import math
 import urllib.error
 import urllib.request
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw
@@ -18,7 +20,9 @@ logger = logging.getLogger(__name__)
 # Printed map size in the DOCX (approximate usable A4 width).
 MAP_WIDTH_CM = 16.0
 MAP_HEIGHT_CM = 16.0
-MAP_SCALE = 1000
+ALLOWED_MAP_SCALES = (1000, 2000, 5000, 10000)
+DEFAULT_MAP_SCALE = 1000
+MAP_SCALE = DEFAULT_MAP_SCALE  # backward-compatible alias
 # 1 cm on paper @ 1:1000 = 10 m on ground.
 GROUND_WIDTH_M = MAP_WIDTH_CM * (MAP_SCALE / 100.0)
 GROUND_HEIGHT_M = MAP_HEIGHT_CM * (MAP_SCALE / 100.0)
@@ -30,6 +34,83 @@ MAP_HEIGHT_PX = int(MAP_HEIGHT_CM * PX_PER_CM)
 
 EARTH_RADIUS_M = 6378137.0
 TILE_SIZE = 256
+
+REPORT_MARKER_PATH = Path(__file__).resolve().parent / "templates" / "report.png"
+# Marker width on the rendered PNG (~printed ~0.7 cm at 59 px/cm).
+REPORT_MARKER_WIDTH_PX = 42
+
+
+def ground_width_m(scale: int = DEFAULT_MAP_SCALE) -> float:
+    """Ground width covered by the printed map frame at the given scale."""
+    return MAP_WIDTH_CM * (scale / 100.0)
+
+
+def ground_height_m(scale: int = DEFAULT_MAP_SCALE) -> float:
+    return MAP_HEIGHT_CM * (scale / 100.0)
+
+
+def normalize_map_scale(scale: int | None) -> int:
+    """Return a whitelisted scale or raise ValueError."""
+    value = DEFAULT_MAP_SCALE if scale is None else int(scale)
+    if value not in ALLOWED_MAP_SCALES:
+        allowed = ", ".join(str(s) for s in ALLOWED_MAP_SCALES)
+        raise ValueError(f"Недопустимый масштаб карты: {value}. Допустимо: {allowed}")
+    return value
+
+
+def _scale_bar_meters(scale: int) -> int:
+    """Pick a round scale-bar length that fits ~1/4 of the frame width."""
+    target = ground_width_m(scale) / 4.0
+    candidates = (10, 20, 50, 100, 200, 500, 1000, 2000)
+    return min(candidates, key=lambda c: abs(c - target))
+
+
+@lru_cache(maxsize=1)
+def _load_report_marker() -> Image.Image:
+    """Load and resize the report.png marker (RGBA with transparency)."""
+    if not REPORT_MARKER_PATH.is_file():
+        raise FileNotFoundError(f"Report marker not found: {REPORT_MARKER_PATH}")
+    icon = Image.open(REPORT_MARKER_PATH).convert("RGBA")
+    w, h = icon.size
+    if w <= 0 or h <= 0:
+        raise ValueError("Report marker has invalid size")
+    new_w = REPORT_MARKER_WIDTH_PX
+    new_h = max(1, int(round(h * (new_w / w))))
+    return icon.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+
+def _paste_report_marker(canvas: Image.Image, px: float, py: float) -> None:
+    """Paste report.png centered on (px, py); fall back to a red cross if missing."""
+    try:
+        marker = _load_report_marker()
+    except (OSError, ValueError) as exc:
+        logger.warning("Cannot load report marker, using red cross: %s", exc)
+        draw = ImageDraw.Draw(canvas)
+        r = 8
+        draw.ellipse((px - r, py - r, px + r, py + r), fill=(220, 40, 40), outline=(120, 0, 0), width=2)
+        draw.line((px, py - 14, px, py + 14), fill=(120, 0, 0), width=2)
+        draw.line((px - 14, py, px + 14, py), fill=(120, 0, 0), width=2)
+        return
+
+    mw, mh = marker.size
+    left = int(round(px - mw / 2))
+    top = int(round(py - mh / 2))
+    cw, ch = canvas.size
+    # Clip marker to canvas bounds.
+    src_l = max(0, -left)
+    src_t = max(0, -top)
+    src_r = min(mw, cw - left)
+    src_b = min(mh, ch - top)
+    if src_r <= src_l or src_b <= src_t:
+        return
+    cropped = marker.crop((src_l, src_t, src_r, src_b))
+    dest = (left + src_l, top + src_t)
+    if canvas.mode != "RGBA":
+        base = canvas.convert("RGBA")
+        base.alpha_composite(cropped, dest)
+        canvas.paste(base.convert("RGB"))
+    else:
+        canvas.alpha_composite(cropped, dest)
 
 
 def _lonlat_to_mercator(lon: float, lat: float) -> tuple[float, float]:
@@ -45,11 +126,15 @@ def _mercator_to_lonlat(x: float, y: float) -> tuple[float, float]:
     return lon, lat
 
 
-def map_bbox_mercator(center_lon: float, center_lat: float) -> tuple[float, float, float, float]:
-    """Return (minx, miny, maxx, maxy) in Web Mercator meters for 1:1000 frame."""
+def map_bbox_mercator(
+    center_lon: float,
+    center_lat: float,
+    scale: int = DEFAULT_MAP_SCALE,
+) -> tuple[float, float, float, float]:
+    """Return (minx, miny, maxx, maxy) in Web Mercator meters for the map frame."""
     cx, cy = _lonlat_to_mercator(center_lon, center_lat)
-    half_w = GROUND_WIDTH_M / 2.0
-    half_h = GROUND_HEIGHT_M / 2.0
+    half_w = ground_width_m(scale) / 2.0
+    half_h = ground_height_m(scale) / 2.0
     return cx - half_w, cy - half_h, cx + half_w, cy + half_h
 
 
@@ -228,11 +313,12 @@ def classify_geometry_visibility(
     geometry: dict[str, Any] | None,
     center_lon: float,
     center_lat: float,
+    scale: int = DEFAULT_MAP_SCALE,
 ) -> str:
-    """Return 'inside' | 'partial' | 'outside' | 'missing' relative to 1:1000 frame."""
+    """Return 'inside' | 'partial' | 'outside' | 'missing' relative to the map frame."""
     if not geometry:
         return "missing"
-    bbox = map_bbox_mercator(center_lon, center_lat)
+    bbox = map_bbox_mercator(center_lon, center_lat, scale=scale)
     minx, miny, maxx, maxy = bbox
     points = _iter_coords(geometry)
     if not points:
@@ -257,12 +343,16 @@ def render_situational_map(
     center_lat: float,
     task_geometry: dict[str, Any] | None,
     settings: Settings,
+    scale: int = DEFAULT_MAP_SCALE,
 ) -> bytes:
     """Render PNG bytes: OSM tiles + report marker + clipped task geometry."""
-    bbox = map_bbox_mercator(center_lon, center_lat)
+    scale = normalize_map_scale(scale)
+    bbox = map_bbox_mercator(center_lon, center_lat, scale=scale)
     minx, miny, maxx, maxy = bbox
     width, height = MAP_WIDTH_PX, MAP_HEIGHT_PX
     zoom = _zoom_for_extent(minx, maxx, width)
+    gw = ground_width_m(scale)
+
 
     lon_sw, lat_sw = _mercator_to_lonlat(minx, miny)
     lon_ne, lat_ne = _mercator_to_lonlat(maxx, maxy)
@@ -317,25 +407,23 @@ def render_situational_map(
                         width=3,
                     )
 
-    # Report center marker (red).
+    # Report center marker (report.png roadwork sign).
     cx, cy = _lonlat_to_mercator(center_lon, center_lat)
     px, py = _mercator_to_pixel(cx, cy, bbox, width, height)
-    r = 8
-    draw.ellipse((px - r, py - r, px + r, py + r), fill=(220, 40, 40), outline=(120, 0, 0), width=2)
-    draw.line((px, py - 14, px, py + 14), fill=(120, 0, 0), width=2)
-    draw.line((px - 14, py, px + 14, py), fill=(120, 0, 0), width=2)
+    _paste_report_marker(canvas, px, py)
 
-    # Scale bar legend.
-    bar_m = 50
-    bar_px = bar_m / GROUND_WIDTH_M * width
+    # Scale bar legend (redraw on top of marker if they overlap).
+    draw = ImageDraw.Draw(canvas)
+    bar_m = _scale_bar_meters(scale)
+    bar_px = bar_m / gw * width
     margin = 20
     y_bar = height - margin
     x0 = margin
     x1 = margin + bar_px
     draw.rectangle((x0, y_bar - 4, x1, y_bar), fill=(0, 0, 0))
-    draw.text((x0, y_bar - 22), f"0", fill=(0, 0, 0))
+    draw.text((x0, y_bar - 22), "0", fill=(0, 0, 0))
     draw.text((x1 - 10, y_bar - 22), f"{bar_m} м", fill=(0, 0, 0))
-    draw.text((margin, margin), "Масштаб 1:1000", fill=(0, 0, 0))
+    draw.text((margin, margin), f"Масштаб 1:{scale}", fill=(0, 0, 0))
 
     buf = io.BytesIO()
     canvas.save(buf, format="PNG")

@@ -397,6 +397,34 @@ export function fetchOatiLetterDraft(
   )
 }
 
+export async function fetchOatiMapPreview(
+  taskKey: string,
+  reportId: number,
+  scale: number,
+): Promise<string> {
+  const res = await fetch(
+    `${API_BASE}/api/tasks/${encodeURIComponent(taskKey)}/field-reports/${reportId}/map-preview?scale=${scale}`,
+    { credentials: 'include' },
+  )
+  if (res.status === 401) {
+    unauthorizedHandler?.()
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    try {
+      const parsed = JSON.parse(text) as { detail?: string }
+      throw new Error(parsed.detail || text || res.statusText)
+    } catch (e) {
+      if (e instanceof Error && e.message !== text && !e.message.startsWith('Unexpected token')) {
+        throw e
+      }
+      throw new Error(text || res.statusText)
+    }
+  }
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 export async function generateOatiLetter(
   taskKey: string,
   reportId: number,

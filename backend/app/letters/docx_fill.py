@@ -64,6 +64,10 @@ _LINE_BREAK_BEFORE = (
     "7. Данные, указывающие на признаки наличия события административного правонарушения:",
 )
 
+# Subject line in letterhead table: restore soft break after join.
+_SUBJECT_JOINED = "О предоставлении информацииоб инциденте"
+_SUBJECT_SPLIT = "О предоставлении информации\nоб инциденте"
+
 
 def format_ru_date(dt: datetime | None = None) -> str:
     value = dt or datetime.now(MSK)
@@ -98,9 +102,69 @@ def format_wgs84(lon: float, lat: float) -> str:
     return f"{lat:.6f}, {lon:.6f}"
 
 
+def yandex_maps_url(lon: float, lat: float) -> str:
+    return f"https://yandex.ru/maps/?pt={lon},{lat}&z=17&l=map"
+
+
+def map_caption_text(scale: int, lat: float, lon: float) -> str:
+    """Plain-text caption lines for the situational map (URL on its own line)."""
+    coords = format_wgs84(lon, lat)
+    url = yandex_maps_url(lon, lat)
+    return (
+        f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи;\n"
+        f"Координаты инцидента в WGS 84: {coords};\n"
+        f"{url}"
+    )
+
+
+def _add_hyperlink(paragraph: Paragraph, url: str, text: str, *, font_size: Pt = Pt(9)) -> None:
+    """Append a clickable hyperlink run to ``paragraph``."""
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    new_run = OxmlElement("w:r")
+    r_pr = OxmlElement("w:rPr")
+
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), BODY_FONT_NAME)
+    r_fonts.set(qn("w:hAnsi"), BODY_FONT_NAME)
+    r_fonts.set(qn("w:cs"), BODY_FONT_NAME)
+    r_pr.append(r_fonts)
+
+    sz = OxmlElement("w:sz")
+    sz.set(qn("w:val"), str(int(font_size.pt * 2)))
+    r_pr.append(sz)
+    sz_cs = OxmlElement("w:szCs")
+    sz_cs.set(qn("w:val"), str(int(font_size.pt * 2)))
+    r_pr.append(sz_cs)
+
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), "0563C1")
+    r_pr.append(color)
+    u = OxmlElement("w:u")
+    u.set(qn("w:val"), "single")
+    r_pr.append(u)
+
+    new_run.append(r_pr)
+    text_el = OxmlElement("w:t")
+    text_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    text_el.text = text
+    new_run.append(text_el)
+    hyperlink.append(new_run)
+    paragraph._p.append(hyperlink)
+
+
 def _ensure_structural_breaks(text: str) -> str:
     """Insert ``\\n`` before numbered section markers when missing."""
     result = text
+    if _SUBJECT_JOINED in result:
+        result = result.replace(_SUBJECT_JOINED, _SUBJECT_SPLIT, 1)
     for marker in _LINE_BREAK_BEFORE:
         idx = 0
         while True:
@@ -227,7 +291,15 @@ def _add_page_break(document: Document) -> None:
     run.add_break(WD_BREAK.PAGE)
 
 
-def append_map_page(document: Document, map_png: bytes, title: str = "Ситуационный план") -> None:
+def append_map_page(
+    document: Document,
+    map_png: bytes,
+    title: str = "Ситуационный план",
+    *,
+    scale: int = 1000,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> None:
     _add_page_break(document)
     heading = document.add_paragraph()
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -242,9 +314,28 @@ def append_map_page(document: Document, map_png: bytes, title: str = "Ситуа
 
     caption = document.add_paragraph()
     caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    cap = caption.add_run("Масштаб 1:1000. Красный маркер — объект reports; синий — объект задачи.")
-    cap.font.name = BODY_FONT_NAME
-    cap.font.size = Pt(9)
+    if lon is not None and lat is not None:
+        url = yandex_maps_url(lon, lat)
+        coords = format_wgs84(lon, lat)
+        line1 = (
+            f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи;"
+        )
+        line2 = f"Координаты инцидента в WGS 84: {coords};"
+        r1 = caption.add_run(line1)
+        r1.font.name = BODY_FONT_NAME
+        r1.font.size = Pt(9)
+        r1.add_break(WD_BREAK.LINE)
+        r2 = caption.add_run(line2)
+        r2.font.name = BODY_FONT_NAME
+        r2.font.size = Pt(9)
+        r2.add_break(WD_BREAK.LINE)
+        _add_hyperlink(caption, url, url, font_size=Pt(9))
+    else:
+        cap = caption.add_run(
+            f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи."
+        )
+        cap.font.name = BODY_FONT_NAME
+        cap.font.size = Pt(9)
 
 
 def append_photo_pages(

@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchOatiLetterDraft, generateOatiLetter } from '../api/client'
+import {
+  fetchOatiLetterDraft,
+  fetchOatiMapPreview,
+  generateOatiLetter,
+} from '../api/client'
 import { formatTaskTableCell, type OatiLetterDraft } from '../types'
 
 interface OatiLetterFormProps {
@@ -53,6 +57,10 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
   const [description, setDescription] = useState('')
   const [violation, setViolation] = useState('')
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([])
+  const [mapScale, setMapScale] = useState(1000)
+  const [mapPreviewUrl, setMapPreviewUrl] = useState<string | null>(null)
+  const [mapPreviewLoading, setMapPreviewLoading] = useState(false)
+  const [mapPreviewError, setMapPreviewError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -67,6 +75,7 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         setDescription(data.description ?? '')
         setViolation(data.violation ?? '')
         setSelectedPhotoIds(data.photos.map((p) => p.id))
+        setMapScale(data.map_scale_default ?? 1000)
       })
       .catch((e) => {
         if (!cancelled) {
@@ -83,6 +92,51 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
   }, [taskKey, reportId])
 
   useEffect(() => {
+    if (!draft) return
+    let cancelled = false
+    let objectUrl: string | null = null
+    setMapPreviewLoading(true)
+    setMapPreviewError(null)
+    fetchOatiMapPreview(taskKey, reportId, mapScale)
+      .then((url) => {
+        if (cancelled) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        objectUrl = url
+        setMapPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return url
+        })
+      })
+      .catch((e) => {
+        if (cancelled) return
+        const text = e instanceof Error ? e.message : String(e)
+        setMapPreviewError(text.replace(/^Error:\s*/, ''))
+        setMapPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev)
+          return null
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setMapPreviewLoading(false)
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [draft, taskKey, reportId, mapScale])
+
+  useEffect(() => {
+    return () => {
+      setMapPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev)
+        return null
+      })
+    }
+  }, [])
+
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !submitting) onClose()
     }
@@ -94,6 +148,10 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
     if (!draft?.photos.length) return false
     return draft.photos.every((p) => selectedPhotoIds.includes(p.id))
   }, [draft, selectedPhotoIds])
+
+  const mapScales = draft?.map_scales?.length
+    ? draft.map_scales
+    : [1000, 2000, 5000, 10000]
 
   const geocodeAvailable = Boolean((draft?.address_geocode ?? '').trim())
   const mosAvailable = Boolean((draft?.address_mos ?? '').trim())
@@ -129,6 +187,7 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         description,
         violation,
         photo_ids: selectedPhotoIds,
+        map_scale: mapScale,
       })
       downloadBlob(result.blob, result.filename)
       setMessage(
@@ -293,6 +352,41 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                 />
               </label>
             </div>
+
+            <section className="oati-letter-map-scale">
+              <h3 className="field-materials-section-title">Масштаб ситуационного плана</h3>
+              <div
+                className="oati-map-scale-options"
+                role="radiogroup"
+                aria-label="Масштаб карты"
+              >
+                {mapScales.map((scale) => (
+                  <label key={scale} className="oati-map-scale-option">
+                    <input
+                      type="radio"
+                      name="oati-map-scale"
+                      checked={mapScale === scale}
+                      disabled={submitting}
+                      onChange={() => setMapScale(scale)}
+                    />
+                    <span>1:{scale}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="oati-map-preview">
+                {mapPreviewLoading && <p className="muted">Загрузка превью карты…</p>}
+                {mapPreviewError && (
+                  <p className="error-banner">Превью: {mapPreviewError}</p>
+                )}
+                {mapPreviewUrl && !mapPreviewLoading && (
+                  <img
+                    src={mapPreviewUrl}
+                    alt={`Ситуационный план 1:${mapScale}`}
+                    className="oati-map-preview-img"
+                  />
+                )}
+              </div>
+            </section>
 
             <section className="oati-letter-photos">
               <div className="field-materials-gallery-header">

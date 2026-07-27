@@ -335,6 +335,8 @@ export interface OatiLetterDraft {
   address_geocode: string
   address_mos: string
   engineering_options: string[]
+  map_scales: number[]
+  map_scale_default: number
 }
 
 export interface OatiLetterGeneratePayload {
@@ -344,6 +346,7 @@ export interface OatiLetterGeneratePayload {
   description: string
   violation: string
   photo_ids: number[]
+  map_scale: number
 }
 
 export interface MissingLink {

@@ -209,19 +209,7 @@ export function swatchStyles(item: MapLegendItem): {
   }
 
   if (item.kind === 'highlight-report') {
-    return {
-      point: {
-        backgroundColor: 'transparent',
-        borderColor: 'transparent',
-        borderWidth: 0,
-        width: 0,
-        height: 0,
-        borderLeft: '7px solid transparent',
-        borderRight: '7px solid transparent',
-        borderBottom: '12px solid #111111',
-        borderRadius: 0,
-      },
-    }
+    return {}
   }
 
   const symbology = item.symbology ?? {}

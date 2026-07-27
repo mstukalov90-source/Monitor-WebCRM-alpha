@@ -162,6 +162,8 @@ export function TaskEditModal({
   const [pendingStatusAction, setPendingStatusAction] = useState<StatusAction | null>(null)
   const [officeComment, setOfficeComment] = useState('')
   const [showLegalRequirements, setShowLegalRequirements] = useState(false)
+  const [linkSectionOpen, setLinkSectionOpen] = useState(false)
+  const [stationSectionOpen, setStationSectionOpen] = useState(false)
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
   const [photoUuid, setPhotoUuid] = useState<string | null>(null)
@@ -313,6 +315,8 @@ export function TaskEditModal({
       setPendingStatusAction(null)
       setOfficeComment('')
       setShowLegalRequirements(false)
+      setLinkSectionOpen(false)
+      setStationSectionOpen(false)
       setPhotoUuid(null)
       setFieldMaterialsKey(null)
       autoPhotoOpenedRef.current = false
@@ -326,6 +330,8 @@ export function TaskEditModal({
     setPendingStatusAction(null)
     setOfficeComment('')
     setShowLegalRequirements(false)
+    setLinkSectionOpen(false)
+    setStationSectionOpen(false)
     let cancelled = false
     setLoading(true)
     lookupAndLoad(context)
@@ -420,6 +426,12 @@ export function TaskEditModal({
       setShowLegalRequirements(false)
     }
   }, [legalValidation.isValid])
+
+  useEffect(() => {
+    if (!showLegalRequirements) return
+    if (!legalValidation.hasLink) setLinkSectionOpen(true)
+    if (!legalValidation.hasStation) setStationSectionOpen(true)
+  }, [showLegalRequirements, legalValidation.hasLink, legalValidation.hasStation])
 
   const formRowClass = (field: string) => {
     if (!showLegalRequirements || !isLegalRequiredField(field, legalLinkFields)) return 'form-row'
@@ -598,26 +610,38 @@ export function TaskEditModal({
                   .filter(Boolean)
                   .join(' ')}
               >
-                <h4>Сопоставление</h4>
-                {showLegalFieldHints && requiresLegalLink && (
-                  <p className="field-group-hint">
-                    Для «Закрыть легальное» — одно из: {legalLinkLabels.join(', ')}
-                  </p>
+                <button
+                  type="button"
+                  className="form-section-toggle"
+                  aria-expanded={linkSectionOpen}
+                  onClick={() => setLinkSectionOpen((prev) => !prev)}
+                >
+                  <span className="form-section-toggle-icon">{linkSectionOpen ? '▾' : '▸'}</span>
+                  <h4>Сопоставление</h4>
+                </button>
+                {linkSectionOpen && (
+                  <>
+                    {showLegalFieldHints && requiresLegalLink && (
+                      <p className="field-group-hint">
+                        Для «Закрыть легальное» — одно из: {legalLinkLabels.join(', ')}
+                      </p>
+                    )}
+                    {linkFields.map((f) => (
+                      <label key={f} className={formRowClass(f)}>
+                        <span>
+                          {labels[f] || f}
+                          {showLegalFieldHints && requiresLegalLink && legalLinkFields.includes(f) && (
+                            <span className="required-marker">*</span>
+                          )}
+                        </span>
+                        <input
+                          value={form[f] ?? ''}
+                          onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
+                        />
+                      </label>
+                    ))}
+                  </>
                 )}
-                {linkFields.map((f) => (
-                  <label key={f} className={formRowClass(f)}>
-                    <span>
-                      {labels[f] || f}
-                      {showLegalFieldHints && requiresLegalLink && legalLinkFields.includes(f) && (
-                        <span className="required-marker">*</span>
-                      )}
-                    </span>
-                    <input
-                      value={form[f] ?? ''}
-                      onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
-                    />
-                  </label>
-                ))}
               </div>
             )}
 
@@ -629,27 +653,39 @@ export function TaskEditModal({
                 .filter(Boolean)
                 .join(' ')}
             >
-              <h4>Данные из Станции</h4>
-              {showLegalFieldHints && (
-                <p className="field-group-hint">
-                  Для «Закрыть легальное» — одно из: {legalStationLabels.join(' или ')}
-                </p>
+              <button
+                type="button"
+                className="form-section-toggle"
+                aria-expanded={stationSectionOpen}
+                onClick={() => setStationSectionOpen((prev) => !prev)}
+              >
+                <span className="form-section-toggle-icon">{stationSectionOpen ? '▾' : '▸'}</span>
+                <h4>Данные из Станции</h4>
+              </button>
+              {stationSectionOpen && (
+                <>
+                  {showLegalFieldHints && (
+                    <p className="field-group-hint">
+                      Для «Закрыть легальное» — одно из: {legalStationLabels.join(' или ')}
+                    </p>
+                  )}
+                  {(['sps', 'kgs', 'station_avr'] as const).map((f) => (
+                    <label key={f} className={formRowClass(f)}>
+                      <span>
+                        {labels[f] || f}
+                        {showLegalFieldHints && (f === 'sps' || f === 'station_avr') && (
+                          <span className="required-marker">*</span>
+                        )}
+                      </span>
+                      <input
+                        value={form[f] ?? ''}
+                        readOnly={isReadonly}
+                        onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </>
               )}
-              {(['sps', 'kgs', 'station_avr'] as const).map((f) => (
-                <label key={f} className={formRowClass(f)}>
-                  <span>
-                    {labels[f] || f}
-                    {showLegalFieldHints && (f === 'sps' || f === 'station_avr') && (
-                      <span className="required-marker">*</span>
-                    )}
-                  </span>
-                  <input
-                    value={form[f] ?? ''}
-                    readOnly={isReadonly}
-                    onChange={(e) => setForm((prev) => ({ ...prev, [f]: e.target.value }))}
-                  />
-                </label>
-              ))}
             </div>
 
             {taskSource === 'field' && fieldSnapshotKey && (

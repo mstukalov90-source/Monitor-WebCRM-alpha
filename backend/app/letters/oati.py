@@ -28,7 +28,13 @@ from app.letters.docx_fill import (
     format_wgs84,
 )
 from app.letters.geocode import reverse_geocode_parts
-from app.letters.map_image import classify_geometry_visibility, render_situational_map
+from app.letters.map_image import (
+    ALLOWED_MAP_SCALES,
+    DEFAULT_MAP_SCALE,
+    classify_geometry_visibility,
+    normalize_map_scale,
+    render_situational_map,
+)
 from app.photos.field_photo import FieldPhotoItem, fetch_field_photos, read_field_photo
 from app.photos.sftp_fetch import SftpPhotoError
 
@@ -81,6 +87,8 @@ class LetterDraft:
     address_geocode: str = ""
     address_mos: str = ""
     engineering_options: list[str] = field(default_factory=list)
+    map_scales: list[int] = field(default_factory=lambda: list(ALLOWED_MAP_SCALES))
+    map_scale_default: int = DEFAULT_MAP_SCALE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +124,8 @@ class LetterDraft:
             "address_geocode": self.address_geocode,
             "address_mos": self.address_mos,
             "engineering_options": list(self.engineering_options),
+            "map_scales": list(self.map_scales),
+            "map_scale_default": self.map_scale_default,
         }
 
 
@@ -528,6 +538,8 @@ def build_letter_draft(
         address_geocode=address_geocode,
         address_mos=address_mos,
         engineering_options=_fetch_comms_full_names(conn),
+        map_scales=list(ALLOWED_MAP_SCALES),
+        map_scale_default=DEFAULT_MAP_SCALE,
     )
 
 
@@ -601,11 +613,16 @@ def generate_letter_docx(
     description: str,
     violation: str,
     photo_ids: list[int],
+    map_scale: int = DEFAULT_MAP_SCALE,
     settings: Settings | None = None,
 ) -> tuple[int, bytes, str]:
     """Create letter row, build DOCX, return (fid, bytes, filename)."""
     settings = settings or get_settings()
     store_cfg = crm_task_store_config()
+    try:
+        scale = normalize_map_scale(map_scale)
+    except ValueError as exc:
+        raise LetterError(str(exc), status_code=422) from exc
 
     record = fetch_task_by_key(conn, store_cfg, task_key)
     if record is None:
@@ -646,6 +663,7 @@ def generate_letter_docx(
         "coordinates": coordinates,
         "incident_datetime": incident_dt,
         "today": today,
+        "map_scale": scale,
     }
     fid = _insert_letter_row(
         conn,
@@ -670,7 +688,7 @@ def generate_letter_docx(
 
     task_geometry = _lookup_task_geometry(conn, record, store_cfg)
     try:
-        map_png = render_situational_map(lon, lat, task_geometry, settings)
+        map_png = render_situational_map(lon, lat, task_geometry, settings, scale=scale)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Map render failed, using blank canvas fallback: %s", exc)
         from PIL import Image
@@ -681,7 +699,7 @@ def generate_letter_docx(
         img.save(buf, format="PNG")
         map_png = buf.getvalue()
 
-    append_map_page(document, map_png)
+    append_map_page(document, map_png, scale=scale, lon=lon, lat=lat)
 
     photo_payloads: list[tuple[bytes, str]] = []
     for index, pid in enumerate(ordered_ids, start=1):
@@ -702,3 +720,29 @@ def generate_letter_docx(
 
     filename = f"Письмо_ОАТИ_{fid}.docx"
     return fid, document_to_bytes(document), filename
+
+
+def render_letter_map_preview(
+    conn: PgConnection,
+    task_key: str,
+    report_id: int,
+    *,
+    scale: int = DEFAULT_MAP_SCALE,
+    settings: Settings | None = None,
+) -> bytes:
+    """Render situational-map PNG for the letter form preview."""
+    settings = settings or get_settings()
+    store_cfg = crm_task_store_config()
+    try:
+        scale = normalize_map_scale(scale)
+    except ValueError as exc:
+        raise LetterError(str(exc), status_code=422) from exc
+
+    record = fetch_task_by_key(conn, store_cfg, task_key)
+    if record is None:
+        raise LetterError("Задача не найдена", status_code=404)
+
+    report_geometry = _load_report_geometry(conn, task_key, report_id, store_cfg)
+    lon, lat = _geometry_centroid_lonlat(report_geometry)
+    task_geometry = _lookup_task_geometry(conn, record, store_cfg)
+    return render_situational_map(lon, lat, task_geometry, settings, scale=scale)

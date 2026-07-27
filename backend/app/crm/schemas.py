@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CollectTasksRequest(BaseModel):
@@ -373,6 +373,8 @@ class OatiLetterDraftOut(BaseModel):
     address_geocode: str = ""
     address_mos: str = ""
     engineering_options: list[str] = Field(default_factory=list)
+    map_scales: list[int] = Field(default_factory=lambda: [1000, 2000, 5000, 10000])
+    map_scale_default: int = 1000
 
 
 class OatiLetterGenerateRequest(BaseModel):
@@ -382,3 +384,12 @@ class OatiLetterGenerateRequest(BaseModel):
     description: str = ""
     violation: str = ""
     photo_ids: list[int] = Field(default_factory=list)
+    map_scale: int = 1000
+
+    @field_validator("map_scale")
+    @classmethod
+    def _validate_map_scale(cls, value: int) -> int:
+        allowed = {1000, 2000, 5000, 10000}
+        if value not in allowed:
+            raise ValueError(f"map_scale must be one of {sorted(allowed)}")
+        return value
