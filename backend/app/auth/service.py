@@ -48,6 +48,8 @@ def authenticate(
 def fetch_allowed_rayons(conn: PgConnection, session: UserSession) -> list[str]:
     if districts_unrestricted(session) or not session.work_zones:
         return []
+    from app.layers.geojson import normalize_rayon_name
+
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -59,7 +61,16 @@ def fetch_allowed_rayons(conn: PgConnection, session: UserSession) -> list[str]:
                 """,
                 (session.work_zones,),
             )
-            return [str(row[0]).strip() for row in cur.fetchall() if row[0]]
+            seen: set[str] = set()
+            result: list[str] = []
+            for row in cur.fetchall():
+                if not row[0]:
+                    continue
+                name = normalize_rayon_name(str(row[0]))
+                if name and name not in seen:
+                    seen.add(name)
+                    result.append(name)
+            return result
     except Exception:
         try:
             conn.rollback()
@@ -75,7 +86,9 @@ def is_rayon_allowed(
 ) -> bool:
     if districts_unrestricted(session):
         return True
+    from app.layers.geojson import normalize_rayon_name
+
     allowed = fetch_allowed_rayons(conn, session)
     if not allowed and session.work_zones:
         return False
-    return rayon.strip() in set(allowed)
+    return normalize_rayon_name(rayon) in set(allowed)

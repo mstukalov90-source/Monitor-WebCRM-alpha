@@ -1,6 +1,11 @@
 import type { PathOptions } from 'leaflet'
 import type { TaskFeature } from '../types'
-import { AREA_STATUS_COLORS, areaStatusFromAttributes, isAnaliseComplete } from '../types'
+import {
+  AREA_STATUS_COLORS,
+  areaStatusFromAttributes,
+  isAnaliseComplete,
+  normalizeRayonName,
+} from '../types'
 
 export type DistrictFillKind = 'done' | 'free' | 'empty' | 'mixed'
 export type DistrictHatchKind = 'green' | 'red' | 'none'
@@ -76,7 +81,7 @@ export function buildDistrictStyleByRayon(
 ): Map<string, DistrictOrderVisual> {
   const map = new Map<string, DistrictOrderVisual>()
   for (const group of groups) {
-    map.set(group.rayon, districtOrderVisual(group.orders))
+    map.set(normalizeRayonName(group.rayon), districtOrderVisual(group.orders))
   }
   return map
 }

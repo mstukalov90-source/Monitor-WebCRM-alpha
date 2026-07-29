@@ -420,7 +420,7 @@ def _geom_hash_expr(geom_col: str = "geom") -> str:
 
 
 _ITEMS_LINK_TABLE_RE = re.compile(
-    r"^data_mos\.items_\d+_(points|lines|polygons)$"
+    r'^"?data_mos"?\."?items_\d+_(?:points|lines|polygons)"?$'
 )
 
 

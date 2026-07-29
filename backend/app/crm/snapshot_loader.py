@@ -118,7 +118,9 @@ def _row_to_snapshot_row(
     if resolved is None:
         return None
     subgroup_name, _, _ = resolved
-    group_name = row["type"] or _find_group_name(subgroup_name, crm_cfg)
+    # Prefer canonical CRM group for subgroup (snapshot type may be stale, e.g. "Разрытие").
+    canonical = _find_group_name(subgroup_name, crm_cfg)
+    group_name = canonical or (row.get("type") or "")
     sent_at = row.get("sent_at")
     sent_str = sent_at.isoformat() if isinstance(sent_at, datetime) else str(sent_at or "")
     return SnapshotRow(
@@ -381,9 +383,9 @@ def _lookup_feature_for_record(
     if not mapping:
         return None
 
-    from app.layers.geojson import fetch_feature_by_task_key
+    from app.layers.geojson import resolve_feature_for_task_key
 
-    feature_data = fetch_feature_by_task_key(conn, record.key, subgroup_name, store_cfg)
+    feature_data = resolve_feature_for_task_key(conn, record.key, subgroup_name, store_cfg)
     if feature_data:
         return feature_data
 
@@ -481,15 +483,12 @@ def snapshot_row_to_feature(
     if not mapping:
         return None
 
-    import json
+    from app.layers.geojson import resolve_feature_for_task_key
 
-    feature_data = None
-    if mapping.get("scoped_geometry_id"):
-        from app.layers.geojson import fetch_feature_by_task_key
-
-        feature_data = fetch_feature_by_task_key(
-            conn, snap.task_key, snap.subgroup_name, store_cfg
-        )
+    # Prefer stable task_key / source anchor over frozen (possibly rewritten) business_id.
+    feature_data = resolve_feature_for_task_key(
+        conn, snap.task_key, snap.subgroup_name, store_cfg
+    )
 
     source_field = mapping.get("source_field")
     task_column = mapping.get("task_column")
@@ -734,9 +733,9 @@ def _batch_layer_snaps_in_district(
     district_wkt: str,
     metric_srid: int,
 ) -> dict[str, TaskFeature]:
-    """Resolve layer-backed snaps via fetch_features_by_business_ids (batched per layer)."""
+    """Resolve layer-backed snaps via task_key/anchor first, then business_ids."""
     from app.crm.store import parse_scoped_business_id
-    from app.layers.geojson import fetch_feature_by_task_key
+    from app.layers.geojson import resolve_feature_for_task_key
 
     if not snaps:
         return {}
@@ -766,23 +765,22 @@ def _batch_layer_snaps_in_district(
         )
         scoped = bool(mapping.get("scoped_geometry_id"))
 
-        # Scoped: resolve via task_key link table when possible.
-        if scoped:
-            remaining: list[SnapshotRow] = []
-            for snap in sub_snaps:
-                feature_data = fetch_feature_by_task_key(
-                    conn, snap.task_key, subgroup_name, store_cfg
-                )
-                if feature_data and feature_data.get("geometry"):
-                    if geometry_in_district(
-                        conn, feature_data["geometry"], district_wkt, metric_srid
-                    ):
-                        result[snap.snapshot_key] = _feature_from_layer_data(snap, feature_data)
-                    continue
-                remaining.append(snap)
-            sub_snaps = remaining
-            if not sub_snaps:
+        # Prefer stable task_key / source anchor over frozen business_id.
+        remaining: list[SnapshotRow] = []
+        for snap in sub_snaps:
+            feature_data = resolve_feature_for_task_key(
+                conn, snap.task_key, subgroup_name, store_cfg
+            )
+            if feature_data and feature_data.get("geometry"):
+                if geometry_in_district(
+                    conn, feature_data["geometry"], district_wkt, metric_srid
+                ):
+                    result[snap.snapshot_key] = _feature_from_layer_data(snap, feature_data)
                 continue
+            remaining.append(snap)
+        sub_snaps = remaining
+        if not sub_snaps:
+            continue
 
         # Group lookup ids by geometry prefix for scoped ids.
         id_to_snaps: dict[str, list[SnapshotRow]] = {}

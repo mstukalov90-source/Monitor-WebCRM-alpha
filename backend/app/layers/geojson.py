@@ -449,8 +449,107 @@ def fetch_feature_by_task_key(
     return None
 
 
+def fetch_feature_by_source_anchor(
+    conn: PgConnection,
+    task_key: str,
+    store_cfg: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Full feature via crm.tasks.source_table + source_row_id when items.task_key is missing."""
+    from app.layers.registry import get_registry
+
+    schema = "crm"
+    table = "tasks"
+    if store_cfg:
+        schema = store_cfg.get("schema", schema)
+        table = store_cfg.get("table", table)
+
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT source_table, source_row_id
+            FROM "{schema}"."{table}"
+            WHERE key = %s::uuid
+            LIMIT 1
+            """,
+            (task_key,),
+        )
+        anchor = cur.fetchone()
+
+    if not anchor:
+        return None
+    source_table = anchor.get("source_table")
+    source_row_id = anchor.get("source_row_id")
+    if source_table is None or source_row_id is None:
+        return None
+    if not _is_data_mos_items_table(str(source_table)):
+        return None
+
+    registry = get_registry()
+    layer = next(
+        (layer for layer in registry.by_key.values() if layer.qualified_table == str(source_table)),
+        None,
+    )
+    if layer is None:
+        # source_table may be stored without quotes; try matching table_name.
+        bare = str(source_table).replace('"', "")
+        layer = next(
+            (
+                layer
+                for layer in registry.by_key.values()
+                if layer.qualified_table.replace('"', "") == bare
+            ),
+            None,
+        )
+    if layer is None:
+        return None
+
+    geom_col = layer.geometry_column
+    query = f"""
+        SELECT to_jsonb(t) - '{geom_col}' AS attrs,
+               ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+        FROM {layer.qualified_table} t
+        WHERE t.id = %s
+        LIMIT 1
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, (source_row_id,))
+        row = cur.fetchone()
+    if not row or not row.get("geometry"):
+        return None
+    return {
+        "layer_name": layer.display_name,
+        "layer_key": layer.layer_key,
+        "attributes": dict(row["attrs"]) if row["attrs"] else {},
+        "geometry": row["geometry"],
+    }
+
+
+def resolve_feature_for_task_key(
+    conn: PgConnection,
+    task_key: str,
+    subgroup_name: str,
+    store_cfg: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Prefer items.task_key, then crm.tasks source anchor."""
+    feature_data = fetch_feature_by_task_key(conn, task_key, subgroup_name, store_cfg)
+    if feature_data and feature_data.get("geometry"):
+        return feature_data
+    return fetch_feature_by_source_anchor(conn, task_key, store_cfg)
+
+
 def normalize_rayon_name(value: str) -> str:
-    return " ".join(str(value or "").split()).strip()
+    """Collapse whitespace (incl. CR/LF) and strip spaces around hyphens."""
+    text = " ".join(str(value or "").split()).strip()
+    return re.sub(r"\s*-\s*", "-", text)
+
+
+def sql_normalize_rayon_expr(field_sql: str) -> str:
+    """SQL expression matching normalize_rayon_name() for a text column/expr."""
+    return (
+        f"regexp_replace("
+        f"regexp_replace(trim(({field_sql})::text), '\\s+', ' ', 'g'), "
+        f"'\\s*-\\s*', '-', 'g')"
+    )
 
 
 def fetch_district_wkt(
@@ -464,6 +563,7 @@ def fetch_district_wkt(
     normalized = normalize_rayon_name(rayon)
     if not normalized:
         return None
+    field_norm = sql_normalize_rayon_expr(f'"{field}"')
     query = f"""
         SELECT ST_AsText(
             ST_Union(
@@ -471,7 +571,7 @@ def fetch_district_wkt(
             )
         ) AS wkt
         FROM "{schema}"."{table}"
-        WHERE regexp_replace(trim("{field}"::text), '\\s+', ' ', 'g') = %s
+        WHERE {field_norm} = %s
     """
     with conn.cursor() as cur:
         cur.execute(query, (normalized,))
@@ -513,7 +613,15 @@ def list_districts(
     """
     with conn.cursor() as cur:
         cur.execute(query, params)
-        return [row[0] for row in cur.fetchall()]
+        seen: set[str] = set()
+        result: list[str] = []
+        for row in cur.fetchall():
+            name = normalize_rayon_name(row[0])
+            if name and name not in seen:
+                seen.add(name)
+                result.append(name)
+        result.sort(key=lambda s: s.casefold())
+        return result
 
 
 def list_districts_with_gid(
@@ -545,11 +653,16 @@ def list_districts_with_gid(
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
-        return [
-            {"gid": int(row["gid"]), "rayon": str(row["rayon"]).strip()}
-            for row in cur.fetchall()
-            if row["gid"] is not None and row["rayon"]
-        ]
+        rows: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            if row["gid"] is None or not row["rayon"]:
+                continue
+            name = normalize_rayon_name(str(row["rayon"]))
+            if not name:
+                continue
+            rows.append({"gid": int(row["gid"]), "rayon": name})
+        rows.sort(key=lambda item: str(item["rayon"]).casefold())
+        return rows
 
 
 def geometry_in_district(

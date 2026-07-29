@@ -196,8 +196,9 @@ export const EXCLUDED_OKRUG_SHORT = ['НАО', 'ТАО'] as const
 /** Bbox Москвы и ближайшей области: minLon,minLat,maxLon,maxLat */
 export const MOSCOW_MAP_BBOX = '36.8,55.4,38.2,56.1'
 
+/** Collapse whitespace (incl. CR/LF) and strip spaces around hyphens. */
 export function normalizeRayonName(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
+  return value.replace(/\s+/g, ' ').trim().replace(/\s*-\s*/g, '-')
 }
 
 export function resolveRayonFromDistricts(raw: unknown, districts: string[]): string {

@@ -67,15 +67,19 @@ def fetch_tasks_area_geojson(
 ) -> dict[str, Any]:
     clear_stale_analise_locks(conn)
 
+    from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
+
     filters = ['"geom" IS NOT NULL']
     params: list[Any] = []
+    rayon_norm_sql = sql_normalize_rayon_expr('"rayon"')
 
     if rayon:
-        filters.append('"rayon" = %s')
-        params.append(rayon)
+        filters.append(f"{rayon_norm_sql} = %s")
+        params.append(normalize_rayon_name(rayon))
     elif rayons:
-        filters.append('"rayon" = ANY(%s)')
-        params.append(rayons)
+        normalized = [normalize_rayon_name(r) for r in rayons if normalize_rayon_name(r)]
+        filters.append(f"{rayon_norm_sql} = ANY(%s)")
+        params.append(normalized)
     if status:
         filters.append('"status" = %s')
         params.append(status)
