@@ -142,7 +142,7 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("Исполнитель: ООО Строй", joined)
         self.assertIn("\n7. Признаки незаконности:\n• Отсутствие КГС", joined)
 
-        # Auto-filled values are semi-bold; labels stay regular.
+        # Auto-filled values in п.1–7 are semi-bold; labels and outside text stay regular.
         for paragraph in doc.paragraphs:
             for run in paragraph.runs:
                 chunk = run.text or ""
@@ -154,6 +154,27 @@ class DocxFillTests(unittest.TestCase):
                     self.assertFalse(run.bold, msg=repr(chunk[:60]))
                 if "Заказчик:" in chunk and "АО" not in chunk:
                     self.assertFalse(run.bold, msg=repr(chunk[:60]))
+
+        # Title / subject / appendix auto-fill must not be bold.
+        for paragraph in doc.paragraphs:
+            if not paragraph.text.startswith("Отчёт об инциденте"):
+                continue
+            for run in paragraph.runs:
+                chunk = (run.text or "").strip()
+                if not chunk:
+                    continue
+                # Stop at section 1 — values after that may be bold (п.1).
+                if "1. Сведения" in chunk or chunk.startswith("Заказчик") or chunk.startswith("Исполнитель"):
+                    break
+                if chunk in ("ул. Ленина", "23.07.2026", "7", "от", "№", ":"):
+                    self.assertFalse(bool(run.bold), msg=repr(chunk))
+
+        for paragraph in doc.paragraphs:
+            if "Фотофиксация:" not in paragraph.text:
+                continue
+            for run in paragraph.runs:
+                if "3" in (run.text or ""):
+                    self.assertFalse(bool(run.bold), msg=repr(run.text))
 
         # Subject soft break in letterhead table.
         subject_joined = "\n".join(

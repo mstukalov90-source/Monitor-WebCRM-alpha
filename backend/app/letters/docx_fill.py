@@ -392,13 +392,13 @@ def fill_letter_template(
     desc = (description or "").strip() or DEFAULT_DESCRIPTION
     viol = (violation or "").strip() or blank
     producer = format_producer_block(customer, executor)
-    # Auto-filled values are wrapped for bold rendering.
+    # Bold only for auto-filled values inside sections 1–7.
     unique_map = {
-        PH_DOC_DATE: _mark_bold(f"от {today} г." if today else blank),
-        PH_DOC_NUMBER: _mark_bold(f"№ {fid}"),
-        PH_STREET: _mark_bold(street or blank),
-        PH_TODAY: _mark_bold(today or blank),
-        PH_FID: _mark_bold(str(fid)),
+        PH_DOC_DATE: f"от {today} г." if today else blank,
+        PH_DOC_NUMBER: f"№ {fid}",
+        PH_STREET: street or blank,
+        PH_TODAY: today or blank,
+        PH_FID: str(fid),
         PH_EXECUTOR: producer,
         PH_PHOTO_DT: _mark_bold(incident_datetime if incident_datetime else blank),
         PH_ADDRESS: _mark_bold(address if address else blank),
@@ -406,7 +406,7 @@ def fill_letter_template(
         PH_ENG: _mark_bold(engineering if engineering else blank),
         PH_DESCRIPTION: _mark_bold(desc),
         PH_VIOLATION: _mark_bold_lines(viol),
-        PH_PHOTO_COUNT: _mark_bold(str(int(photo_count))),
+        PH_PHOTO_COUNT: str(int(photo_count)),
     }
     for paragraph in _iter_all_paragraphs(document):
         _replace_in_paragraph(paragraph, unique_map)
