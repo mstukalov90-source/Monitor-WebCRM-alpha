@@ -323,6 +323,7 @@ export interface OatiLetterDraft {
   lon: number
   lat: number
   incident_datetime: string
+  customer: string
   executor: string
   address: string
   engineering: string
@@ -336,16 +337,19 @@ export interface OatiLetterDraft {
   address_geocode: string
   address_mos: string
   engineering_options: string[]
+  violation_options: string[]
   map_scales: number[]
   map_scale_default: number
 }
 
 export interface OatiLetterGeneratePayload {
+  customer: string
   executor: string
   address: string
   engineering: string
   description: string
-  violation: string
+  violation?: string
+  violation_names: string[]
   photo_ids: number[]
   map_scale: number
 }

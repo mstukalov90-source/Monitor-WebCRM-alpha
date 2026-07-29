@@ -21,12 +21,12 @@ TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "oati_letter.doc
 MAP_WIDTH_CM_DOCX = 16.0
 BODY_FONT_NAME = "Times New Roman"
 BODY_FONT_SIZE = Pt(14)
+MAP_PAGE_TITLE = "Ситуационный план места проведения земельных работ"
+DEFAULT_DESCRIPTION = "Земляные работы при строительстве подземных коммуникаций."
 
-DEFAULT_VIOLATION = (
-    "нормативный правовой акт города Москвы, требования которого были нарушены - "
-    "часть 5 статьи 17 Закона города Москвы от 30.04.2014 № 18 "
-    "«О благоустройстве в городе Москве»"
-)
+# Private-use markers wrap auto-filled values so they render bold in Word.
+_BOLD_OPEN = "\ue000"
+_BOLD_CLOSE = "\ue001"
 
 # Placeholders as they appear in the joined paragraph text (may be split across runs).
 PH_DOC_DATE = "{cn{document.date(DateRU)(Concat:от | г. )}cn}"
@@ -51,17 +51,18 @@ PH_ENG = (
     "если работаем с задачей где этого нет можем ввести вручную или оставить пустым}"
 )
 PH_DESCRIPTION = "{Ввод комментария вручную}"
-PH_VIOLATION = (
-    "{Ввод комментария вручную, по умолчанию заполнено : "
-    "нормативный правовой акт города Москвы, требования которого были нарушены - "
-    "часть 5 статьи 17 Закона города Москвы от 30.04.2014 № 18 "
-    "«О благоустройстве в городе Москве»}"
-)
+PH_VIOLATION = "{Признаки незаконности из справочника}"
+PH_PHOTO_COUNT = "{число выбранных фото}"
 
 # Soft line breaks lost during placeholder join — re-insert before these markers.
 _LINE_BREAK_BEFORE = (
     "1. Сведения о производителе работ:",
-    "7. Данные, указывающие на признаки наличия события административного правонарушения:",
+    "7. Признаки незаконности:",
+)
+
+# After join, ensure list content starts on the next line under the section header.
+_LINE_BREAK_AFTER = (
+    "7. Признаки незаконности:",
 )
 
 # Subject line in letterhead table: restore soft break after join.
@@ -79,6 +80,7 @@ def format_ru_date(dt: datetime | None = None) -> str:
 
 
 def format_ru_datetime(value: str | datetime | None) -> str:
+    """Legacy helper: date + time. Prefer ``format_ru_date_value`` for letter item 2."""
     if value is None or value == "":
         return ""
     if isinstance(value, datetime):
@@ -96,6 +98,30 @@ def format_ru_datetime(value: str | datetime | None) -> str:
     else:
         dt = dt.astimezone(MSK)
     return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def format_ru_date_value(value: str | datetime | None) -> str:
+    """Normalize ISO/datetime to ``ДД.ММ.ГГГГ`` (date only)."""
+    if value is None or value == "":
+        return ""
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            # Already a date-like string without time.
+            if len(text) >= 10 and text[2] == "." and text[5] == ".":
+                return text[:10]
+            return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=MSK)
+    else:
+        dt = dt.astimezone(MSK)
+    return dt.strftime("%d.%m.%Y")
 
 
 def format_wgs84(lon: float, lat: float) -> str:
@@ -121,10 +147,53 @@ def map_caption_text(scale: int, lat: float, lon: float) -> str:
     coords = format_wgs84(lon, lat)
     url = yandex_maps_url(lon, lat)
     return (
-        f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи;\n"
+        f"Масштаб 1:{scale}.\n"
+        f"Красный знак — место проведения земляных работ;\n"
         f"Координаты инцидента в WGS 84: {coords};\n"
         f"{url}"
     )
+
+
+def photo_caption_label(index: int, *, banner: bool) -> str:
+    kind = "Информационный щит" if banner else "Обзорное фото"
+    return f"Фото {index} · {kind}"
+
+
+def format_violation_block(names: list[str]) -> str:
+    """Join selected illegal-reason names as a bullet list (one item per line)."""
+    cleaned = [n.strip() for n in names if (n or "").strip()]
+    if not cleaned:
+        return "__________"
+    return "\n".join(f"• {name}" for name in cleaned)
+
+
+def format_producer_block(customer: str, executor: str) -> str:
+    """Section 1 body: Заказчик / Исполнитель lines; omit empty labels; bold values."""
+    c = (customer or "").strip()
+    e = (executor or "").strip()
+    lines: list[str] = []
+    if c:
+        lines.append(f"Заказчик: {_mark_bold(c)}")
+    if e:
+        lines.append(f"Исполнитель: {_mark_bold(e)}")
+    if not lines:
+        return _mark_bold("__________")
+    if len(lines) == 1:
+        return lines[0]
+    # Second line indented like the sample letter (tabs before «Исполнитель»).
+    return f"{lines[0]}\n\t\t\t\t\t\t {lines[1]}"
+
+
+def _mark_bold(value: str) -> str:
+    """Wrap auto-filled value so ``_set_paragraph_text`` renders it bold."""
+    return f"{_BOLD_OPEN}{value}{_BOLD_CLOSE}"
+
+
+def _mark_bold_lines(value: str) -> str:
+    """Bold each line separately (needed when value contains soft breaks)."""
+    if "\n" not in value:
+        return _mark_bold(value)
+    return "\n".join(_mark_bold(line) if line else "" for line in value.split("\n"))
 
 
 def _add_hyperlink(paragraph: Paragraph, url: str, text: str, *, font_size: Pt = Pt(9)) -> None:
@@ -171,7 +240,7 @@ def _add_hyperlink(paragraph: Paragraph, url: str, text: str, *, font_size: Pt =
 
 
 def _ensure_structural_breaks(text: str) -> str:
-    """Insert ``\\n`` before numbered section markers when missing."""
+    """Insert ``\\n`` before/after numbered section markers when missing."""
     result = text
     if _SUBJECT_JOINED in result:
         result = result.replace(_SUBJECT_JOINED, _SUBJECT_SPLIT, 1)
@@ -185,13 +254,26 @@ def _ensure_structural_breaks(text: str) -> str:
                 result = result[:pos] + "\n" + result[pos:]
                 pos += 1
             idx = pos + len(marker)
+    for marker in _LINE_BREAK_AFTER:
+        idx = 0
+        while True:
+            pos = result.find(marker, idx)
+            if pos < 0:
+                break
+            end = pos + len(marker)
+            if end < len(result) and result[end] != "\n":
+                result = result[:end] + "\n" + result[end:]
+                end += 1
+            idx = end
     return result
 
 
-def _apply_body_font(run: Run) -> None:
+def _apply_body_font(run: Run, *, bold: bool | None = None) -> None:
     """Force Times New Roman 14 on a run (incl. complex-script / East Asian)."""
     run.font.name = BODY_FONT_NAME
     run.font.size = BODY_FONT_SIZE
+    if bold is not None:
+        run.bold = bold
     r_pr = run._element.get_or_add_rPr()
     r_fonts = r_pr.get_or_add_rFonts()
     r_fonts.set(qn("w:ascii"), BODY_FONT_NAME)
@@ -213,24 +295,55 @@ def _clear_paragraph_runs(paragraph: Paragraph) -> None:
             p_el.remove(child)
 
 
+def _emit_marked_line(paragraph: Paragraph, line: str) -> Run | None:
+    """Append runs for one line that may contain bold markers; return last run."""
+    last: Run | None = None
+    cursor = 0
+    while cursor < len(line):
+        open_at = line.find(_BOLD_OPEN, cursor)
+        if open_at < 0:
+            chunk = line[cursor:]
+            if chunk:
+                last = paragraph.add_run(chunk)
+                _apply_body_font(last, bold=False)
+            break
+        if open_at > cursor:
+            last = paragraph.add_run(line[cursor:open_at])
+            _apply_body_font(last, bold=False)
+        close_at = line.find(_BOLD_CLOSE, open_at + len(_BOLD_OPEN))
+        if close_at < 0:
+            # Unbalanced marker — emit remainder as normal text.
+            last = paragraph.add_run(line[open_at + len(_BOLD_OPEN) :])
+            _apply_body_font(last, bold=False)
+            break
+        bold_text = line[open_at + len(_BOLD_OPEN) : close_at]
+        last = paragraph.add_run(bold_text)
+        _apply_body_font(last, bold=True)
+        cursor = close_at + len(_BOLD_CLOSE)
+    return last
+
+
 def _set_paragraph_text(paragraph: Paragraph, text: str) -> None:
-    """Replace paragraph runs; ``\\n`` becomes a Word soft line break at TNR 14."""
+    """Replace paragraph runs; ``\\n`` = soft break; ``\\ue000…\\ue001`` = bold value."""
     _clear_paragraph_runs(paragraph)
     parts = text.split("\n")
     for i, part in enumerate(parts):
-        run = paragraph.add_run(part)
-        _apply_body_font(run)
+        last = _emit_marked_line(paragraph, part)
         if i < len(parts) - 1:
-            run.add_break(WD_BREAK.LINE)
+            if last is None:
+                last = paragraph.add_run("")
+                _apply_body_font(last, bold=False)
+            last.add_break(WD_BREAK.LINE)
 
 
 def _normalize_body_paragraph_fonts(document: Document) -> None:
-    """Ensure letter body paragraphs (not letterhead tables) are TNR 14."""
+    """Ensure letter body paragraphs (not letterhead tables) are TNR 14; keep bold."""
     for paragraph in document.paragraphs:
         if not paragraph.text.strip():
             continue
         for run in paragraph.runs:
-            _apply_body_font(run)
+            was_bold = bool(run.bold)
+            _apply_body_font(run, bold=was_bold if run.bold is not None else None)
 
 
 def _replace_in_paragraph(paragraph: Paragraph, mapping: dict[str, str]) -> None:
@@ -261,33 +374,39 @@ def fill_letter_template(
     street: str,
     today: str,
     fid: int | str,
-    executor: str,
+    customer: str = "",
+    executor: str = "",
     incident_datetime: str,
     address: str,
     coordinates: str,
     engineering: str,
     description: str,
     violation: str,
+    photo_count: int = 0,
 ) -> Document:
     if not TEMPLATE_PATH.is_file():
         raise FileNotFoundError(f"Letter template not found: {TEMPLATE_PATH}")
 
     document = Document(str(TEMPLATE_PATH))
     blank = "__________"
-    # Longer placeholders first: PH_VIOLATION starts with PH_DESCRIPTION text.
+    desc = (description or "").strip() or DEFAULT_DESCRIPTION
+    viol = (violation or "").strip() or blank
+    producer = format_producer_block(customer, executor)
+    # Auto-filled values are wrapped for bold rendering.
     unique_map = {
-        PH_DOC_DATE: f"от {today} г." if today else blank,
-        PH_DOC_NUMBER: f"№ {fid}",
-        PH_STREET: street or blank,
-        PH_TODAY: today or blank,
-        PH_FID: str(fid),
-        PH_EXECUTOR: executor if executor else blank,
-        PH_PHOTO_DT: incident_datetime if incident_datetime else blank,
-        PH_ADDRESS: address if address else blank,
-        PH_COORDS: coordinates if coordinates else blank,
-        PH_ENG: engineering if engineering else blank,
-        PH_VIOLATION: violation if violation else DEFAULT_VIOLATION,
-        PH_DESCRIPTION: description if description else blank,
+        PH_DOC_DATE: _mark_bold(f"от {today} г." if today else blank),
+        PH_DOC_NUMBER: _mark_bold(f"№ {fid}"),
+        PH_STREET: _mark_bold(street or blank),
+        PH_TODAY: _mark_bold(today or blank),
+        PH_FID: _mark_bold(str(fid)),
+        PH_EXECUTOR: producer,
+        PH_PHOTO_DT: _mark_bold(incident_datetime if incident_datetime else blank),
+        PH_ADDRESS: _mark_bold(address if address else blank),
+        PH_COORDS: _mark_bold(coordinates if coordinates else blank),
+        PH_ENG: _mark_bold(engineering if engineering else blank),
+        PH_DESCRIPTION: _mark_bold(desc),
+        PH_VIOLATION: _mark_bold_lines(viol),
+        PH_PHOTO_COUNT: _mark_bold(str(int(photo_count))),
     }
     for paragraph in _iter_all_paragraphs(document):
         _replace_in_paragraph(paragraph, unique_map)
@@ -304,7 +423,7 @@ def _add_page_break(document: Document) -> None:
 def append_map_page(
     document: Document,
     map_png: bytes,
-    title: str = "Ситуационный план",
+    title: str = MAP_PAGE_TITLE,
     *,
     scale: int = 1000,
     lon: float | None = None,
@@ -327,22 +446,22 @@ def append_map_page(
     if lon is not None and lat is not None:
         url = yandex_maps_url(lon, lat)
         coords = format_wgs84(lon, lat)
-        line1 = (
-            f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи;"
-        )
-        line2 = f"Координаты инцидента в WGS 84: {coords};"
-        r1 = caption.add_run(line1)
+        r1 = caption.add_run(f"Масштаб 1:{scale}.")
         r1.font.name = BODY_FONT_NAME
         r1.font.size = Pt(9)
         r1.add_break(WD_BREAK.LINE)
-        r2 = caption.add_run(line2)
+        r2 = caption.add_run("Красный знак — место проведения земляных работ;")
         r2.font.name = BODY_FONT_NAME
         r2.font.size = Pt(9)
         r2.add_break(WD_BREAK.LINE)
+        r3 = caption.add_run(f"Координаты инцидента в WGS 84: {coords};")
+        r3.font.name = BODY_FONT_NAME
+        r3.font.size = Pt(9)
+        r3.add_break(WD_BREAK.LINE)
         _add_hyperlink(caption, url, url, font_size=Pt(9))
     else:
         cap = caption.add_run(
-            f"Масштаб 1:{scale}. Красный маркер — разрытие; синий — объект задачи."
+            f"Масштаб 1:{scale}.\nКрасный знак — место проведения земляных работ."
         )
         cap.font.name = BODY_FONT_NAME
         cap.font.size = Pt(9)

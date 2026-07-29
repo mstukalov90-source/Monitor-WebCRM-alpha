@@ -360,6 +360,7 @@ class OatiLetterDraftOut(BaseModel):
     lon: float
     lat: float
     incident_datetime: str = ""
+    customer: str = ""
     executor: str = ""
     address: str = ""
     engineering: str = ""
@@ -373,16 +374,19 @@ class OatiLetterDraftOut(BaseModel):
     address_geocode: str = ""
     address_mos: str = ""
     engineering_options: list[str] = Field(default_factory=list)
+    violation_options: list[str] = Field(default_factory=list)
     map_scales: list[int] = Field(default_factory=lambda: [1000, 2000, 5000, 10000])
     map_scale_default: int = 1000
 
 
 class OatiLetterGenerateRequest(BaseModel):
+    customer: str = ""
     executor: str = ""
     address: str = ""
     engineering: str = ""
     description: str = ""
     violation: str = ""
+    violation_names: list[str] = Field(default_factory=list)
     photo_ids: list[int] = Field(default_factory=list)
     map_scale: int = 1000
 

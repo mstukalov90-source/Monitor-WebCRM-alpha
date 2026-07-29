@@ -69,11 +69,13 @@ def post_oati_letter(
                 task_key=key,
                 report_id=report_id,
                 created_by=user.login,
+                customer=body.customer or "",
                 executor=body.executor or "",
                 address=body.address or "",
                 engineering=body.engineering or "",
                 description=body.description or "",
                 violation=body.violation or "",
+                violation_names=list(body.violation_names or []),
                 photo_ids=list(body.photo_ids or []),
                 map_scale=body.map_scale,
             )

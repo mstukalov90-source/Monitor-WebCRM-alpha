@@ -13,7 +13,7 @@ from app.auth.session import UserSession
 from app.letters.docx_fill import (
     BODY_FONT_NAME,
     BODY_FONT_SIZE,
-    DEFAULT_VIOLATION,
+    DEFAULT_DESCRIPTION,
     PH_DESCRIPTION,
     PH_DOC_DATE,
     PH_STREET,
@@ -23,11 +23,15 @@ from app.letters.docx_fill import (
     append_photo_pages,
     document_to_bytes,
     fill_letter_template,
+    format_producer_block,
     format_ru_date,
+    format_ru_date_value,
     format_ru_datetime,
+    format_violation_block,
     format_wgs84,
     letter_download_filename,
     map_caption_text,
+    photo_caption_label,
     yandex_maps_url,
 )
 from app.letters.geocode import (
@@ -48,10 +52,12 @@ from app.letters.map_image import (
 )
 from app.letters.oati import (
     LetterError,
+    _lookup_customer,
     _lookup_engineering,
     _lookup_executor,
     _lookup_mos_simple_address,
     _validate_photo_ids,
+    _validate_violation_names,
     merge_engineering_values,
     pick_default_address,
     resolve_incident_datetime,
@@ -83,13 +89,17 @@ class DocxFillTests(unittest.TestCase):
             street="ул. Ленина",
             today="23.07.2026",
             fid=7,
+            customer="АО Заказчик",
             executor="ООО Строй",
-            incident_datetime="22.07.2026 15:30",
+            incident_datetime="22.07.2026",
             address="ул. Ленина, 10",
             coordinates="55.800000, 37.500000",
-            engineering="теплосеть",
+            engineering="не определено",
             description="описание А",
-            violation="",
+            violation=format_violation_block(
+                ["Отсутствие КГС", "Отсутствие уведомления"]
+            ),
+            photo_count=3,
         )
         from PIL import Image
 
@@ -97,7 +107,7 @@ class DocxFillTests(unittest.TestCase):
         Image.new("RGB", (40, 40), (180, 180, 180)).save(buf, format="PNG")
         png = buf.getvalue()
         append_map_page(doc, png, scale=2000, lon=37.5, lat=55.8)
-        append_photo_pages(doc, [(png, "Фото 1")])
+        append_photo_pages(doc, [(png, "Фото 1 · Обзорное фото")])
         data = document_to_bytes(doc)
         text = _docx_text(data)
 
@@ -108,21 +118,42 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("от 23.07.2026 г.", text)
         self.assertIn("№ 7", text)
         self.assertIn("ул. Ленина", text)
+        self.assertIn("Заказчик:", text)
+        self.assertIn("АО Заказчик", text)
+        self.assertIn("Исполнитель:", text)
         self.assertIn("ООО Строй", text)
         self.assertIn("описание А", text)
-        self.assertIn(DEFAULT_VIOLATION, text)
-        self.assertIn("Ситуационный план", text)
+        self.assertIn("незаконности земляных работ при строительстве инженерных коммуникаций", text)
+        self.assertIn("Описание характера работ", text)
+        self.assertIn("Признаки незаконности", text)
+        self.assertIn("• Отсутствие КГС", text)
+        self.assertIn("• Отсутствие уведомления", text)
+        self.assertIn("ОАТИ города Москвы", text)
+        self.assertIn("Фотофиксация: 3 экз.", text)
+        self.assertIn("Ситуационный план места проведения земельных работ", text)
         self.assertIn("О предоставлении информации", text)
         self.assertIn("об инциденте ул. Ленина от 23.07.2026 №7", text)
         self.assertGreaterEqual(_docx_image_count(data), 2)
 
-        # Soft breaks before items 1 and 7 must survive fill.
+        # Soft breaks before items 1 and 7 must survive fill; list under п.7.
         joined = "\n".join(p.text for p in doc.paragraphs)
         self.assertIn("\n1. Сведения о производителе работ:", joined)
-        self.assertIn(
-            "\n7. Данные, указывающие на признаки наличия события административного правонарушения:",
-            joined,
-        )
+        self.assertIn("Заказчик: АО Заказчик", joined)
+        self.assertIn("Исполнитель: ООО Строй", joined)
+        self.assertIn("\n7. Признаки незаконности:\n• Отсутствие КГС", joined)
+
+        # Auto-filled values are semi-bold; labels stay regular.
+        for paragraph in doc.paragraphs:
+            for run in paragraph.runs:
+                chunk = run.text or ""
+                if "описание А" in chunk or chunk.strip().startswith("• "):
+                    self.assertTrue(run.bold, msg=repr(chunk[:60]))
+                if "АО Заказчик" in chunk or "ООО Строй" in chunk:
+                    self.assertTrue(run.bold, msg=repr(chunk[:60]))
+                if chunk.startswith("6. Описание") or chunk.startswith("7. Признаки"):
+                    self.assertFalse(run.bold, msg=repr(chunk[:60]))
+                if "Заказчик:" in chunk and "АО" not in chunk:
+                    self.assertFalse(run.bold, msg=repr(chunk[:60]))
 
         # Subject soft break in letterhead table.
         subject_joined = "\n".join(
@@ -136,7 +167,7 @@ class DocxFillTests(unittest.TestCase):
             "Отчёт об инциденте",
             "1. Сведения о производителе работ",
             "2. Дата и время",
-            "7. Данные, указывающие",
+            "7. Признаки незаконности",
             "Приложение:",
             "1. Ситуационный план:",
         )
@@ -160,7 +191,8 @@ class DocxFillTests(unittest.TestCase):
         )
         caption = map_caption_text(1000, 55.8, 37.5)
         self.assertIn("Масштаб 1:1000", caption)
-        self.assertIn("разрытие", caption)
+        self.assertIn("Красный знак — место проведения земляных работ", caption)
+        self.assertNotIn("разрытие", caption)
         self.assertIn("55.800000, 37.500000", caption)
         self.assertIn("https://yandex.ru/maps/?pt=37.5,55.8&z=17&l=map", caption)
 
@@ -177,6 +209,7 @@ class DocxFillTests(unittest.TestCase):
             engineering="",
             description="",
             violation="",
+            photo_count=0,
         )
         buf = io.BytesIO()
         Image.new("RGB", (20, 20), (100, 100, 100)).save(buf, format="PNG")
@@ -184,8 +217,9 @@ class DocxFillTests(unittest.TestCase):
         data = document_to_bytes(doc)
         text = _docx_text(data)
         self.assertIn("Масштаб 1:5000", text)
-        self.assertIn("разрытие", text)
+        self.assertIn("Красный знак — место проведения земляных работ", text)
         self.assertIn("yandex.ru/maps", text)
+        self.assertIn(DEFAULT_DESCRIPTION, text)
 
         # Hyperlink relationship must exist in the package.
         with ZipFile(io.BytesIO(data)) as zf:
@@ -196,6 +230,7 @@ class DocxFillTests(unittest.TestCase):
         self.assertEqual(format_wgs84(37.5, 55.8), "55.800000, 37.500000")
         self.assertRegex(format_ru_date(), r"\d{2}\.\d{2}\.\d{4}")
         self.assertEqual(format_ru_datetime("2026-07-22T12:30:00+03:00"), "22.07.2026 12:30")
+        self.assertEqual(format_ru_date_value("2026-07-22T12:30:00+03:00"), "22.07.2026")
         self.assertEqual(
             letter_download_filename(street="улица Фомичёвой", today="27.07.2026", fid=15),
             "Об инциденте улица Фомичёвой от 27.07.2026 №15.docx",
@@ -204,6 +239,33 @@ class DocxFillTests(unittest.TestCase):
             letter_download_filename(street='ул. A/B:C', today="01.01.2026", fid=1),
             "Об инциденте ул. ABC от 01.01.2026 №1.docx",
         )
+        self.assertEqual(photo_caption_label(1, banner=True), "Фото 1 · Информационный щит")
+        self.assertEqual(photo_caption_label(2, banner=False), "Фото 2 · Обзорное фото")
+        self.assertEqual(
+            format_violation_block(["A", "B"]),
+            "• A\n• B",
+        )
+        self.assertEqual(format_violation_block([]), "__________")
+        self.assertEqual(
+            DEFAULT_DESCRIPTION,
+            "Земляные работы при строительстве подземных коммуникаций.",
+        )
+        both = format_producer_block("АО Заказчик", "ООО Исполнитель")
+        self.assertIn("Заказчик:", both)
+        self.assertIn("АО Заказчик", both)
+        self.assertIn("Исполнитель:", both)
+        self.assertIn("ООО Исполнитель", both)
+        self.assertIn("\n", both)
+        only_c = format_producer_block("АО Заказчик", "")
+        self.assertIn("Заказчик:", only_c)
+        self.assertNotIn("Исполнитель:", only_c)
+        only_e = format_producer_block("", "ООО Исполнитель")
+        self.assertIn("Исполнитель:", only_e)
+        self.assertNotIn("Заказчик:", only_e)
+        empty = format_producer_block("", "")
+        self.assertIn("__________", empty)
+        self.assertNotIn("Заказчик:", empty)
+        self.assertNotIn("Исполнитель:", empty)
 
     def test_template_has_no_empty_tables(self) -> None:
         from docx import Document
@@ -215,6 +277,7 @@ class DocxFillTests(unittest.TestCase):
                 p.text for row in table.rows for cell in row.cells for p in cell.paragraphs
             ).strip()
             self.assertTrue(text, msg="empty table left in letter template")
+        self.assertIn("ОАТИ города Москвы", doc.tables[0].cell(0, 1).text)
 
 
 class MapScaleTests(unittest.TestCase):
@@ -348,24 +411,73 @@ class SourceLookupTests(unittest.TestCase):
     def test_executor_from_source_general_contractor(self) -> None:
         conn = MagicMock()
         record = MagicMock(key="task-1")
-        with (
-            patch(
-                "app.letters.oati._lookup_source_feature",
-                return_value={"attributes": {"general_contractor": "ООО Ромашка"}},
-            ),
-            patch("app.letters.oati._lookup_field_assignee", return_value="field_user") as field_mock,
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"general_contractor": "ООО Ромашка"}},
         ):
             self.assertEqual(_lookup_executor(conn, record, {}), "ООО Ромашка")
-            field_mock.assert_not_called()
 
-    def test_executor_falls_back_to_field_assignee(self) -> None:
+    def test_executor_empty_when_source_missing(self) -> None:
         conn = MagicMock()
         record = MagicMock(key="task-1")
-        with (
-            patch("app.letters.oati._lookup_source_feature", return_value={"attributes": {}}),
-            patch("app.letters.oati._lookup_field_assignee", return_value="ivanov"),
+        with patch("app.letters.oati._lookup_source_feature", return_value={"attributes": {}}):
+            self.assertEqual(_lookup_executor(conn, record, {}), "")
+
+    def test_customer_from_source_fields(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"customer_construction": "ПАО МОЭК"}},
         ):
-            self.assertEqual(_lookup_executor(conn, record, {}), "ivanov")
+            self.assertEqual(_lookup_customer(conn, record, {}), "ПАО МОЭК")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"balanceholder": "АО Баланс"}},
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "АО Баланс")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"customer": "ООО Клиент"}},
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "ООО Клиент")
+
+    def test_fill_omits_empty_producer_labels(self) -> None:
+        doc = fill_letter_template(
+            street="ул. А",
+            today="24.07.2026",
+            fid=1,
+            customer="Только заказчик",
+            executor="",
+            incident_datetime="",
+            address="",
+            coordinates="",
+            engineering="",
+            description="",
+            violation="",
+            photo_count=0,
+        )
+        joined = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn("Заказчик: Только заказчик", joined)
+        self.assertNotIn("Исполнитель:", joined)
+
+        doc2 = fill_letter_template(
+            street="ул. А",
+            today="24.07.2026",
+            fid=1,
+            customer="",
+            executor="Только исполнитель",
+            incident_datetime="",
+            address="",
+            coordinates="",
+            engineering="",
+            description="",
+            violation="",
+            photo_count=0,
+        )
+        joined2 = "\n".join(p.text for p in doc2.paragraphs)
+        self.assertIn("Исполнитель: Только исполнитель", joined2)
+        self.assertNotIn("Заказчик:", joined2)
 
     def test_engineering_from_engineering_net_obj_not_type(self) -> None:
         conn = MagicMock()
@@ -441,7 +553,7 @@ class IncidentDatetimeTests(unittest.TestCase):
                 taken_at="2026-07-22T12:30:00+03:00",
             ),
         ]
-        self.assertEqual(resolve_incident_datetime(photos), "22.07.2026 12:30")
+        self.assertEqual(resolve_incident_datetime(photos), "22.07.2026")
 
     def test_falls_back_to_created_at_when_taken_at_null(self) -> None:
         from app.photos.field_photo import FieldPhotoItem
@@ -457,7 +569,7 @@ class IncidentDatetimeTests(unittest.TestCase):
                 taken_at=None,
             ),
         ]
-        self.assertEqual(resolve_incident_datetime(photos), "23.07.2026 16:40")
+        self.assertEqual(resolve_incident_datetime(photos), "23.07.2026")
 
     def test_preferred_ids_order_for_taken_at(self) -> None:
         from app.photos.field_photo import FieldPhotoItem
@@ -484,8 +596,34 @@ class IncidentDatetimeTests(unittest.TestCase):
         ]
         self.assertEqual(
             resolve_incident_datetime(photos, preferred_ids=[2, 1]),
-            "22.07.2026 11:00",
+            "22.07.2026",
         )
+
+
+class ViolationNamesTests(unittest.TestCase):
+    def test_accepts_known_names(self) -> None:
+        conn = MagicMock()
+        with patch(
+            "app.letters.oati._fetch_illegal_reason_names",
+            return_value=["A", "B", "C"],
+        ):
+            self.assertEqual(_validate_violation_names(conn, ["B", "A", "B"]), ["B", "A"])
+
+    def test_rejects_unknown_names(self) -> None:
+        conn = MagicMock()
+        with patch(
+            "app.letters.oati._fetch_illegal_reason_names",
+            return_value=["A"],
+        ):
+            with self.assertRaises(LetterError) as ctx:
+                _validate_violation_names(conn, ["A", "X"])
+            self.assertEqual(ctx.exception.status_code, 422)
+            self.assertIn("X", str(ctx.exception))
+
+    def test_engineering_special_values_passthrough(self) -> None:
+        # Form may send these radio values as engineering string.
+        self.assertEqual(merge_engineering_values("не определено", ""), "не определено")
+        self.assertEqual(merge_engineering_values("отсутствует", ""), "отсутствует")
 
 
 class MosAddressLookupTests(unittest.TestCase):

@@ -13,6 +13,10 @@ interface OatiLetterFormProps {
 }
 
 type AddressSource = 'geocode' | 'mos' | 'manual'
+type EngineeringSource = 'undefined' | 'absent' | 'list'
+
+const ENGINEERING_UNDEFINED = 'не определено'
+const ENGINEERING_ABSENT = 'отсутствует'
 
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -34,6 +38,13 @@ function defaultAddressSource(draft: OatiLetterDraft): AddressSource {
   return 'manual'
 }
 
+function defaultEngineeringSource(value: string): EngineeringSource {
+  const text = value.trim().toLowerCase()
+  if (text === ENGINEERING_UNDEFINED) return 'undefined'
+  if (text === ENGINEERING_ABSENT) return 'absent'
+  return 'list'
+}
+
 function addressSourceHint(source: AddressSource, draft: OatiLetterDraft): string {
   if (source === 'geocode') {
     if (draft.address_has_house) return ' (ближайший адрес)'
@@ -50,12 +61,14 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
+  const [customer, setCustomer] = useState('')
   const [executor, setExecutor] = useState('')
   const [address, setAddress] = useState('')
   const [addressSource, setAddressSource] = useState<AddressSource>('manual')
   const [engineering, setEngineering] = useState('')
+  const [engineeringSource, setEngineeringSource] = useState<EngineeringSource>('list')
   const [description, setDescription] = useState('')
-  const [violation, setViolation] = useState('')
+  const [selectedViolations, setSelectedViolations] = useState<string[]>([])
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([])
   const [mapScale, setMapScale] = useState(1000)
   const [mapPreviewUrl, setMapPreviewUrl] = useState<string | null>(null)
@@ -68,12 +81,15 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
       .then((data) => {
         if (cancelled) return
         setDraft(data)
+        setCustomer(data.customer ?? '')
         setExecutor(data.executor ?? '')
         setAddress(data.address ?? '')
         setAddressSource(defaultAddressSource(data))
-        setEngineering(data.engineering ?? '')
+        const eng = data.engineering ?? ''
+        setEngineering(eng)
+        setEngineeringSource(defaultEngineeringSource(eng))
         setDescription(data.description ?? '')
-        setViolation(data.violation ?? '')
+        setSelectedViolations([])
         setSelectedPhotoIds(data.photos.map((p) => p.id))
         setMapScale(data.map_scale_default ?? 1000)
       })
@@ -155,12 +171,19 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
 
   const geocodeAvailable = Boolean((draft?.address_geocode ?? '').trim())
   const mosAvailable = Boolean((draft?.address_mos ?? '').trim())
+  const violationOptions = draft?.violation_options ?? []
 
   const selectAddressSource = (source: AddressSource) => {
     if (!draft) return
     setAddressSource(source)
     if (source === 'geocode') setAddress(draft.address_geocode ?? '')
     else if (source === 'mos') setAddress(draft.address_mos ?? '')
+  }
+
+  const selectEngineeringSource = (source: EngineeringSource) => {
+    setEngineeringSource(source)
+    if (source === 'undefined') setEngineering(ENGINEERING_UNDEFINED)
+    else if (source === 'absent') setEngineering(ENGINEERING_ABSENT)
   }
 
   const togglePhoto = (id: number) => {
@@ -175,17 +198,24 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
     else setSelectedPhotoIds(draft.photos.map((p) => p.id))
   }
 
+  const toggleViolation = (name: string) => {
+    setSelectedViolations((prev) =>
+      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name],
+    )
+  }
+
   const handleGenerate = async () => {
     setSubmitting(true)
     setError(null)
     setMessage(null)
     try {
       const result = await generateOatiLetter(taskKey, reportId, {
+        customer,
         executor,
         address,
         engineering,
         description,
-        violation,
+        violation_names: selectedViolations,
         photo_ids: selectedPhotoIds,
         map_scale: mapScale,
       })
@@ -252,7 +282,17 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
 
             <div className="oati-letter-form-grid">
               <label className="form-row">
-                <span>1. Производитель работ (из источника задачи)</span>
+                <span>1. Заказчик (из источника задачи)</span>
+                <input
+                  type="text"
+                  value={customer}
+                  onChange={(e) => setCustomer(e.target.value)}
+                  disabled={submitting}
+                />
+              </label>
+
+              <label className="form-row">
+                <span>1. Исполнитель (из источника задачи)</span>
                 <input
                   type="text"
                   value={executor}
@@ -313,14 +353,53 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                 />
               </div>
 
-              <label className="form-row">
+              <div className="form-row oati-engineering-block">
                 <span>5. Вид коммуникаций</span>
+                <div
+                  className="oati-address-sources"
+                  role="radiogroup"
+                  aria-label="Вид коммуникаций"
+                >
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-engineering-source"
+                      checked={engineeringSource === 'undefined'}
+                      disabled={submitting}
+                      onChange={() => selectEngineeringSource('undefined')}
+                    />
+                    <span>не определено</span>
+                  </label>
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-engineering-source"
+                      checked={engineeringSource === 'absent'}
+                      disabled={submitting}
+                      onChange={() => selectEngineeringSource('absent')}
+                    />
+                    <span>отсутствует</span>
+                  </label>
+                  <label className="oati-address-source">
+                    <input
+                      type="radio"
+                      name="oati-engineering-source"
+                      checked={engineeringSource === 'list'}
+                      disabled={submitting}
+                      onChange={() => selectEngineeringSource('list')}
+                    />
+                    <span>из справочника / вручную</span>
+                  </label>
+                </div>
                 <input
                   type="text"
                   list="oati-comms-options"
                   value={engineering}
-                  onChange={(e) => setEngineering(e.target.value)}
-                  disabled={submitting}
+                  onChange={(e) => {
+                    setEngineeringSource('list')
+                    setEngineering(e.target.value)
+                  }}
+                  disabled={submitting || engineeringSource !== 'list'}
                   placeholder="Выберите или введите вручную"
                 />
                 {draft.engineering_options.length > 0 && (
@@ -330,10 +409,10 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                     ))}
                   </datalist>
                 )}
-              </label>
+              </div>
 
               <label className="form-row">
-                <span>6. Описание данных</span>
+                <span>6. Описание характера работ</span>
                 <textarea
                   rows={3}
                   value={description}
@@ -342,15 +421,29 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                 />
               </label>
 
-              <label className="form-row">
-                <span>7. Признаки правонарушения / НПА</span>
-                <textarea
-                  rows={4}
-                  value={violation}
-                  onChange={(e) => setViolation(e.target.value)}
-                  disabled={submitting}
-                />
-              </label>
+              <div className="form-row oati-violation-block">
+                <span>7. Признаки незаконности</span>
+                {violationOptions.length === 0 ? (
+                  <p className="muted">Справочник признаков пуст</p>
+                ) : (
+                  <div className="oati-violation-options">
+                    {violationOptions.map((name) => {
+                      const checked = selectedViolations.includes(name)
+                      return (
+                        <label key={name} className="oati-violation-option">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={submitting}
+                            onChange={() => toggleViolation(name)}
+                          />
+                          <span>{name}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
 
             <section className="oati-letter-map-scale">

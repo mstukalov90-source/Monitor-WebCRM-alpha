@@ -18,15 +18,17 @@ from app.crm.field_data_loader import fetch_field_report_rows
 from app.crm.snapshot_loader import _lookup_feature_for_record
 from app.crm.store import TaskRecord, _find_subgroup_for_record, fetch_task_by_key
 from app.letters.docx_fill import (
-    DEFAULT_VIOLATION,
+    DEFAULT_DESCRIPTION,
     append_map_page,
     append_photo_pages,
     document_to_bytes,
     fill_letter_template,
     format_ru_date,
-    format_ru_datetime,
+    format_ru_date_value,
+    format_violation_block,
     format_wgs84,
     letter_download_filename,
+    photo_caption_label,
 )
 from app.letters.geocode import reverse_geocode_parts
 from app.letters.map_image import (
@@ -42,7 +44,8 @@ from app.photos.sftp_fetch import SftpPhotoError
 logger = logging.getLogger(__name__)
 MSK = ZoneInfo("Europe/Moscow")
 
-# Same fields as UI «Источник» labels «Исполнитель» in taskTableColumnsForSubgroup.
+# Same fields as UI «Источник» labels in taskTableColumnsForSubgroup.
+SOURCE_CUSTOMER_FIELDS = ("customer_construction", "balanceholder", "customer")
 SOURCE_EXECUTOR_FIELDS = ("general_contractor", "executor", "lead_of_work")
 
 
@@ -75,6 +78,7 @@ class LetterDraft:
     lon: float
     lat: float
     incident_datetime: str
+    customer: str
     executor: str
     address: str
     engineering: str
@@ -88,6 +92,7 @@ class LetterDraft:
     address_geocode: str = ""
     address_mos: str = ""
     engineering_options: list[str] = field(default_factory=list)
+    violation_options: list[str] = field(default_factory=list)
     map_scales: list[int] = field(default_factory=lambda: list(ALLOWED_MAP_SCALES))
     map_scale_default: int = DEFAULT_MAP_SCALE
 
@@ -102,6 +107,7 @@ class LetterDraft:
             "lon": self.lon,
             "lat": self.lat,
             "incident_datetime": self.incident_datetime,
+            "customer": self.customer,
             "executor": self.executor,
             "address": self.address,
             "engineering": self.engineering,
@@ -125,6 +131,7 @@ class LetterDraft:
             "address_geocode": self.address_geocode,
             "address_mos": self.address_mos,
             "engineering_options": list(self.engineering_options),
+            "violation_options": list(self.violation_options),
             "map_scales": list(self.map_scales),
             "map_scale_default": self.map_scale_default,
         }
@@ -207,23 +214,29 @@ def _lookup_source_feature(
     return _lookup_feature_for_record(conn, record, subgroup_name, store_cfg)
 
 
-def _lookup_field_assignee(conn: PgConnection, task_key: str) -> str:
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(
-            """
-            SELECT executor
-            FROM crm.tasks_field
-            WHERE task_key = %s::uuid
-            ORDER BY sent_at DESC NULLS LAST, key DESC
-            LIMIT 1
-            """,
-            (task_key,),
-        )
-        row = cur.fetchone()
-    if not row:
+def _lookup_source_party(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+    *fields: str,
+) -> str:
+    """First non-empty attribute from source feature among ``fields``."""
+    feature = _lookup_source_feature(conn, record, store_cfg)
+    if not feature:
         return ""
-    value = row.get("executor")
-    return str(value).strip() if value is not None and str(value).strip() else ""
+    attrs = feature.get("attributes") or {}
+    if not isinstance(attrs, dict):
+        return ""
+    return _attr_text(attrs, *fields)
+
+
+def _lookup_customer(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+) -> str:
+    """Заказчик from source object «Источник» fields."""
+    return _lookup_source_party(conn, record, store_cfg, *SOURCE_CUSTOMER_FIELDS)
 
 
 def _lookup_executor(
@@ -231,15 +244,8 @@ def _lookup_executor(
     record: TaskRecord,
     store_cfg: dict[str, Any],
 ) -> str:
-    """Producer of works from source object «Исполнитель», then field assignee."""
-    feature = _lookup_source_feature(conn, record, store_cfg)
-    if feature:
-        attrs = feature.get("attributes") or {}
-        if isinstance(attrs, dict):
-            from_source = _attr_text(attrs, *SOURCE_EXECUTOR_FIELDS)
-            if from_source:
-                return from_source
-    return _lookup_field_assignee(conn, record.key)
+    """Исполнитель from source object «Источник» fields (no field-assignee fallback)."""
+    return _lookup_source_party(conn, record, store_cfg, *SOURCE_EXECUTOR_FIELDS)
 
 
 def _lookup_source_engineering(
@@ -299,6 +305,50 @@ def _fetch_comms_full_names(conn: PgConnection) -> list[str]:
         except Exception:  # noqa: BLE001
             pass
         return []
+
+
+def _fetch_illegal_reason_names(conn: PgConnection) -> list[str]:
+    """Names from dict.illegal_reson for section 7 multi-select; empty on DB error."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM dict.illegal_reson ORDER BY id")
+            rows = cur.fetchall()
+        names: list[str] = []
+        for row in rows:
+            value = row[0] if row else None
+            text = str(value).strip() if value is not None else ""
+            if text:
+                names.append(text)
+        return names
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dict.illegal_reson unavailable: %s", exc)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return []
+
+
+def _validate_violation_names(conn: PgConnection, names: list[str]) -> list[str]:
+    """Deduplicate preserving order; reject names not present in the dictionary."""
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in names or []:
+        text = (raw or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        cleaned.append(text)
+    if not cleaned:
+        return []
+    allowed = set(_fetch_illegal_reason_names(conn))
+    unknown = [n for n in cleaned if n not in allowed]
+    if unknown:
+        raise LetterError(
+            f"Недопустимые признаки незаконности: {', '.join(unknown)}",
+            status_code=422,
+        )
+    return cleaned
 
 
 def _lookup_task_geometry(
@@ -424,7 +474,7 @@ def resolve_incident_datetime(
     *,
     preferred_ids: list[int] | None = None,
 ) -> str:
-    """Дата фиксации: taken_at любой фото reports, иначе created_at (как раньше)."""
+    """Дата фиксации (только дата): taken_at любой фото reports, иначе created_at."""
     by_id = {p.id: p for p in photos}
     ordered: list[FieldPhotoItem] = []
     seen: set[int] = set()
@@ -440,10 +490,10 @@ def resolve_incident_datetime(
 
     for photo in ordered:
         if photo.taken_at:
-            return format_ru_datetime(photo.taken_at)
+            return format_ru_date_value(photo.taken_at)
     for photo in ordered:
         if photo.created_at:
-            return format_ru_datetime(photo.created_at)
+            return format_ru_date_value(photo.created_at)
     return ""
 
 
@@ -491,7 +541,7 @@ def build_letter_draft(
                 file_path=photo.file_path,
                 banner=photo.banner,
                 created_at=photo.created_at,
-                label="Фото баннера" if photo.banner else None,
+                label="Информационный щит" if photo.banner else "Обзорное фото",
                 image_url=f"/api/photos/field/{quote(name)}/image",
             )
         )
@@ -502,7 +552,7 @@ def build_letter_draft(
     visibility = classify_geometry_visibility(task_geometry, lon, lat)
 
     geo = reverse_geocode_parts(lon, lat, settings)
-    description = (photos_result.comment or "").strip()
+    description = DEFAULT_DESCRIPTION
     address_geocode = (geo.address or "").strip()
     address_mos = _lookup_mos_simple_address(conn, lon, lat)
     address = pick_default_address(
@@ -521,6 +571,7 @@ def build_letter_draft(
         lon=lon,
         lat=lat,
         incident_datetime=incident_dt,
+        customer=_lookup_customer(conn, record, store_cfg),
         executor=_lookup_executor(conn, record, store_cfg),
         address=address,
         engineering=_lookup_engineering(
@@ -530,7 +581,7 @@ def build_letter_draft(
             report_comm_type=_report_comm_type(report_row),
         ),
         description=description,
-        violation=DEFAULT_VIOLATION,
+        violation="",
         photos=photos,
         map_warning=_map_warning_for_visibility(visibility),
         task_geometry_visibility=visibility,
@@ -539,6 +590,7 @@ def build_letter_draft(
         address_geocode=address_geocode,
         address_mos=address_mos,
         engineering_options=_fetch_comms_full_names(conn),
+        violation_options=_fetch_illegal_reason_names(conn),
         map_scales=list(ALLOWED_MAP_SCALES),
         map_scale_default=DEFAULT_MAP_SCALE,
     )
@@ -608,11 +660,13 @@ def generate_letter_docx(
     task_key: str,
     report_id: int,
     created_by: str,
+    customer: str,
     executor: str,
     address: str,
     engineering: str,
     description: str,
-    violation: str,
+    violation: str = "",
+    violation_names: list[str] | None = None,
     photo_ids: list[int],
     map_scale: int = DEFAULT_MAP_SCALE,
     settings: Settings | None = None,
@@ -650,14 +704,27 @@ def generate_letter_docx(
 
     today = format_ru_date()
     coordinates = format_wgs84(lon, lat)
-    violation_text = (violation or "").strip() or DEFAULT_VIOLATION
+    description_text = (description or "").strip() or DEFAULT_DESCRIPTION
+    customer_text = (customer or "").strip()
+    executor_text = (executor or "").strip()
+
+    selected_violations = list(violation_names or [])
+    if not selected_violations and (violation or "").strip():
+        # Backward-compatible: single string may contain newlines.
+        selected_violations = [
+            line.strip() for line in (violation or "").splitlines() if line.strip()
+        ]
+    selected_violations = _validate_violation_names(conn, selected_violations)
+    violation_text = format_violation_block(selected_violations)
 
     payload = {
-        "executor": executor,
+        "customer": customer_text,
+        "executor": executor_text,
         "address": address,
         "engineering": engineering,
-        "description": description,
+        "description": description_text,
         "violation": violation_text,
+        "violation_names": selected_violations,
         "photo_ids": ordered_ids,
         "street": street,
         "rayon": _lookup_rayon(conn, lon, lat),
@@ -678,13 +745,15 @@ def generate_letter_docx(
         street=street or "__________",
         today=today,
         fid=fid,
-        executor=(executor or "").strip(),
+        customer=customer_text,
+        executor=executor_text,
         incident_datetime=incident_dt,
         address=(address or "").strip(),
         coordinates=coordinates,
         engineering=(engineering or "").strip(),
-        description=(description or "").strip(),
+        description=description_text,
         violation=violation_text,
+        photo_count=len(ordered_ids),
     )
 
     task_geometry = _lookup_task_geometry(conn, record, store_cfg)
@@ -710,12 +779,7 @@ def generate_letter_docx(
         raw = _read_photo_bytes(photo.file_path, settings)
         if raw is None:
             continue
-        label_parts = [f"Фото {index}"]
-        if photo.banner:
-            label_parts.append("баннер")
-        if photo.created_at:
-            label_parts.append(format_ru_datetime(photo.created_at))
-        photo_payloads.append((raw, " · ".join(label_parts)))
+        photo_payloads.append((raw, photo_caption_label(index, banner=bool(photo.banner))))
 
     append_photo_pages(document, photo_payloads)
 
