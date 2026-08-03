@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Обновление кода и БД на обоих VPS с локальной машины.
-# Требуется VPN для доступа к 172.21.198.219.
+# Обновление кода и БД на прод- и тест-серверах с локальной машины.
+#   172.21.198.219 — прод WebCRM (нужен VPN)
+#   77.222.63.161  — только тестирование
+# Внешний API (monitor-crm.mggt.ru) этим скриптом не затрагивается.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,8 +22,8 @@ RSYNC_EXCLUDES=(
 )
 
 SERVERS=(
-  "77.222.63.161"
-  "172.21.198.219"
+  "77.222.63.161"   # тест
+  "172.21.198.219"  # прод WebCRM
 )
 
 for host in "${SERVERS[@]}"; do
@@ -39,11 +41,12 @@ for host in "${SERVERS[@]}"; do
     ssh "root@$host" 'cd /opt/monitor/webcrm && chmod +x deploy/deploy.sh && ./deploy/deploy.sh'
   fi
 
-  echo "=== $host: health ==="
+  echo "=== $host: health (WebCRM :8080) ==="
   if [[ "$host" == "77.222.63.161" && -f "$SSH_KEY" ]]; then
-    ssh -i "$SSH_KEY" "root@$host" "curl -s http://$host/health"
+    ssh -i "$SSH_KEY" "root@$host" "curl -s http://127.0.0.1:8080/health"
   else
-    ssh "root@$host" "curl -s http://$host/health"
+    # На проде /health на :80 — MONITOR API, не WebCRM
+    ssh "root@$host" "curl -s http://127.0.0.1:8080/health"
   fi
   echo ""
 done

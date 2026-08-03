@@ -155,19 +155,18 @@ WEBCRM и QGIS-плагин используют одну схему `crm` в Б
 
 ## Деплой на VPS
 
-Два независимых продакшен-сервера:
+| Адрес | Роль |
+|-------|------|
+| http://172.21.198.219 | **Прод** WebCRM (веб-приложение, LAN) |
+| http://monitor-crm.mggt.ru | API из интернета (тот же хост; не трогать из WebCRM-деплоя) |
+| http://77.222.63.161 | **Только тест** WebCRM |
 
-| Сервер | URL |
-|--------|-----|
-| Публичный | http://77.222.63.161 |
-| Внутренний (RED OS) | http://172.21.198.219 |
-
-На каждом: nginx → FastAPI, PostgreSQL и фото (`/opt/monitor/downloaded_photo`) на том же хосте.
+На каждом WebCRM-хосте: nginx → FastAPI, PostgreSQL и фото (`/opt/monitor/downloaded_photo`) на том же хосте. На проде рядом крутится MONITOR API (`:8000`); `/health` на :80 — это API, не WebCRM (`curl http://127.0.0.1:8080/health`).
 
 Полная документация: **[deploy/README.md](deploy/README.md)**
 
 ```bash
-# Обновление обоих серверов (VPN для 172.21.198.219)
+# Обновление прода и теста (VPN для 172.21.198.219)
 ./deploy/update-both.sh
 
 # Или на одном сервере
@@ -181,4 +180,5 @@ cd /opt/monitor/webcrm && ./deploy/deploy.sh
 | `DB_HOST` | `localhost` |
 | `PHOTO_SFTP_ENABLED` | `false` |
 | `PHOTO_STORAGE_DIR` | `/opt/monitor/downloaded_photo` |
+| `AUTH_SECRET_KEY` | уникальный на каждом сервере (**обязателен**) |
 | `CORS_ORIGINS` | `http://<SERVER_IP>` |

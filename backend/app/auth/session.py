@@ -18,7 +18,7 @@ ALL_TASK_SOURCES: tuple[TaskSource, ...] = (
 ROLE_TASK_SOURCES: dict[str, list[TaskSource]] = {
     "admin": list(ALL_TASK_SOURCES),
     "field": ["field", "area"],
-    "office": ["active", "area"],
+    "office": list(ALL_TASK_SOURCES),
     "manager": list(ALL_TASK_SOURCES),
 }
 
