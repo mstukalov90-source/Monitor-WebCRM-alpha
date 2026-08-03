@@ -12,6 +12,7 @@ from app.auth.session import (
     allowed_task_sources,
     can_collect,
     can_create_users,
+    can_generate_letters,
     can_manage_personnel,
     default_task_source,
 )
@@ -35,6 +36,7 @@ class AuthUserOut(BaseModel):
     default_task_source: str
     can_collect: bool
     can_manage_personnel: bool
+    can_generate_letters: bool
     can_create_users: bool
 
 
@@ -82,5 +84,6 @@ def _user_out(session: UserSession) -> AuthUserOut:
         default_task_source=default_task_source(session.role),
         can_collect=can_collect(session.role),
         can_manage_personnel=can_manage_personnel(session.role),
+        can_generate_letters=can_generate_letters(session.role),
         can_create_users=can_create_users(session.role),
     )

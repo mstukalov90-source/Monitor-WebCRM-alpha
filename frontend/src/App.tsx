@@ -779,6 +779,7 @@ function App() {
         sessionRayon={sessionRayon}
         taskInCurrentResult={editTaskInCurrentResult}
         canManagePersonnel={user.can_manage_personnel}
+        canGenerateLetters={user.can_generate_letters}
         userRole={user.role}
         officeWorking={officeWorking}
         onStartPlaceOfficePoint={handleStartPlaceOfficePoint}
@@ -805,7 +806,7 @@ function App() {
         <FieldMaterialsModal
           taskKey={fieldMaterials.taskKey}
           reportId={fieldMaterials.reportId}
-          canGenerateLetter={user.can_manage_personnel}
+          canGenerateLetter={user.can_generate_letters}
           onClose={() => setFieldMaterials(null)}
         />
       )}

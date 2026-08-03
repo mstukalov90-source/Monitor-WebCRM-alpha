@@ -8,6 +8,7 @@ export interface AuthUser {
   default_task_source: TaskSource
   can_collect: boolean
   can_manage_personnel: boolean
+  can_generate_letters: boolean
   can_create_users: boolean
 }
 

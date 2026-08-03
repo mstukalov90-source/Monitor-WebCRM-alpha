@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from app.auth.deps import require_manager_or_admin
+from app.auth.deps import require_can_generate_letters
 from app.auth.session import UserSession
 from app.crm.schemas import OatiLetterDraftOut, OatiLetterGenerateRequest
 from app.db import get_connection
@@ -22,7 +22,7 @@ from app.letters.oati import (
 router = APIRouter(
     prefix="/api/tasks",
     tags=["letters"],
-    dependencies=[Depends(require_manager_or_admin)],
+    dependencies=[Depends(require_can_generate_letters)],
 )
 
 
@@ -30,7 +30,7 @@ router = APIRouter(
 def get_oati_letter_draft(
     key: str,
     report_id: int,
-    _user: UserSession = Depends(require_manager_or_admin),
+    _user: UserSession = Depends(require_can_generate_letters),
 ) -> OatiLetterDraftOut:
     try:
         with get_connection() as conn:
@@ -45,7 +45,7 @@ def get_oati_map_preview(
     key: str,
     report_id: int,
     scale: int = Query(DEFAULT_MAP_SCALE),
-    _user: UserSession = Depends(require_manager_or_admin),
+    _user: UserSession = Depends(require_can_generate_letters),
 ) -> Response:
     try:
         with get_connection() as conn:
@@ -60,7 +60,7 @@ def post_oati_letter(
     key: str,
     report_id: int,
     body: OatiLetterGenerateRequest,
-    user: UserSession = Depends(require_manager_or_admin),
+    user: UserSession = Depends(require_can_generate_letters),
 ) -> Response:
     try:
         with get_connection() as conn:

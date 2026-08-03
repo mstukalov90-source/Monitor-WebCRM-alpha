@@ -73,6 +73,10 @@ def can_manage_personnel(role: str) -> bool:
     return role in ("manager", "admin")
 
 
+def can_generate_letters(role: str) -> bool:
+    return role in ("office", "manager", "admin")
+
+
 def can_create_users(role: str) -> bool:
     return role == "admin"
 

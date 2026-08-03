@@ -123,6 +123,7 @@ interface TaskEditModalProps {
   sessionRayon?: string
   taskInCurrentResult?: boolean
   canManagePersonnel: boolean
+  canGenerateLetters: boolean
   userRole: UserRole
   officeWorking?: boolean
   onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
@@ -141,6 +142,7 @@ export function TaskEditModal({
   sessionRayon = '',
   taskInCurrentResult = false,
   canManagePersonnel,
+  canGenerateLetters,
   userRole,
   officeWorking = false,
   onStartPlaceOfficePoint,
@@ -873,7 +875,7 @@ export function TaskEditModal({
       {fieldMaterialsKey && (
         <FieldMaterialsModal
           taskKey={fieldMaterialsKey}
-          canGenerateLetter={canManagePersonnel}
+          canGenerateLetter={canGenerateLetters}
           onClose={() => setFieldMaterialsKey(null)}
         />
       )}

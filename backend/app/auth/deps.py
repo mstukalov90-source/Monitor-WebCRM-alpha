@@ -64,6 +64,17 @@ def require_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
     return user
 
 
+def require_can_generate_letters(user: UserSession = Depends(get_current_user)) -> UserSession:
+    from app.auth.session import can_generate_letters
+
+    if not can_generate_letters(user.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Формирование писем недоступно для вашей роли",
+        )
+    return user
+
+
 def require_office_or_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
     if user.role not in ("office", "admin"):
         raise HTTPException(
