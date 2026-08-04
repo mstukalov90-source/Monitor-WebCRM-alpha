@@ -345,7 +345,7 @@ def render_situational_map(
     settings: Settings,
     scale: int = DEFAULT_MAP_SCALE,
 ) -> bytes:
-    """Render PNG bytes: OSM tiles + report marker + clipped task geometry."""
+    """Render PNG bytes: basemap tiles + report marker + clipped task geometry."""
     scale = normalize_map_scale(scale)
     bbox = map_bbox_mercator(center_lon, center_lat, scale=scale)
     minx, miny, maxx, maxy = bbox
@@ -363,7 +363,7 @@ def render_situational_map(
     tminy, tmaxy = min(ty0, ty1), max(ty0, ty1)
 
     canvas = Image.new("RGB", (width, height), color=(230, 230, 230))
-    template = settings.osm_tile_url or "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    template = settings.osm_tile_url or "http://ngtst.mggt:8080/api/component/render/tile?resource=248465&nd=204&z={z}&x={x}&y={y}"
 
     for ty in range(tminy, tmaxy + 1):
         for tx in range(tminx, tmaxx + 1):

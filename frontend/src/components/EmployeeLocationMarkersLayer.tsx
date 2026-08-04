@@ -1,16 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useMap } from 'react-leaflet'
 import L from 'leaflet'
+import { employeeLocationMarkerStyle } from '../lib/employeeLocationStyle'
 import type { EmployeeLocationFeature } from '../types'
-
-const MARKER_STYLE: L.CircleMarkerOptions = {
-  radius: 8,
-  color: '#0d6efd',
-  weight: 2,
-  fillColor: '#0d6efd',
-  fillOpacity: 0.85,
-  interactive: false,
-}
 
 interface EmployeeLocationMarkersLayerProps {
   locations: EmployeeLocationFeature[]
@@ -32,6 +24,7 @@ export function EmployeeLocationMarkersLayer({ locations }: EmployeeLocationMark
         type: 'Feature' as const,
         properties: {
           label: String(loc.attributes.user ?? loc.id),
+          updatedAt: loc.attributes.time ?? null,
         },
         geometry: loc.geometry,
       }))
@@ -41,7 +34,11 @@ export function EmployeeLocationMarkersLayer({ locations }: EmployeeLocationMark
     const gj = L.geoJSON(
       { type: 'FeatureCollection', features } as GeoJSON.FeatureCollection,
       {
-        pointToLayer: (_feature, latlng) => L.circleMarker(latlng, MARKER_STYLE),
+        pointToLayer: (feature, latlng) =>
+          L.circleMarker(latlng, {
+            ...employeeLocationMarkerStyle(feature?.properties?.updatedAt),
+            interactive: false,
+          }),
         onEachFeature: (feature, layer) => {
           const label = String(feature.properties?.label ?? '')
           if (label) {

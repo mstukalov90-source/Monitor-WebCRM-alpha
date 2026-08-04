@@ -185,14 +185,30 @@ export interface EmployeeLocationsResult {
 export interface EmployeeLocationTableColumn {
   field: string
   label: string
+  format?: 'datetime_short'
 }
 
 export const EMPLOYEE_LOCATION_TABLE_COLUMNS: EmployeeLocationTableColumn[] = [
   { field: 'user', label: 'Сотрудник' },
+  { field: 'time', label: 'Обновлено', format: 'datetime_short' },
+  { field: 'number', label: 'Заказ' },
 ]
 
-export function formatEmployeeLocationTableCell(value: unknown): string {
+export function formatEmployeeLocationTableCell(
+  value: unknown,
+  format?: EmployeeLocationTableColumn['format'],
+): string {
   if (value == null || value === '') return ''
+  if (format === 'datetime_short') {
+    const d = new Date(String(value))
+    if (Number.isNaN(d.getTime())) return String(value)
+    return d.toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
   return String(value)
 }
 

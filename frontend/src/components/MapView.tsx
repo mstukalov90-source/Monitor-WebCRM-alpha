@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AttributionControl, MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { AttributionControl, MapContainer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
@@ -11,6 +11,7 @@ import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
 import { geometryKindLabel } from '../lib/notificationSiblings'
 import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
+import { BasemapLayers } from './BasemapLayers'
 import { MapResizeObserver } from './MapResizeObserver'
 import {
   DISTRICT_RAYON_FIELD,
@@ -826,11 +827,7 @@ export function MapView({
     >
       <MapResizeObserver />
       <AttributionControl prefix={LEAFLET_ATTRIBUTION_PREFIX} />
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        maxZoom={MAP_MAX_ZOOM}
-      />
+      <BasemapLayers />
       <DistrictBoundaryLayer districtName={districtName} />
       {!pickMode && (
         <>

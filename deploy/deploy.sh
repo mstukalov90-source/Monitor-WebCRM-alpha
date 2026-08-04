@@ -22,7 +22,7 @@ merge_env_key() {
 merge_env_key PHOTO_STORAGE_DIR /opt/monitor/downloaded_photo
 merge_env_key FIELD_PHOTO_STORAGE_DIR /opt/monitor/mggtfield_photo
 merge_env_key FIELD_PHOTO_SFTP_REMOTE_DIR /opt/monitor/mggtfield_photo
-merge_env_key OSM_TILE_URL 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
+merge_env_key OSM_TILE_URL 'http://ngtst.mggt:8080/api/component/render/tile?resource=248465&nd=204&z={z}&x={x}&y={y}'
 merge_env_key NOMINATIM_URL 'https://nominatim.openstreetmap.org/reverse'
 merge_env_key GEOCODE_USER_AGENT '"MONITOR-WebCRM/1.0 (oati-letters)"'
 merge_env_key GEOCODE_TIMEOUT_SECONDS 8.0

@@ -629,7 +629,9 @@
       "id_column": "user",
       "geometry_column": "geom",
       "display_columns": [
-        "user"
+        "user",
+        "time",
+        "number"
       ]
     },
     "groups": [

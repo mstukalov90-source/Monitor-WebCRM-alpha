@@ -46,7 +46,14 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(locations), 1)
         self.assertEqual(locations[0]["id"], "IvanovII")
-        self.assertEqual(locations[0]["attributes"], {"user": "IvanovII"})
+        self.assertEqual(
+            locations[0]["attributes"],
+            {
+                "user": "IvanovII",
+                "time": "2026-07-13T10:00:00+00:00",
+                "number": "uuid-123",
+            },
+        )
         self.assertEqual(locations[0]["geometry"], geometry)
 
     def test_fetch_all_returns_all_locations_without_district_filter(self) -> None:
@@ -99,7 +106,10 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(locations[0]["geometry"]["type"], "Point")
-        self.assertEqual(locations[0]["attributes"], {"user": "PetrovPP"})
+        self.assertEqual(
+            locations[0]["attributes"],
+            {"user": "PetrovPP", "time": "2026-07-13T10:00:00+00:00"},
+        )
 
 
 if __name__ == "__main__":

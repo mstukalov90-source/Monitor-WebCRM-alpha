@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { AttributionControl, MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { AttributionControl, MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
 import { findHoodLayerKey } from '../lib/hoodLayer'
+import { BasemapLayers } from './BasemapLayers'
 import { MapResizeObserver } from './MapResizeObserver'
 import type { TrackFeature } from '../types'
 import {
@@ -217,11 +218,7 @@ export function TracksMapView({
       className="map-container"
       attributionControl={false}
     >
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        maxZoom={MAP_MAX_ZOOM}
-      />
+      <BasemapLayers />
       <AttributionControl position="bottomright" prefix={LEAFLET_ATTRIBUTION_PREFIX} />
       <MapResizeObserver />
       <DistrictBoundaryLayer districtName={districtName} />

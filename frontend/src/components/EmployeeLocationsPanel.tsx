@@ -50,7 +50,7 @@ export function EmployeeLocationsPanel({
                 >
                   {EMPLOYEE_LOCATION_TABLE_COLUMNS.map((col) => (
                     <td key={col.field}>
-                      {formatEmployeeLocationTableCell(location.attributes[col.field])}
+                      {formatEmployeeLocationTableCell(location.attributes[col.field], col.format)}
                     </td>
                   ))}
                 </tr>

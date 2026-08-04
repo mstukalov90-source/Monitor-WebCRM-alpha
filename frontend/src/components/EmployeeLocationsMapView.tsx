@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { AttributionControl, MapContainer, TileLayer, useMap } from 'react-leaflet'
+import { AttributionControl, MapContainer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
+import { employeeLocationMarkerStyle } from '../lib/employeeLocationStyle'
 import { findHoodLayerKey } from '../lib/hoodLayer'
+import { BasemapLayers } from './BasemapLayers'
 import { MapResizeObserver } from './MapResizeObserver'
 import type { EmployeeLocationFeature } from '../types'
 import {
@@ -30,22 +32,6 @@ const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
   color: '#cc0000',
   weight: 2,
   fillOpacity: 0,
-}
-
-const LOCATION_STYLE_DEFAULT: L.CircleMarkerOptions = {
-  radius: 8,
-  color: '#0d6efd',
-  weight: 2,
-  fillColor: '#0d6efd',
-  fillOpacity: 0.85,
-}
-
-const LOCATION_STYLE_SELECTED: L.CircleMarkerOptions = {
-  radius: 10,
-  color: '#ff6600',
-  weight: 3,
-  fillColor: '#ff6600',
-  fillOpacity: 1,
 }
 
 interface EmployeeLocationsMapViewProps {
@@ -137,7 +123,10 @@ function LocationsLayer({
       .filter((loc) => loc.geometry)
       .map((loc) => ({
         type: 'Feature' as const,
-        properties: { locationId: loc.id },
+        properties: {
+          locationId: loc.id,
+          updatedAt: loc.attributes.time ?? null,
+        },
         geometry: loc.geometry,
       }))
 
@@ -148,8 +137,10 @@ function LocationsLayer({
       {
         pointToLayer: (feature, latlng) => {
           const locationId = String(feature?.properties?.locationId ?? '')
-          const style =
-            locationId === selectedLocationId ? LOCATION_STYLE_SELECTED : LOCATION_STYLE_DEFAULT
+          const style = employeeLocationMarkerStyle(
+            feature?.properties?.updatedAt,
+            locationId === selectedLocationId,
+          )
           return L.circleMarker(latlng, style)
         },
         onEachFeature: (feature, layer) => {
@@ -184,8 +175,10 @@ function LocationsLayer({
       const layer = markerLayer as L.CircleMarker
       const feature = (markerLayer as L.GeoJSON & { feature?: GeoJSON.Feature }).feature
       const locationId = String(feature?.properties?.locationId ?? '')
-      const style =
-        locationId === selectedLocationId ? LOCATION_STYLE_SELECTED : LOCATION_STYLE_DEFAULT
+      const style = employeeLocationMarkerStyle(
+        feature?.properties?.updatedAt,
+        locationId === selectedLocationId,
+      )
       layer.setStyle(style)
       if (locationId === selectedLocationId) {
         layer.bringToFront()
@@ -227,11 +220,7 @@ export function EmployeeLocationsMapView({
       className="map-container"
       attributionControl={false}
     >
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        maxZoom={MAP_MAX_ZOOM}
-      />
+      <BasemapLayers />
       <AttributionControl position="bottomright" prefix={LEAFLET_ATTRIBUTION_PREFIX} />
       <MapResizeObserver />
       {districtName ? <DistrictBoundaryLayer districtName={districtName} /> : null}

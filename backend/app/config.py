@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     auth_secret_key: str = "change-me-in-production-use-32-chars-min"
     auth_cookie_name: str = "monitor_session"
     auth_token_ttl_hours: int = 12
-    osm_tile_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    """OSM raster tile URL template for situational plan maps."""
+    osm_tile_url: str = "http://ngtst.mggt:8080/api/component/render/tile?resource=248465&nd=204&z={z}&x={x}&y={y}"
+    """Raster tile URL template for situational plan maps (Схема)."""
     nominatim_url: str = "https://nominatim.openstreetmap.org/reverse"
     """Nominatim reverse-geocoding endpoint."""
     geocode_user_agent: str = "MONITOR-WebCRM/1.0 (oati-letters)"
