@@ -37,6 +37,7 @@ from app.crm.schemas import (
     GeoStatisticsOut,
     GeoStatisticsRowOut,
     OfficeStatisticsBreakdownOut,
+    OrderClosuresStatisticsOut,
     PersonnelStatisticsOut,
     PersonnelUserOut,
     PersonnelUserCreate,
@@ -50,6 +51,7 @@ from app.crm.statistics import (
     fetch_field_statistics_summary,
     fetch_geo_statistics,
     fetch_office_statistics_breakdown,
+    fetch_recent_order_closures,
 )
 from app.crm.tasks_area import update_area_task_number
 from app.db import get_connection
@@ -182,6 +184,42 @@ def get_personnel_geo_statistics(
     return GeoStatisticsOut(
         okrugs=[GeoStatisticsRowOut(**row) for row in result["okrugs"]],
         rayons=[GeoStatisticsRowOut(**row) for row in result["rayons"]],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+
+
+@router.get("/statistics/orders", response_model=OrderClosuresStatisticsOut)
+def get_personnel_order_closures(
+    date_from: date = Query(..., description="Start date (inclusive)"),
+    date_to: date = Query(..., description="End date (inclusive)"),
+    user_role: str | None = Query(None, description="Filter by field or office"),
+    user_login: str | None = Query(None, description="Filter by user login"),
+    _user: UserSession = Depends(require_manager_or_admin),
+) -> OrderClosuresStatisticsOut:
+    if date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from must be on or before date_to",
+        )
+    if user_role is not None and user_role not in ("field", "office"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_role must be field or office",
+        )
+
+    effective_login = user_login.strip() if user_login else None
+    with get_connection() as conn:
+        rows = fetch_recent_order_closures(
+            conn,
+            date_from=date_from,
+            date_to=date_to,
+            user_login=effective_login,
+            user_role=user_role,
+        )
+
+    return OrderClosuresStatisticsOut(
+        closures=[StatisticsActionDetailOut(**row) for row in rows],
         date_from=date_from.isoformat(),
         date_to=date_to.isoformat(),
     )

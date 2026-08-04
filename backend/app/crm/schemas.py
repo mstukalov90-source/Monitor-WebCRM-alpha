@@ -317,6 +317,12 @@ class GeoStatisticsOut(BaseModel):
     date_to: str
 
 
+class OrderClosuresStatisticsOut(BaseModel):
+    closures: list[StatisticsActionDetailOut] = Field(default_factory=list)
+    date_from: str
+    date_to: str
+
+
 class OrderTrackOut(BaseModel):
     id: str
     attributes: dict[str, Any]

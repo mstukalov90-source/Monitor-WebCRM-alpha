@@ -20,6 +20,7 @@ import type {
   PersonnelUserCreate,
   PersonnelStatistics,
   GeoStatistics,
+  OrderClosuresStatistics,
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
@@ -673,6 +674,21 @@ export function fetchPersonnelGeoStatistics(params: {
   if (params.objectType) qs.set('object_type', params.objectType)
   if (params.userLogin) qs.set('user_login', params.userLogin)
   return request(`/api/personnel/statistics/geo?${qs}`)
+}
+
+export function fetchPersonnelOrderStatistics(params: {
+  dateFrom: string
+  dateTo: string
+  userRole?: 'field' | 'office'
+  userLogin?: string
+}): Promise<OrderClosuresStatistics> {
+  const qs = new URLSearchParams({
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+  })
+  if (params.userRole) qs.set('user_role', params.userRole)
+  if (params.userLogin) qs.set('user_login', params.userLogin)
+  return request(`/api/personnel/statistics/orders?${qs}`)
 }
 
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {

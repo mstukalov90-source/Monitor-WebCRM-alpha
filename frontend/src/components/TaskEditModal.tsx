@@ -23,7 +23,16 @@ import {
 import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
-import type { LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskRecord, TaskSource, UserRole } from '../types'
+import type {
+  FieldReportFeature,
+  LinkLayerInfo,
+  SelectedTaskContext,
+  TaskFeature,
+  TaskHighlight,
+  TaskRecord,
+  TaskSource,
+  UserRole,
+} from '../types'
 import {
   aiPhotoUuidFromAttributes,
   CRM_GROUP_ORDERS,
@@ -45,6 +54,11 @@ type LegalValidation = {
   message: string | null
 }
 
+type FieldSurveyMeta = {
+  username: string | null
+  dateLabel: string | null
+}
+
 const LEGAL_STATION_FIELDS = ['sps', 'station_avr'] as const
 const LEGAL_LINK_EXCLUDED_INDEX = 2
 const ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY = 'Не проведено полевое обследование.'
@@ -55,6 +69,42 @@ const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
   illegal: 'Закрыть задачу как нелегальную?',
   clear: 'Отметить задачу: разрытие отсутствует?',
   active: 'Вернуть задачу в активные?',
+}
+
+function fieldSurveyMetaFromReports(reports: FieldReportFeature[]): FieldSurveyMeta | null {
+  if (!reports.length) return null
+
+  let best: { username: string | null; createdAt: string; time: number } | null = null
+  for (const report of reports) {
+    const raw = report.attributes.created_at
+    if (raw == null || raw === '') continue
+    const createdAt = String(raw)
+    const time = new Date(createdAt).getTime()
+    if (Number.isNaN(time)) continue
+    if (best == null || time < best.time) {
+      const usernameRaw = report.attributes.username
+      const username =
+        usernameRaw != null && String(usernameRaw).trim() !== ''
+          ? String(usernameRaw).trim()
+          : null
+      best = { username, createdAt, time }
+    }
+  }
+  if (!best) return null
+
+  const dateLabel = formatTaskTableCell(best.createdAt, 'date') || null
+  if (!best.username && !dateLabel) return null
+  return { username: best.username, dateLabel }
+}
+
+function formatFieldObservedBadge(
+  fieldObserved: boolean | null | undefined,
+  survey: FieldSurveyMeta | null,
+): string {
+  const base = formatFieldObserved(fieldObserved)
+  if (!base || fieldObserved !== true || !survey) return base
+  const extras = [survey.username, survey.dateLabel].filter(Boolean)
+  return extras.length ? `${base} · ${extras.join(' · ')}` : base
 }
 
 function isFilled(value: string | undefined): boolean {
@@ -170,6 +220,7 @@ export function TaskEditModal({
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
   const [photoUuid, setPhotoUuid] = useState<string | null>(null)
   const [fieldMaterialsKey, setFieldMaterialsKey] = useState<string | null>(null)
+  const [fieldSurveyMeta, setFieldSurveyMeta] = useState<FieldSurveyMeta | null>(null)
   const autoPhotoOpenedRef = useRef(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
@@ -295,6 +346,7 @@ export function TaskEditModal({
       }
 
       const fieldReports = reportsResult.reports
+      setFieldSurveyMeta(fieldSurveyMetaFromReports(fieldReports))
       onHighlightChange({
         primary: ctx.feature.geometry ?? null,
         linked,
@@ -304,6 +356,7 @@ export function TaskEditModal({
         notificationGroup,
       })
     } catch {
+      setFieldSurveyMeta(null)
       onHighlightChange({
         primary: ctx.feature.geometry ?? null,
         linked: [],
@@ -321,6 +374,7 @@ export function TaskEditModal({
       setStationSectionOpen(false)
       setPhotoUuid(null)
       setFieldMaterialsKey(null)
+      setFieldSurveyMeta(null)
       autoPhotoOpenedRef.current = false
       onPickModeChange(false, [])
       return
@@ -329,6 +383,7 @@ export function TaskEditModal({
     autoPhotoOpenedRef.current = false
     setPhotoUuid(null)
     setFieldMaterialsKey(null)
+    setFieldSurveyMeta(null)
     setPendingStatusAction(null)
     setOfficeComment('')
     setShowLegalRequirements(false)
@@ -567,7 +622,8 @@ export function TaskEditModal({
               <p className="muted small">Ключ: {record.key}</p>
             )}
             <p className={fieldObservedBadgeClass(record.field_observed)}>
-              Обследовано в поле: {formatFieldObserved(record.field_observed)}
+              Обследовано в поле:{' '}
+              {formatFieldObservedBadge(record.field_observed, fieldSurveyMeta)}
             </p>
             {context.feature.sent_at && (
               <p className="muted small">

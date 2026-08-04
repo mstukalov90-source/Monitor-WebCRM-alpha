@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   fetchPersonnelGeoStatistics,
+  fetchPersonnelOrderStatistics,
   fetchPersonnelStatistics,
   fetchPersonnelUsers,
 } from '../api/client'
@@ -15,6 +16,7 @@ import type {
   GeoStatistics,
   GeoStatisticsRow,
   OfficeStatisticsBreakdown,
+  OrderClosuresStatistics,
   PersonnelStatistics,
   PersonnelUser,
   StatisticsActionDetail,
@@ -31,7 +33,7 @@ interface StatisticsScreenProps {
 
 type RoleFilter = '' | 'field' | 'office'
 type ObjectTypeFilter = '' | 'task' | 'order'
-type ViewMode = 'people' | 'geo'
+type ViewMode = 'people' | 'geo' | 'orders'
 
 function formatHa(value: number): string {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
@@ -60,6 +62,7 @@ export function StatisticsScreen({
   const [users, setUsers] = useState<PersonnelUser[]>([])
   const [data, setData] = useState<PersonnelStatistics | null>(null)
   const [geoData, setGeoData] = useState<GeoStatistics | null>(null)
+  const [ordersData, setOrdersData] = useState<OrderClosuresStatistics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -83,7 +86,7 @@ export function StatisticsScreen({
   }, [canViewAll])
 
   useEffect(() => {
-    if (!canViewAll && viewMode === 'geo') {
+    if (!canViewAll && (viewMode === 'geo' || viewMode === 'orders')) {
       setViewMode('people')
     }
   }, [canViewAll, viewMode])
@@ -107,15 +110,28 @@ export function StatisticsScreen({
         const result = await fetchPersonnelGeoStatistics(filterParams)
         setGeoData(result)
         setData(null)
+        setOrdersData(null)
+      } else if (effectiveViewMode === 'orders') {
+        const result = await fetchPersonnelOrderStatistics({
+          dateFrom: filterParams.dateFrom,
+          dateTo: filterParams.dateTo,
+          userRole: filterParams.userRole,
+          userLogin: filterParams.userLogin,
+        })
+        setOrdersData(result)
+        setData(null)
+        setGeoData(null)
       } else {
         const result = await fetchPersonnelStatistics(filterParams)
         setData(result)
         setGeoData(null)
+        setOrdersData(null)
       }
     } catch (e) {
       setError(String(e))
       setData(null)
       setGeoData(null)
+      setOrdersData(null)
     } finally {
       setLoading(false)
     }
@@ -159,7 +175,14 @@ export function StatisticsScreen({
     (showOfficeSection && officeRows.length > 0) ||
     (showDetails && detailRows.length > 0)
   const hasGeoData = okrugRows.length > 0
-  const hasData = effectiveViewMode === 'geo' ? hasGeoData : hasPeopleData
+  const orderClosureRows = ordersData?.closures ?? []
+  const hasOrdersData = orderClosureRows.length > 0
+  const hasData =
+    effectiveViewMode === 'geo'
+      ? hasGeoData
+      : effectiveViewMode === 'orders'
+        ? hasOrdersData
+        : hasPeopleData
 
   return (
     <div className="district-screen statistics-screen">
@@ -202,6 +225,18 @@ export function StatisticsScreen({
                 onClick={() => setViewMode('geo')}
               >
                 Территория
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`btn${effectiveViewMode === 'orders' ? ' primary' : ''}`}
+                aria-selected={effectiveViewMode === 'orders'}
+                onClick={() => {
+                  setViewMode('orders')
+                  setSelectedOkrug(null)
+                }}
+              >
+                Заказы
               </button>
             </div>
           )}
@@ -250,17 +285,19 @@ export function StatisticsScreen({
                     ))}
                   </select>
                 </label>
-                <label className="district-field">
-                  <span>Тип объекта</span>
-                  <select
-                    value={objectTypeFilter}
-                    onChange={(e) => setObjectTypeFilter(e.target.value as ObjectTypeFilter)}
-                  >
-                    <option value="">Все</option>
-                    <option value="task">Задачи</option>
-                    <option value="order">Заказы</option>
-                  </select>
-                </label>
+                {effectiveViewMode !== 'orders' && (
+                  <label className="district-field">
+                    <span>Тип объекта</span>
+                    <select
+                      value={objectTypeFilter}
+                      onChange={(e) => setObjectTypeFilter(e.target.value as ObjectTypeFilter)}
+                    >
+                      <option value="">Все</option>
+                      <option value="task">Задачи</option>
+                      <option value="order">Заказы</option>
+                    </select>
+                  </label>
+                )}
               </>
             )}
             <button
@@ -547,6 +584,34 @@ export function StatisticsScreen({
               </section>
             </>
           )}
+
+          {effectiveViewMode === 'orders' && hasOrdersData && (
+            <section className="statistics-section">
+              <h2>Последние закрытия заказов</h2>
+              <div className="personnel-table-wrap">
+                <table className="personnel-table statistics-table statistics-details-table">
+                  <thead>
+                    <tr>
+                      <th>Дата</th>
+                      <th>Номер заказа</th>
+                      <th>Район</th>
+                      <th>Сотрудник</th>
+                      <th>Площадь, га</th>
+                      <th>Длительность</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderClosureRows.map((row) => (
+                      <OrderClosureRow
+                        key={`${row.object_key}-${row.created_at}-${row.user_login}`}
+                        row={row}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </div>
@@ -675,6 +740,21 @@ function ActionDetailRow({ row }: { row: StatisticsActionDetail }) {
       <td>{formatStatisticsObjectType(row.object_type)}</td>
       <td>{formatStatisticsAction(row.action)}</td>
       <td title={row.object_key}>{formatDetailObjectLabel(row)}</td>
+      <td>{areaLabel}</td>
+      <td>{formatDurationMinutes(row.duration_minutes)}</td>
+    </tr>
+  )
+}
+
+function OrderClosureRow({ row }: { row: StatisticsActionDetail }) {
+  const taskNumber = row.task_number?.trim() || row.object_key.slice(0, 8)
+  const areaLabel = row.area_hectares > 0 ? formatHa(row.area_hectares) : '—'
+  return (
+    <tr>
+      <td>{formatDetailDate(row.created_at)}</td>
+      <td title={row.object_key}>{taskNumber}</td>
+      <td>{row.rayon?.trim() || '—'}</td>
+      <td>{row.user_login}</td>
       <td>{areaLabel}</td>
       <td>{formatDurationMinutes(row.duration_minutes)}</td>
     </tr>

@@ -118,6 +118,12 @@ export interface GeoStatistics {
   date_to: string
 }
 
+export interface OrderClosuresStatistics {
+  closures: StatisticsActionDetail[]
+  date_from: string
+  date_to: string
+}
+
 export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks' | 'employee_locations'
 
 export interface TrackFeature {

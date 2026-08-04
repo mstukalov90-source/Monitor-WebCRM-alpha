@@ -360,6 +360,76 @@ def fetch_employee_action_details(
     return [_normalize_detail_row(dict(row)) for row in rows]
 
 
+def fetch_recent_order_closures(
+    conn: PgConnection,
+    *,
+    date_from: date,
+    date_to: date,
+    user_login: str | None = None,
+    user_role: str | None = None,
+) -> list[dict[str, Any]]:
+    """Recent field_order_closed events, newest first (for Заказы statistics view)."""
+    start, end = _period_bounds(date_from, date_to)
+    filters = [
+        "s.created_at >= %s",
+        "s.created_at <= %s",
+        "s.object_type = 'order'",
+        "s.action = 'field_order_closed'",
+    ]
+    params: list[Any] = [start, end]
+
+    if user_role:
+        filters.append("s.user_role = %s")
+        params.append(user_role)
+    login = (user_login or "").strip()
+    if login:
+        filters.append("s.user_login = %s")
+        params.append(login)
+
+    tracks_cfg = order_tracks_config()
+    tracks_schema = tracks_cfg.get("schema", "mggt_field")
+    tracks_table = tracks_cfg.get("table", "tracks")
+    task_col = tracks_cfg.get("task_column", "task")
+
+    where = " AND ".join(filters)
+    query = f"""
+        SELECT
+            s.user_login,
+            s.user_role,
+            s.object_type,
+            s.action,
+            s.object_key::text AS object_key,
+            s.created_at,
+            ta.task_number,
+            ta.rayon,
+            COALESCE(ta.area, 0) / 10000.0 AS area_hectares,
+            tr.duration_sec AS duration_seconds
+        FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        LEFT JOIN crm.tasks_area ta
+          ON s.object_key = ta.key
+        LEFT JOIN (
+            SELECT
+                CASE
+                    WHEN position(':' IN NULLIF(TRIM(t."{task_col}"::text), '')) > 0
+                    THEN split_part(TRIM(t."{task_col}"::text), ':', 2)
+                    ELSE TRIM(t."{task_col}"::text)
+                END AS task_key,
+                SUM(t.duration_sec) AS duration_sec
+            FROM "{tracks_schema}"."{tracks_table}" t
+            WHERE t."{task_col}" IS NOT NULL
+              AND NULLIF(TRIM(t."{task_col}"::text), '') IS NOT NULL
+              AND t.duration_sec IS NOT NULL
+            GROUP BY 1
+        ) tr ON s.object_key::text = tr.task_key
+        WHERE {where}
+        ORDER BY s.created_at DESC
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [_normalize_detail_row(dict(row)) for row in rows]
+
+
 def _row_with_iso_dates(row: dict[str, Any]) -> dict[str, Any]:
     for key in ("period_from", "period_to", "created_at"):
         value = row.get(key)
