@@ -784,7 +784,91 @@ def generate_letter_docx(
     append_photo_pages(document, photo_payloads)
 
     filename = letter_download_filename(street=street or "__________", today=today, fid=fid)
-    return fid, document_to_bytes(document), filename
+    content = document_to_bytes(document)
+    store_letter_docx(fid, content, filename, settings)
+    return fid, content, filename
+
+
+def _letter_cache_root(settings: Settings) -> Path:
+    path = Path(settings.letter_cache_dir)
+    if not path.is_absolute():
+        # backend/app/letters/oati.py → backend/
+        path = Path(__file__).resolve().parent.parent.parent / path
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def store_letter_docx(
+    fid: int,
+    content: bytes,
+    filename: str,
+    settings: Settings | None = None,
+) -> None:
+    """Persist generated DOCX for a short-lived authenticated GET download."""
+    settings = settings or get_settings()
+    root = _letter_cache_root(settings)
+    (root / f"{int(fid)}.docx").write_bytes(content)
+    (root / f"{int(fid)}.filename.txt").write_text(filename, encoding="utf-8")
+    _prune_letter_cache(root)
+
+
+def load_letter_docx(
+    fid: int,
+    *,
+    settings: Settings | None = None,
+) -> tuple[bytes, str]:
+    settings = settings or get_settings()
+    root = _letter_cache_root(settings)
+    docx_path = root / f"{int(fid)}.docx"
+    name_path = root / f"{int(fid)}.filename.txt"
+    if not docx_path.is_file():
+        raise LetterError("Файл письма не найден или срок хранения истёк", status_code=404)
+    content = docx_path.read_bytes()
+    filename = (
+        name_path.read_text(encoding="utf-8").strip()
+        if name_path.is_file()
+        else f"OATI_letter_{fid}.docx"
+    )
+    return content, filename or f"OATI_letter_{fid}.docx"
+
+
+def assert_letter_belongs_to_report(
+    conn: PgConnection,
+    *,
+    fid: int,
+    task_key: str,
+    report_id: int,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM webcrm.oati_letters
+            WHERE fid = %s
+              AND task_key = %s::uuid
+              AND report_id = %s
+            LIMIT 1
+            """,
+            (fid, task_key, report_id),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise LetterError("Письмо не найдено для этой задачи/отчёта", status_code=404)
+
+
+def _prune_letter_cache(root: Path, *, max_age_hours: int = 48) -> None:
+    import time
+
+    cutoff = time.time() - max_age_hours * 3600
+    try:
+        for path in root.iterdir():
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except OSError:
+        return
 
 
 def render_letter_map_preview(

@@ -52,6 +52,7 @@ SNAPSHOT_SOURCES = {
     "done_legal": ("done_legal_table", "tasks_done_legal"),
     "done_illegal": ("done_illegal_table", "tasks_done_illegal"),
     "clear": ("clear_table", "tasks_clear"),
+    "delay": ("delay_table", "tasks_delay"),
 }
 
 
@@ -66,6 +67,7 @@ class SnapshotRow:
     executor: Optional[str] = None
     office_comment: Optional[str] = None
     rayon: Optional[str] = None
+    delay_until: Optional[str] = None
 
 
 def _snapshot_table_ref(store_cfg: dict, config_key: str, default_table: str) -> tuple[str, str]:
@@ -89,6 +91,8 @@ def _apply_snapshot_metadata(attrs: dict[str, Any], snap: SnapshotRow) -> None:
         attrs["_sent_at"] = snap.sent_at
     if snap.office_comment and str(snap.office_comment).strip():
         attrs["office_comment"] = str(snap.office_comment).strip()
+    if snap.delay_until:
+        attrs["delay_until"] = snap.delay_until
 
 
 def _row_to_snapshot_row(
@@ -123,6 +127,13 @@ def _row_to_snapshot_row(
     group_name = canonical or (row.get("type") or "")
     sent_at = row.get("sent_at")
     sent_str = sent_at.isoformat() if isinstance(sent_at, datetime) else str(sent_at or "")
+    delay_until = row.get("delay_until")
+    if hasattr(delay_until, "isoformat"):
+        delay_until_str = delay_until.isoformat()
+    elif delay_until is not None:
+        delay_until_str = str(delay_until)
+    else:
+        delay_until_str = None
     return SnapshotRow(
         snapshot_key=str(row["key"]),
         task_key=str(row["task_key"]),
@@ -133,6 +144,7 @@ def _row_to_snapshot_row(
         executor=row.get("executor") if include_executor else None,
         office_comment=row.get("office_comment") if include_executor else None,
         rayon=row.get("rayon"),
+        delay_until=delay_until_str,
     )
 
 
@@ -145,6 +157,8 @@ def _snapshot_select_columns(table: str) -> list[str]:
     if table == "tasks_field":
         columns.append("executor")
         columns.append("office_comment")
+    if table == "tasks_delay":
+        columns.append("delay_until")
     return columns
 
 
@@ -160,8 +174,10 @@ def fetch_snapshot_rows(
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     crm_cfg = crm_tasks_config()
     include_executor = table == "tasks_field"
-    from app.crm.store import ensure_rayon_column
+    from app.crm.store import ensure_rayon_column, ensure_task_snapshot_table
 
+    if table == "tasks_delay":
+        ensure_task_snapshot_table(conn, store_cfg, config_key, default_table)
     ensure_rayon_column(conn, schema, table)
     if include_executor:
         from app.crm.executor import ensure_executor_column

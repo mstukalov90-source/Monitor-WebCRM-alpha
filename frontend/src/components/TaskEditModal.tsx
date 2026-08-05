@@ -9,6 +9,7 @@ import {
   lookupFieldSnapshot,
   lookupTaskByFeature,
   markDisruptionAbsent,
+  postponeTask,
   returnTaskToActive,
   sendTaskToField,
   updateTask,
@@ -45,7 +46,7 @@ import {
 } from '../types'
 import { officeTaskLinkPrefill } from '../lib/officeTaskLinkPrefill'
 
-type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active'
+type StatusAction = 'field' | 'legal' | 'illegal' | 'clear' | 'active' | 'delay'
 
 type LegalValidation = {
   isValid: boolean
@@ -69,6 +70,16 @@ const STATUS_CONFIRM_MESSAGES: Record<StatusAction, string> = {
   illegal: 'Закрыть задачу как нелегальную?',
   clear: 'Отметить задачу: разрытие отсутствует?',
   active: 'Вернуть задачу в активные?',
+  delay: 'Отложить задачу до выбранной даты?',
+}
+
+function tomorrowIsoDate(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 function fieldSurveyMetaFromReports(reports: FieldReportFeature[]): FieldSurveyMeta | null {
@@ -174,6 +185,8 @@ interface TaskEditModalProps {
   taskInCurrentResult?: boolean
   canManagePersonnel: boolean
   canGenerateLetters: boolean
+  canManageFieldStatus: boolean
+  canPostponeTasks: boolean
   userRole: UserRole
   officeWorking?: boolean
   onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
@@ -193,6 +206,8 @@ export function TaskEditModal({
   taskInCurrentResult = false,
   canManagePersonnel,
   canGenerateLetters,
+  canManageFieldStatus,
+  canPostponeTasks,
   userRole,
   officeWorking = false,
   onStartPlaceOfficePoint,
@@ -213,6 +228,7 @@ export function TaskEditModal({
   const [message, setMessage] = useState('')
   const [pendingStatusAction, setPendingStatusAction] = useState<StatusAction | null>(null)
   const [officeComment, setOfficeComment] = useState('')
+  const [delayUntil, setDelayUntil] = useState(tomorrowIsoDate)
   const [showLegalRequirements, setShowLegalRequirements] = useState(false)
   const [linkSectionOpen, setLinkSectionOpen] = useState(false)
   const [stationSectionOpen, setStationSectionOpen] = useState(false)
@@ -225,11 +241,11 @@ export function TaskEditModal({
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
   const isReadonly = taskSource !== 'active'
-  const canManageFieldTaskStatus =
-    taskSource === 'field' && (userRole === 'admin' || userRole === 'manager')
-  const canPerformStatusActions = !isReadonly || canManageFieldTaskStatus
+  const canManageFieldTaskStatus = taskSource === 'field' && canManageFieldStatus
+  const canPerformStatusActions = !isReadonly || canManageFieldTaskStatus || taskSource === 'delay'
   const canSendToField =
-    taskSource === 'active' && Boolean(sessionRayon) && taskInCurrentResult
+    (taskSource === 'active' && Boolean(sessionRayon) && taskInCurrentResult) ||
+    (taskSource === 'delay' && Boolean(sessionRayon) && canPostponeTasks)
   const canCloseLegal =
     taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
   const showIllegalClose =
@@ -239,13 +255,22 @@ export function TaskEditModal({
     showIllegalClose && canPerformStatusActions && record?.field_observed === false
   const canMarkDisruptionAbsent =
     taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
-  const canReturnToActive = canManageFieldTaskStatus
+  const canReturnToActive =
+    (taskSource === 'field' && canManageFieldTaskStatus) ||
+    (taskSource === 'delay' && canManageFieldStatus)
+  const canPostpone =
+    canPostponeTasks && (taskSource === 'active' || taskSource === 'field')
   const hasStatusActions =
     canSendToField ||
     canCloseLegal ||
     showIllegalClose ||
     canMarkDisruptionAbsent ||
-    canReturnToActive
+    canReturnToActive ||
+    canPostpone
+  const delayUntilLabel =
+    context?.feature.attributes.delay_until != null
+      ? String(context.feature.attributes.delay_until)
+      : null
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
   const showFieldMaterials =
     isFieldObserved(record?.field_observed) ||
@@ -386,6 +411,7 @@ export function TaskEditModal({
     setFieldSurveyMeta(null)
     setPendingStatusAction(null)
     setOfficeComment('')
+    setDelayUntil(tomorrowIsoDate())
     setShowLegalRequirements(false)
     setLinkSectionOpen(false)
     setStationSectionOpen(false)
@@ -542,8 +568,15 @@ export function TaskEditModal({
       setMessage(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
       return
     }
+    if (action === 'delay') {
+      if (!delayUntil || delayUntil < tomorrowIsoDate()) {
+        setMessage('Выберите дату позже сегодняшнего дня')
+        return
+      }
+    }
     setPendingStatusAction(null)
-    const shouldSaveBeforeAction = !isReadonly && action !== 'field' && action !== 'active'
+    const shouldSaveBeforeAction =
+      !isReadonly && action !== 'field' && action !== 'active' && action !== 'delay'
     if (shouldSaveBeforeAction) await handleSave()
     else if (action === 'field' && canSendToField && !isReadonly) await handleSave()
     setLoading(true)
@@ -555,8 +588,9 @@ export function TaskEditModal({
           return
         }
         result = await sendTaskToField(record.key, officeComment, sessionRayon)
-      }
-      else if (action === 'legal') result = await closeTaskLegal(record.key, sessionRayon || undefined)
+      } else if (action === 'delay') {
+        result = await postponeTask(record.key, delayUntil, sessionRayon || undefined)
+      } else if (action === 'legal') result = await closeTaskLegal(record.key, sessionRayon || undefined)
       else if (action === 'illegal') result = await closeTaskIllegal(record.key, sessionRayon || undefined)
       else if (action === 'clear') result = await markDisruptionAbsent(record.key, sessionRayon || undefined)
       else result = await returnTaskToActive(record.key)
@@ -571,6 +605,12 @@ export function TaskEditModal({
         setMessage(
           result.status === 'deleted'
             ? 'Задача возвращена в активные.'
+            : `Статус: ${result.status}`,
+        )
+      } else if (action === 'delay') {
+        setMessage(
+          result.status === 'inserted'
+            ? `Задача отложена до ${delayUntil}.`
             : `Статус: ${result.status}`,
         )
       } else {
@@ -601,6 +641,9 @@ export function TaskEditModal({
     }
     setShowLegalRequirements(false)
     setMessage('')
+    if (action === 'delay') {
+      setDelayUntil(tomorrowIsoDate())
+    }
     setPendingStatusAction(action)
   }
 
@@ -629,6 +672,9 @@ export function TaskEditModal({
               <p className="muted small">
                 Отправлено: {new Date(context.feature.sent_at).toLocaleString('ru-RU')}
               </p>
+            )}
+            {delayUntilLabel && (
+              <p className="muted small">Отложено до: {delayUntilLabel}</p>
             )}
             {taskSource === 'field' &&
               context.feature.attributes.office_comment != null &&
@@ -829,6 +875,18 @@ export function TaskEditModal({
                           />
                         </label>
                       )}
+                      {pendingStatusAction === 'delay' && (
+                        <label className="form-row status-confirm-comment">
+                          <span>Отложить до</span>
+                          <input
+                            type="date"
+                            value={delayUntil}
+                            min={tomorrowIsoDate()}
+                            disabled={loading}
+                            onChange={(e) => setDelayUntil(e.target.value)}
+                          />
+                        </label>
+                      )}
                       <div className="modal-action-buttons">
                         <button
                           type="button"
@@ -861,6 +919,16 @@ export function TaskEditModal({
                           disabled={loading}
                         >
                           Отправить в поле
+                        </button>
+                      )}
+                      {canPostpone && (
+                        <button
+                          type="button"
+                          className="btn btn-status-delay"
+                          onClick={() => requestStatusAction('delay')}
+                          disabled={loading}
+                        >
+                          Отложить задачу
                         </button>
                       )}
                       {canCloseLegal && (

@@ -9,13 +9,19 @@ from fastapi.responses import Response
 
 from app.auth.deps import require_can_generate_letters
 from app.auth.session import UserSession
-from app.crm.schemas import OatiLetterDraftOut, OatiLetterGenerateRequest
+from app.crm.schemas import (
+    OatiLetterDraftOut,
+    OatiLetterGenerateOut,
+    OatiLetterGenerateRequest,
+)
 from app.db import get_connection
 from app.letters.map_image import DEFAULT_MAP_SCALE
 from app.letters.oati import (
     LetterError,
+    assert_letter_belongs_to_report,
     build_letter_draft,
     generate_letter_docx,
+    load_letter_docx,
     render_letter_map_preview,
 )
 
@@ -55,16 +61,17 @@ def get_oati_map_preview(
     return Response(content=png, media_type="image/png")
 
 
-@router.post("/{key}/field-reports/{report_id}/letters")
+@router.post("/{key}/field-reports/{report_id}/letters", response_model=OatiLetterGenerateOut)
 def post_oati_letter(
     key: str,
     report_id: int,
     body: OatiLetterGenerateRequest,
     user: UserSession = Depends(require_can_generate_letters),
-) -> Response:
+) -> OatiLetterGenerateOut:
+    """Generate DOCX, cache it, return JSON with download URL (native browser download)."""
     try:
         with get_connection() as conn:
-            fid, content, filename = generate_letter_docx(
+            fid, _content, filename = generate_letter_docx(
                 conn,
                 task_key=key,
                 report_id=report_id,
@@ -82,9 +89,33 @@ def post_oati_letter(
     except LetterError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
-    # RFC 5987 filename* for Cyrillic.
+    download_url = (
+        f"/api/tasks/{quote(key, safe='')}/field-reports/{int(report_id)}"
+        f"/letters/{int(fid)}/download"
+    )
+    return OatiLetterGenerateOut(fid=fid, filename=filename, download_url=download_url)
+
+
+@router.get("/{key}/field-reports/{report_id}/letters/{fid}/download")
+def download_oati_letter(
+    key: str,
+    report_id: int,
+    fid: int,
+    _user: UserSession = Depends(require_can_generate_letters),
+) -> Response:
+    """Stream cached DOCX; Cyrillic name via Content-Disposition (Chrome-safe)."""
+    try:
+        with get_connection() as conn:
+            assert_letter_belongs_to_report(
+                conn, fid=fid, task_key=key, report_id=report_id
+            )
+        content, filename = load_letter_docx(fid)
+    except LetterError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    ascii_name = f"OATI_letter_{fid}.docx"
     disposition = (
-        f"attachment; filename=\"OATI_letter_{fid}.docx\"; "
+        f"attachment; filename=\"{ascii_name}\"; "
         f"filename*=UTF-8''{quote(filename)}"
     )
     return Response(
@@ -92,6 +123,6 @@ def post_oati_letter(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
             "Content-Disposition": disposition,
-            "X-Oati-Letter-Fid": str(fid),
+            "Cache-Control": "no-store",
         },
     )

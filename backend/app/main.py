@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.crm.delay_scheduler import delayed_tasks_restore_loop
 from app.db import close_pool, init_pool
 from app.routes import auth, employee_locations, layers, letters, order_tracks, personnel, photos, tasks
 
@@ -15,8 +17,21 @@ from app.routes import auth, employee_locations, layers, letters, order_tracks, 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_pool()
-    yield
-    close_pool()
+    stop = asyncio.Event()
+    restore_task = asyncio.create_task(delayed_tasks_restore_loop(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        try:
+            await asyncio.wait_for(restore_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            restore_task.cancel()
+            try:
+                await restore_task
+            except asyncio.CancelledError:
+                pass
+        close_pool()
 
 
 app = FastAPI(

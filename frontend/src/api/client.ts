@@ -27,6 +27,7 @@ import type {
   EmployeeLocationsResult,
   OatiLetterDraft,
   OatiLetterGeneratePayload,
+  OatiLetterGenerateResult,
 } from '../types'
 
 const API_BASE = ''
@@ -187,7 +188,7 @@ export function fetchActiveTasks(rayon: string, applyDateFilter: boolean): Promi
 
 export function fetchSnapshotTasks(
   rayon: string,
-  source: 'field' | 'done_legal' | 'done_illegal' | 'clear',
+  source: 'field' | 'done_legal' | 'done_illegal' | 'clear' | 'delay',
 ): Promise<TaskResult> {
   const params = new URLSearchParams({ rayon, source })
   return request(`/api/tasks/snapshot?${params}`, undefined, 90_000)
@@ -278,6 +279,20 @@ export function sendTaskToField(
     body: JSON.stringify({
       rayon,
       office_comment: officeComment?.trim() || null,
+    }),
+  })
+}
+
+export function postponeTask(
+  key: string,
+  delayUntil: string,
+  rayon?: string,
+): Promise<{ status: string }> {
+  return request(`/api/tasks/${key}/postpone`, {
+    method: 'POST',
+    body: JSON.stringify({
+      delay_until: delayUntil,
+      rayon: rayon || null,
     }),
   })
 }
@@ -430,9 +445,9 @@ export async function generateOatiLetter(
   taskKey: string,
   reportId: number,
   payload: OatiLetterGeneratePayload,
-): Promise<{ blob: Blob; filename: string; fid: number | null }> {
+): Promise<OatiLetterGenerateResult> {
   const controller = new AbortController()
-  const timer = window.setTimeout(() => controller.abort(), 120_000)
+  const timer = window.setTimeout(() => controller.abort(), 180_000)
   try {
     const res = await fetch(
       `${API_BASE}/api/tasks/${encodeURIComponent(taskKey)}/field-reports/${reportId}/letters`,
@@ -459,28 +474,17 @@ export async function generateOatiLetter(
         throw new Error(text || res.statusText)
       }
     }
-    const blob = await res.blob()
-    const fidHeader = res.headers.get('X-Oati-Letter-Fid')
-    const fid = fidHeader ? Number(fidHeader) : null
-    let filename = fid != null && !Number.isNaN(fid) ? `Письмо_ОАТИ_${fid}.docx` : 'Письмо_ОАТИ.docx'
-    const disposition = res.headers.get('Content-Disposition')
-    if (disposition) {
-      const utfMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
-      const plainMatch = /filename="?([^";]+)"?/i.exec(disposition)
-      if (utfMatch?.[1]) {
-        try {
-          filename = decodeURIComponent(utfMatch[1])
-        } catch {
-          filename = utfMatch[1]
-        }
-      } else if (plainMatch?.[1]) {
-        filename = plainMatch[1]
-      }
+    const data = (await res.json()) as OatiLetterGenerateResult
+    if (!data?.download_url || data.fid == null) {
+      throw new Error('Сервер не вернул ссылку на скачивание письма')
     }
-    return { blob, filename, fid: fid != null && !Number.isNaN(fid) ? fid : null }
+    return data
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new Error('Превышено время ожидания ответа сервера')
+    }
+    if (e instanceof TypeError) {
+      throw new Error('Ошибка сети при формировании письма. Проверьте соединение и повторите.')
     }
     throw e
   } finally {

@@ -183,6 +183,7 @@ function App() {
           setTaskResult(result)
         } else if (
           source === 'field' ||
+          source === 'delay' ||
           source === 'done_legal' ||
           source === 'done_illegal' ||
           source === 'clear'
@@ -780,6 +781,8 @@ function App() {
         taskInCurrentResult={editTaskInCurrentResult}
         canManagePersonnel={user.can_manage_personnel}
         canGenerateLetters={user.can_generate_letters}
+        canManageFieldStatus={user.can_manage_field_task_status}
+        canPostponeTasks={user.can_postpone_tasks}
         userRole={user.role}
         officeWorking={officeWorking}
         onStartPlaceOfficePoint={handleStartPlaceOfficePoint}

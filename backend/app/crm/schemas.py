@@ -143,6 +143,11 @@ class SnapshotActionRequest(BaseModel):
     rayon: str | None = None
 
 
+class PostponeTaskRequest(BaseModel):
+    delay_until: date
+    rayon: str | None = None
+
+
 class PersonnelUserOut(BaseModel):
     uuid: str
     login: str
@@ -403,3 +408,9 @@ class OatiLetterGenerateRequest(BaseModel):
         if value not in allowed:
             raise ValueError(f"map_scale must be one of {sorted(allowed)}")
         return value
+
+
+class OatiLetterGenerateOut(BaseModel):
+    fid: int
+    filename: str
+    download_url: str

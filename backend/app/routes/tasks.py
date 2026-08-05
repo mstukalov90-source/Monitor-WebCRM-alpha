@@ -16,10 +16,17 @@ from app.auth.deps import (
     check_task_source_any,
     get_current_user,
     require_can_collect,
-    require_manager_or_admin,
+    require_can_manage_field_task_status,
+    require_can_postpone_tasks,
     require_office_or_admin,
 )
-from app.auth.session import UserSession, allowed_area_statuses, can_collect, districts_unrestricted
+from app.auth.session import (
+    UserSession,
+    allowed_area_statuses,
+    can_collect,
+    can_manage_field_task_status,
+    districts_unrestricted,
+)
 from app.auth.service import fetch_allowed_rayons
 from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.collector import (
@@ -38,6 +45,7 @@ from app.crm.schemas import (
     FieldPhotosResultOut,
     FieldReportOut,
     FieldReportsResultOut,
+    PostponeTaskRequest,
     SendToFieldRequest,
     SnapshotActionRequest,
     SnapshotResultOut,
@@ -50,6 +58,8 @@ from app.crm.store import (
     TaskRecord,
     fetch_task_by_key,
     fetch_task_for_feature,
+    restore_due_delayed_tasks,
+    send_task_to_delay,
     send_task_to_done_illegal,
     send_task_to_done_legal,
     send_task_to_field,
@@ -114,10 +124,10 @@ def _area_rayons_filter(conn, user: UserSession) -> list[str] | None:
 def _require_field_task_manager(user: UserSession, conn, store_cfg, task_key: str) -> None:
     if not task_key_exists_in_snapshot(conn, store_cfg, "field_table", "tasks_field", task_key):
         return
-    if user.role not in ("admin", "manager"):
+    if not can_manage_field_task_status(user.role):
         raise HTTPException(
             status_code=403,
-            detail="Изменение статуса задачи «В поле» доступно только manager и admin",
+            detail="Изменение статуса задачи «В поле» недоступно для вашей роли",
         )
 
 
@@ -301,6 +311,11 @@ def get_active_tasks(
     check_task_source(user, "active")
     check_rayon(user, rayon)
     with get_connection() as conn:
+        store_cfg = crm_task_store_config()
+        try:
+            restore_due_delayed_tasks(conn, store_cfg)
+        except Exception:
+            logging.getLogger(__name__).exception("Failed to restore due delayed tasks")
         result, _ = collect_tasks(
             conn,
             rayon,
@@ -317,17 +332,22 @@ def get_active_tasks(
 @router.get("/tasks/snapshot")
 def get_snapshot_tasks(
     rayon: str = Query(...),
-    source: str = Query(..., description="field | done_legal | done_illegal | clear"),
+    source: str = Query(..., description="field | done_legal | done_illegal | clear | delay"),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
-    if source not in ("field", "done_legal", "done_illegal", "clear"):
+    if source not in ("field", "done_legal", "done_illegal", "clear", "delay"):
         raise HTTPException(
             status_code=400,
-            detail="source must be field, done_legal, done_illegal, or clear",
+            detail="source must be field, done_legal, done_illegal, clear, or delay",
         )
     check_task_source(user, source)
     check_rayon(user, rayon)
     with get_connection() as conn:
+        if source == "delay":
+            try:
+                restore_due_delayed_tasks(conn, crm_task_store_config())
+            except Exception:
+                logging.getLogger(__name__).exception("Failed to restore due delayed tasks")
         result = collect_snapshot_tasks(
             conn,
             rayon,
@@ -522,7 +542,7 @@ def post_send_to_field(
     body: SendToFieldRequest,
     user: UserSession = Depends(get_current_user),
 ) -> SnapshotResultOut:
-    check_task_source(user, "active")
+    check_task_source_any(user, ["active", "delay"])
     check_rayon(user, body.rayon)
     store_cfg = crm_task_store_config()
     with get_connection() as conn:
@@ -536,6 +556,36 @@ def post_send_to_field(
                 store_cfg,
                 user.login,
                 office_comment=body.office_comment,
+                rayon=body.rayon,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return SnapshotResultOut(status=status)
+
+
+@router.post("/tasks/{key}/postpone")
+def post_postpone_task(
+    key: str,
+    body: PostponeTaskRequest,
+    user: UserSession = Depends(require_can_postpone_tasks),
+) -> SnapshotResultOut:
+    check_task_source_any(user, ["active", "field"])
+    if body.rayon:
+        check_rayon(user, body.rayon)
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            status = send_task_to_delay(
+                conn,
+                record,
+                store_cfg,
+                user.login,
+                delay_until=body.delay_until,
                 rayon=body.rayon,
             )
         except ValueError as exc:
@@ -605,9 +655,9 @@ def post_disruption_absent(
 @router.post("/tasks/{key}/return-to-active")
 def post_return_to_active(
     key: str,
-    user: UserSession = Depends(require_manager_or_admin),
+    user: UserSession = Depends(require_can_manage_field_task_status),
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["field"])
+    check_task_source_any(user, ["field", "delay"])
     return _send_snapshot(key, return_task_to_active, user.login, user=user)
 
 

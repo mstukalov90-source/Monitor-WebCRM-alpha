@@ -75,6 +75,32 @@ def require_can_generate_letters(user: UserSession = Depends(get_current_user)) 
     return user
 
 
+def require_can_manage_field_task_status(
+    user: UserSession = Depends(get_current_user),
+) -> UserSession:
+    from app.auth.session import can_manage_field_task_status
+
+    if not can_manage_field_task_status(user.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Управление статусом полевых задач недоступно для вашей роли",
+        )
+    return user
+
+
+def require_can_postpone_tasks(
+    user: UserSession = Depends(get_current_user),
+) -> UserSession:
+    from app.auth.session import can_postpone_tasks
+
+    if not can_postpone_tasks(user.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Отложение задач недоступно для вашей роли",
+        )
+    return user
+
+
 def require_office_or_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
     if user.role not in ("office", "admin"):
         raise HTTPException(

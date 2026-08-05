@@ -13,7 +13,9 @@ from app.auth.session import (
     can_collect,
     can_create_users,
     can_generate_letters,
+    can_manage_field_task_status,
     can_manage_personnel,
+    can_postpone_tasks,
     default_task_source,
 )
 from app.auth.tokens import create_token
@@ -37,6 +39,8 @@ class AuthUserOut(BaseModel):
     can_collect: bool
     can_manage_personnel: bool
     can_generate_letters: bool
+    can_manage_field_task_status: bool
+    can_postpone_tasks: bool
     can_create_users: bool
 
 
@@ -85,5 +89,7 @@ def _user_out(session: UserSession) -> AuthUserOut:
         can_collect=can_collect(session.role),
         can_manage_personnel=can_manage_personnel(session.role),
         can_generate_letters=can_generate_letters(session.role),
+        can_manage_field_task_status=can_manage_field_task_status(session.role),
+        can_postpone_tasks=can_postpone_tasks(session.role),
         can_create_users=can_create_users(session.role),
     )

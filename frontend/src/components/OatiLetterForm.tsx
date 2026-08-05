@@ -18,15 +18,14 @@ type EngineeringSource = 'undefined' | 'absent' | 'list'
 const ENGINEERING_UNDEFINED = 'не определено'
 const ENGINEERING_ABSENT = 'отсутствует'
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
+/** Native GET download — Chrome uses Content-Disposition for Cyrillic names (blob+download breaks). */
+function triggerServerDownload(downloadUrl: string) {
   const link = document.createElement('a')
-  link.href = url
-  link.download = filename
+  link.href = downloadUrl
+  link.rel = 'noopener'
   document.body.appendChild(link)
   link.click()
   link.remove()
-  URL.revokeObjectURL(url)
 }
 
 function defaultAddressSource(draft: OatiLetterDraft): AddressSource {
@@ -219,12 +218,8 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         photo_ids: selectedPhotoIds,
         map_scale: mapScale,
       })
-      downloadBlob(result.blob, result.filename)
-      setMessage(
-        result.fid != null
-          ? `Письмо №${result.fid} сформировано и скачано`
-          : 'Письмо сформировано и скачано',
-      )
+      triggerServerDownload(result.download_url)
+      setMessage(`Письмо №${result.fid} сформировано и скачано`)
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e)
       setError(text.replace(/^Error:\s*/, ''))

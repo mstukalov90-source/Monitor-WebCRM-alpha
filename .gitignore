@@ -22,3 +22,5 @@ frontend/dist/
 # Runtime cache
 backend/data/photo_cache/*
 !backend/data/photo_cache/.gitkeep
+backend/data/letter_cache/*
+!backend/data/letter_cache/.gitkeep

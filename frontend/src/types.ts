@@ -9,6 +9,8 @@ export interface AuthUser {
   can_collect: boolean
   can_manage_personnel: boolean
   can_generate_letters: boolean
+  can_manage_field_task_status: boolean
+  can_postpone_tasks: boolean
   can_create_users: boolean
 }
 
@@ -280,6 +282,7 @@ export interface LayerGroupConfig {
 export type TaskSource =
   | 'active'
   | 'field'
+  | 'delay'
   | 'done_legal'
   | 'done_illegal'
   | 'clear'
@@ -301,6 +304,7 @@ export const AREA_STATUS_COLORS: Record<AreaStatus, string> = {
 export const TASK_SECTION_TASK_SOURCES: TaskSource[] = [
   'active',
   'field',
+  'delay',
   'done_legal',
   'done_illegal',
   'clear',
@@ -375,6 +379,12 @@ export interface OatiLetterGeneratePayload {
   violation_names: string[]
   photo_ids: number[]
   map_scale: number
+}
+
+export interface OatiLetterGenerateResult {
+  fid: number
+  filename: string
+  download_url: string
 }
 
 export interface MissingLink {
@@ -828,6 +838,7 @@ export interface SelectedTaskContext {
 export const TASK_SOURCE_LABELS: Record<TaskSource, string> = {
   active: 'Активные',
   field: 'В поле',
+  delay: 'Отложенные',
   done_legal: 'Закрыты легальные',
   done_illegal: 'Закрыты нелегальные',
   clear: 'Разрытие отсутствует',

@@ -9,6 +9,7 @@ TaskSource = str
 ALL_TASK_SOURCES: tuple[TaskSource, ...] = (
     "active",
     "field",
+    "delay",
     "done_legal",
     "done_illegal",
     "clear",
@@ -74,6 +75,14 @@ def can_manage_personnel(role: str) -> bool:
 
 
 def can_generate_letters(role: str) -> bool:
+    return role in ("office", "manager", "admin")
+
+
+def can_manage_field_task_status(role: str) -> bool:
+    return role in ("office", "manager", "admin")
+
+
+def can_postpone_tasks(role: str) -> bool:
     return role in ("office", "manager", "admin")
 
 

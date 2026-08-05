@@ -6,7 +6,9 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from zoneinfo import ZoneInfo
 
 from psycopg2.extensions import connection as PgConnection
 
@@ -20,8 +22,10 @@ from app.crm.user_audit import (
 logger = logging.getLogger(__name__)
 
 SendTaskSnapshotResult = Literal["inserted", "skipped", "deleted", "not_found"]
-WorkflowStatus = Literal["active", "field", "clear", "done_legal", "done_illegal"]
+WorkflowStatus = Literal["active", "field", "clear", "done_legal", "done_illegal", "delay"]
 WorkflowTarget = Literal["active", "field", "clear"]
+
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 TASK_ID_COLUMNS = (
     "photo_uuid",
@@ -141,6 +145,7 @@ _SNAPSHOT_RAYON_TABLES = (
     "tasks_clear",
     "tasks_done_legal",
     "tasks_done_illegal",
+    "tasks_delay",
 )
 
 
@@ -150,6 +155,18 @@ def _field_only_migration_statements(schema: str, table: str) -> Tuple[str, ...]
     return (
         f'ALTER TABLE "{schema}"."{table}" '
         f"ADD COLUMN IF NOT EXISTS office_comment TEXT",
+    )
+
+
+def _delay_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
+    if table != "tasks_delay":
+        return ()
+    index_name = f"idx_{schema}_{table}_delay_until"
+    return (
+        f'ALTER TABLE "{schema}"."{table}" '
+        f"ADD COLUMN IF NOT EXISTS delay_until DATE",
+        f'CREATE INDEX IF NOT EXISTS {index_name} '
+        f'ON "{schema}"."{table}" (delay_until)',
     )
 
 
@@ -746,6 +763,8 @@ def ensure_task_snapshot_table(
                 cur.execute(stmt)
             for stmt in _snapshot_rayon_migration_statements(snapshot_schema, snapshot_table):
                 cur.execute(stmt)
+            for stmt in _delay_migration_statements(snapshot_schema, snapshot_table):
+                cur.execute(stmt)
         conn.commit()
         if snapshot_table in _SNAPSHOT_RAYON_TABLES:
             _rayon_column_ready.add(f"{snapshot_schema}.{snapshot_table}")
@@ -777,6 +796,7 @@ _SNAPSHOT_TABLES = (
     ("done_legal_table", "tasks_done_legal"),
     ("done_illegal_table", "tasks_done_illegal"),
     ("clear_table", "tasks_clear"),
+    ("delay_table", "tasks_delay"),
 )
 
 
@@ -1018,6 +1038,7 @@ def send_task_snapshot(
     ensure_table: bool = True,
     office_comment: str | None = None,
     rayon: str | None = None,
+    delay_until: date | None = None,
 ) -> SendTaskSnapshotResult:
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     if ensure_table and not ensure_task_snapshot_table(conn, store_cfg, config_key, default_table):
@@ -1041,7 +1062,7 @@ def send_task_snapshot(
         + ["is_field_data", "is_office_task"]
         + list(USER_AUDIT_COLUMNS)
     )
-    values = [record.key, task_type] + [
+    values: list[Any] = [record.key, task_type] + [
         _normalize_id_value(getattr(record, col)) for col in TASK_ID_COLUMNS
     ] + [
         _normalize_id_value(getattr(record, col)) for col in STATION_COLUMNS
@@ -1053,6 +1074,11 @@ def send_task_snapshot(
             _normalize_id_value(office_comment),
             rayon_norm,
         ]
+    elif default_table == "tasks_delay":
+        if delay_until is None:
+            raise ValueError("delay_until is required")
+        columns = list(columns) + ["rayon", "delay_until"]
+        values = list(values) + [rayon_norm, delay_until]
     elif table in _SNAPSHOT_RAYON_TABLES:
         columns = list(columns) + ["rayon"]
         values = list(values) + [rayon_norm]
@@ -1080,6 +1106,8 @@ def send_task_to_field(
     office_comment: str | None = None,
     rayon: str | None = None,
 ) -> SendTaskSnapshotResult:
+    if task_key_exists_in_snapshot(conn, store_cfg, "delay_table", "tasks_delay", record.key):
+        remove_task_from_delay(conn, record, store_cfg, login)
     if rayon:
         validate_task_for_field_send(conn, record, rayon, store_cfg)
     return send_task_snapshot(
@@ -1216,12 +1244,120 @@ def remove_task_from_field(
         raise
 
 
+def remove_task_from_delay(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    schema, table = _snapshot_table_ref(store_cfg, "delay_table", "tasks_delay")
+    audit = make_user_audit(login)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'DELETE FROM "{schema}"."{table}" WHERE task_key = %s::uuid RETURNING key',
+                (record.key,),
+            )
+            deleted = cur.fetchone()
+            if deleted:
+                tasks_schema, tasks_table = _table_ref(store_cfg)
+                cur.execute(
+                    f"""
+                    UPDATE "{tasks_schema}"."{tasks_table}"
+                    SET user_last_edit = %s::text[]
+                    WHERE key = %s::uuid
+                    """,
+                    (audit, record.key),
+                )
+        conn.commit()
+        return "deleted" if deleted else "not_found"
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def moscow_today() -> date:
+    from datetime import datetime
+
+    return datetime.now(MOSCOW_TZ).date()
+
+
+def send_task_to_delay(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+    *,
+    delay_until: date,
+    rayon: str | None = None,
+) -> SendTaskSnapshotResult:
+    today = moscow_today()
+    if delay_until <= today:
+        raise ValueError("Дата отложения должна быть позже сегодняшнего дня")
+
+    current = detect_task_workflow_status(conn, store_cfg, record.key)
+    if current not in ("active", "field"):
+        raise ValueError("Отложить можно только активную задачу или задачу «В поле»")
+
+    if current == "field":
+        field_rayon = fetch_field_rayon_for_task(conn, store_cfg, record.key)
+        remove_task_from_field(
+            conn, record, store_cfg, login, log_return_to_active=False
+        )
+        rayon = rayon or field_rayon
+
+    return send_task_snapshot(
+        conn,
+        record,
+        store_cfg,
+        "delay_table",
+        "tasks_delay",
+        login,
+        rayon=rayon,
+        delay_until=delay_until,
+    )
+
+
+def restore_due_delayed_tasks(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    *,
+    as_of: date | None = None,
+) -> list[str]:
+    """Удалить из tasks_delay задачиписи с delay_until <= as_of (по умолчанию сегодня по Москве)."""
+    schema, table = _snapshot_table_ref(store_cfg, "delay_table", "tasks_delay")
+    if not ensure_task_snapshot_table(conn, store_cfg, "delay_table", "tasks_delay"):
+        return []
+    cutoff = as_of or moscow_today()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'''
+                DELETE FROM "{schema}"."{table}"
+                WHERE delay_until IS NOT NULL AND delay_until <= %s
+                RETURNING task_key::text
+                ''',
+                (cutoff,),
+            )
+            keys = [str(row[0]) for row in cur.fetchall() if row[0]]
+        conn.commit()
+        if keys:
+            logger.info("Restored %s delayed task(s) (delay_until <= %s)", len(keys), cutoff)
+        return keys
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def return_task_to_active(
     conn: PgConnection,
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
 ) -> SendTaskSnapshotResult:
+    current = detect_task_workflow_status(conn, store_cfg, record.key)
+    if current == "delay":
+        return remove_task_from_delay(conn, record, store_cfg, login)
     return remove_task_from_field(conn, record, store_cfg, login)
 
 
@@ -1264,6 +1400,7 @@ def detect_task_workflow_status(
 ) -> WorkflowStatus:
     for config_key, default_table, status in (
         ("field_table", "tasks_field", "field"),
+        ("delay_table", "tasks_delay", "delay"),
         ("clear_table", "tasks_clear", "clear"),
         ("done_legal_table", "tasks_done_legal", "done_legal"),
         ("done_illegal_table", "tasks_done_illegal", "done_illegal"),
@@ -1283,6 +1420,7 @@ def fetch_workflow_status_map(
     status_map: Dict[str, WorkflowStatus] = {key: "active" for key in task_keys}
     for config_key, default_table, status in (
         ("field_table", "tasks_field", "field"),
+        ("delay_table", "tasks_delay", "delay"),
         ("clear_table", "tasks_clear", "clear"),
         ("done_legal_table", "tasks_done_legal", "done_legal"),
         ("done_illegal_table", "tasks_done_illegal", "done_illegal"),
@@ -1321,8 +1459,9 @@ def set_task_workflow_status(
         if current == "active":
             return "skipped"
         field_result = remove_task_from_field(conn, record, store_cfg, login)
+        delay_result = remove_task_from_delay(conn, record, store_cfg, login)
         clear_result = remove_task_from_clear(conn, record, store_cfg, login)
-        if field_result == "deleted" or clear_result == "deleted":
+        if field_result == "deleted" or delay_result == "deleted" or clear_result == "deleted":
             return "updated"
         return "not_found"
 
