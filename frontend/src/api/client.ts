@@ -21,6 +21,8 @@ import type {
   PersonnelStatistics,
   GeoStatistics,
   OrderClosuresStatistics,
+  OrderStatusFeed,
+  TaskViewContext,
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
@@ -232,6 +234,24 @@ export function pauseAreaAnalise(key: string): Promise<{ status: string }> {
 
 export function completeAreaAnalise(key: string): Promise<{ status: string }> {
   return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/complete-analise`, {
+    method: 'POST',
+  })
+}
+
+export function startAreaPreAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/start-pre-analise`, {
+    method: 'POST',
+  })
+}
+
+export function pauseAreaPreAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/pause-pre-analise`, {
+    method: 'POST',
+  })
+}
+
+export function completeAreaPreAnalise(key: string): Promise<{ status: string }> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/complete-pre-analise`, {
     method: 'POST',
   })
 }
@@ -693,6 +713,23 @@ export function fetchPersonnelOrderStatistics(params: {
   if (params.userRole) qs.set('user_role', params.userRole)
   if (params.userLogin) qs.set('user_login', params.userLogin)
   return request(`/api/personnel/statistics/orders?${qs}`)
+}
+
+export function fetchOrderStatusFeed(params: {
+  dateFrom: string
+  dateTo: string
+  limit?: number
+}): Promise<OrderStatusFeed> {
+  const qs = new URLSearchParams({
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+  })
+  if (params.limit != null) qs.set('limit', String(params.limit))
+  return request(`/api/personnel/order-status?${qs}`)
+}
+
+export function fetchTaskViewContext(key: string): Promise<TaskViewContext> {
+  return request(`/api/tasks/${encodeURIComponent(key)}/view-context`)
 }
 
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {

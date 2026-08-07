@@ -256,9 +256,9 @@ body,
 
 .district-orders-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 8px 0;
   border-bottom: 1px solid #f0f4f8;
   font-size: 0.85rem;
@@ -266,6 +266,13 @@ body,
 
 .district-orders-item:last-child {
   border-bottom: none;
+}
+
+.district-orders-item-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .district-orders-name {
@@ -283,6 +290,28 @@ body,
   justify-content: flex-end;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.district-orders-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn.small {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+}
+
+.office-work-mode-modal .office-work-mode-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.office-work-mode-modal .office-work-mode-actions .btn {
+  width: 100%;
 }
 
 .district-map-popup {
@@ -914,6 +943,59 @@ body,
 
 .modal.area-order-picker-modal {
   width: min(1100px, 96vw);
+}
+
+.modal.order-status-modal {
+  width: min(720px, 96vw);
+}
+
+.order-status-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 12px 0 8px;
+}
+
+.order-status-section-title {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.order-status-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.order-status-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+  cursor: pointer;
+}
+
+.order-status-item:hover:not(:disabled) {
+  background: #f0f4f8;
+  border-color: #bbc8d6;
+}
+
+.order-status-item:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.order-status-item-main {
+  font-weight: 500;
 }
 
 .area-order-picker-table th,

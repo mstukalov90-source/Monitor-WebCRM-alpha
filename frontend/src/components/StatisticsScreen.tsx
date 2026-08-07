@@ -506,6 +506,7 @@ export function StatisticsScreen({
                         <th>Незакрыто</th>
                         <th>Площадь незакрытых, га</th>
                         <th>Прогресс</th>
+                        <th>Подготовка завершена</th>
                         <th>Анализ завершён</th>
                       </tr>
                     </thead>
@@ -559,6 +560,7 @@ export function StatisticsScreen({
                           <th>Незакрыто</th>
                           <th>Площадь незакрытых, га</th>
                           <th>Прогресс</th>
+                          <th>Подготовка завершена</th>
                           <th>Анализ завершён</th>
                         </tr>
                       </thead>
@@ -631,6 +633,7 @@ function GeoMetricCells({ row }: { row: GeoStatisticsRow }) {
       <td>{row.orders_open}</td>
       <td>{formatHa(row.orders_open_ha)}</td>
       <td>{formatProgressPct(row.progress_pct)}</td>
+      <td>{row.pre_analise_completed}</td>
       <td>{row.analise_completed}</td>
     </>
   )

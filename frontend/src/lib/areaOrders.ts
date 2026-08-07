@@ -5,7 +5,9 @@ import {
   areaStatusFromAttributes,
   formatAnaliseWorkflowStatus,
   formatAreaStatus,
+  formatPreAnaliseWorkflowStatus,
   normalizeRayonName,
+  preAnaliseWorkflowStatus,
 } from '../types'
 
 export interface AreaOrdersByRayon {
@@ -86,6 +88,9 @@ export function buildDistrictOrdersPopupHtml(
       const name = escapeHtml(areaOrderDisplayName(attrs))
       const surveyStatus = areaStatusFromAttributes(attrs)
       const surveyLabel = escapeHtml(formatAreaStatus(surveyStatus) || '—')
+      const preWorkflow = preAnaliseWorkflowStatus(attrs)
+      const preLabel = escapeHtml(formatPreAnaliseWorkflowStatus(attrs))
+      const preClass = analiseWorkflowStatusClass(preWorkflow)
       const workflow = analiseWorkflowStatus(attrs)
       const analiseLabel = escapeHtml(formatAnaliseWorkflowStatus(attrs))
       const analiseClass = analiseWorkflowStatusClass(workflow)
@@ -95,6 +100,8 @@ export function buildDistrictOrdersPopupHtml(
         `<span class="district-orders-statuses">` +
         `<span class="area-survey-status area-survey-status-${surveyStatus}" ` +
         `title="Полевое обследование: ${surveyLabel}">${surveyLabel}</span>` +
+        `<span class="area-analise-status ${preClass}" ` +
+        `title="Подготовка: ${preLabel}">${preLabel}</span>` +
         `<span class="area-analise-status ${analiseClass}" ` +
         `title="Анализ: ${analiseLabel}">${analiseLabel}</span>` +
         `</span>` +

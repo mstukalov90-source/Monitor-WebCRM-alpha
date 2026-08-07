@@ -109,6 +109,7 @@ export interface GeoStatisticsRow {
   orders_closed_ha: number
   orders_open: number
   orders_open_ha: number
+  pre_analise_completed: number
   analise_completed: number
   progress_pct: number | null
 }
@@ -124,6 +125,19 @@ export interface OrderClosuresStatistics {
   closures: StatisticsActionDetail[]
   date_from: string
   date_to: string
+}
+
+export interface OrderStatusFeed {
+  events: StatisticsActionDetail[]
+  date_from: string
+  date_to: string
+}
+
+export interface TaskViewContext {
+  task_key: string
+  group_name: string
+  subgroup_name: string
+  feature: TaskFeature
 }
 
 export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks' | 'employee_locations'
@@ -664,6 +678,61 @@ export function analiseWorkflowStatusClass(status: AnaliseWorkflowStatus): strin
     default:
       return 'area-analise-status-pending'
   }
+}
+
+export type OfficeWorkMode = 'pre_analise' | 'analise' | 'map'
+export type OfficeAnaliseStage = 'pre_analise' | 'analise'
+
+export function preAnaliseWorkflowStatus(attrs: Record<string, unknown>): AnaliseWorkflowStatus {
+  if (isAnaliseComplete(attrs.pre_analise)) return 'done'
+  if (hasAnaliseTimestamp(attrs.pre_analise_paused_at)) return 'paused'
+  if (hasAnaliseTimestamp(attrs.pre_analise_started_at)) return 'in_progress'
+  return 'idle'
+}
+
+export function canStartPreAnalise(attrs: Record<string, unknown>, currentLogin: string): boolean {
+  const status = preAnaliseWorkflowStatus(attrs)
+  const login = currentLogin.trim()
+  const startedBy = String(attrs.pre_analise_started_by ?? '').trim()
+  if (status === 'idle') return true
+  if (status === 'paused') return startedBy === login
+  if (status === 'in_progress') return startedBy === login
+  return false
+}
+
+export function formatPreAnaliseWorkflowStatus(attrs: Record<string, unknown>): string {
+  const status = preAnaliseWorkflowStatus(attrs)
+  if (status === 'done') return 'Подготовлен'
+  if (status === 'idle') return 'Не подготовлен'
+  if (status === 'paused') return 'Приостановлен'
+  const by = String(attrs.pre_analise_started_by ?? '').trim()
+  return by ? `В подготовке (${by})` : 'В подготовке'
+}
+
+export function stageWorkflowStatus(
+  attrs: Record<string, unknown>,
+  stage: OfficeAnaliseStage,
+): AnaliseWorkflowStatus {
+  return stage === 'pre_analise' ? preAnaliseWorkflowStatus(attrs) : analiseWorkflowStatus(attrs)
+}
+
+export function canStartStage(
+  attrs: Record<string, unknown>,
+  currentLogin: string,
+  stage: OfficeAnaliseStage,
+): boolean {
+  return stage === 'pre_analise'
+    ? canStartPreAnalise(attrs, currentLogin)
+    : canStartAnalise(attrs, currentLogin)
+}
+
+export function formatStageWorkflowStatus(
+  attrs: Record<string, unknown>,
+  stage: OfficeAnaliseStage,
+): string {
+  return stage === 'pre_analise'
+    ? formatPreAnaliseWorkflowStatus(attrs)
+    : formatAnaliseWorkflowStatus(attrs)
 }
 
 export function formatFieldObserved(value: unknown): string {

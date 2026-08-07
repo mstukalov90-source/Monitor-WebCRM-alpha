@@ -1544,6 +1544,55 @@ def _find_subgroup_for_record(
     return None
 
 
+def build_task_view_context(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    key: str,
+) -> Optional[Dict[str, Any]]:
+    """Resolve group/subgroup and a minimal feature for opening TaskEditModal by key."""
+    record = fetch_task_by_key(conn, store_cfg, key)
+    if record is None:
+        return None
+
+    resolved = _find_subgroup_for_record(record, store_cfg)
+    subgroup_name = resolved[0] if resolved else (record.type or "")
+
+    from app.config import crm_tasks_config
+    from app.crm.snapshot_loader import _find_group_name, _lookup_feature_for_record
+
+    group_name = _find_group_name(subgroup_name, crm_tasks_config()) or record.type or ""
+
+    attrs = record.as_dict()
+    attrs["_task_key"] = record.key
+    geometry: Optional[Dict[str, Any]] = None
+    try:
+        source = _lookup_feature_for_record(conn, record, subgroup_name, store_cfg)
+        if source:
+            geom = source.get("geometry")
+            if isinstance(geom, dict):
+                geometry = geom
+            src_attrs = source.get("attributes")
+            if isinstance(src_attrs, dict):
+                for field, value in src_attrs.items():
+                    if field not in attrs or attrs[field] in (None, ""):
+                        attrs[field] = value
+    except Exception:
+        pass
+
+    return {
+        "task_key": record.key,
+        "group_name": group_name,
+        "subgroup_name": subgroup_name,
+        "feature": {
+            "layer_name": subgroup_name or record.type or "Задача",
+            "layer_key": "",
+            "attributes": attrs,
+            "geometry": geometry,
+            "task_key": record.key,
+        },
+    }
+
+
 def fetch_all_task_records(
     conn: PgConnection,
     store_cfg: Dict[str, Any],

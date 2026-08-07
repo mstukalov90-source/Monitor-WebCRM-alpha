@@ -52,10 +52,13 @@ from app.crm.schemas import (
     TaskFormFieldsOut,
     TaskRecordOut,
     TaskRecordUpdate,
+    TaskViewContextOut,
+    TaskViewFeatureOut,
 )
 from app.crm.store import (
     TASK_COLUMN_LABELS,
     TaskRecord,
+    build_task_view_context,
     fetch_task_by_key,
     fetch_task_for_feature,
     restore_due_delayed_tasks,
@@ -89,9 +92,13 @@ from app.crm.tasks_area import (
     release_area_from_survey,
     complete_area_survey,
     complete_area_analise,
+    complete_area_pre_analise,
     pause_area_analise,
+    pause_area_pre_analise,
     start_area_analise,
+    start_area_pre_analise,
     analise_lock_holder,
+    pre_analise_lock_holder,
     tasks_area_result_to_dict,
 )
 from app.db import get_connection
@@ -401,6 +408,21 @@ def get_task(key: str) -> TaskRecordOut:
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return _record_to_out(record)
+
+
+@router.get("/tasks/{key}/view-context", response_model=TaskViewContextOut)
+def get_task_view_context(key: str) -> TaskViewContextOut:
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        context = build_task_view_context(conn, store_cfg, key)
+    if context is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskViewContextOut(
+        task_key=context["task_key"],
+        group_name=context["group_name"],
+        subgroup_name=context["subgroup_name"],
+        feature=TaskViewFeatureOut(**context["feature"]),
+    )
 
 
 @router.get("/tasks/{key}/form-fields")
@@ -752,6 +774,48 @@ def post_area_complete_analise(
 ) -> dict:
     with get_connection() as conn:
         result_status = complete_area_analise(conn, key, user.login)
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return {"status": result_status}
+
+
+@router.post("/crm/tasks-area/{key}/start-pre-analise")
+def post_area_start_pre_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = start_area_pre_analise(conn, key, user.login)
+        if result_status == "conflict":
+            holder = pre_analise_lock_holder(conn, key) or "другой пользователь"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Заказ в подготовке у пользователя {holder}",
+            )
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return {"status": result_status}
+
+
+@router.post("/crm/tasks-area/{key}/pause-pre-analise")
+def post_area_pause_pre_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = pause_area_pre_analise(conn, key, user.login)
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found or not in progress")
+    return {"status": result_status}
+
+
+@router.post("/crm/tasks-area/{key}/complete-pre-analise")
+def post_area_complete_pre_analise(
+    key: str,
+    user: UserSession = Depends(require_office_or_admin),
+) -> dict:
+    with get_connection() as conn:
+        result_status = complete_area_pre_analise(conn, key, user.login)
     if result_status == "not_found":
         raise HTTPException(status_code=404, detail="Area order not found")
     return {"status": result_status}

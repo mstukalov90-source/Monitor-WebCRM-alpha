@@ -38,6 +38,7 @@ from app.crm.schemas import (
     GeoStatisticsRowOut,
     OfficeStatisticsBreakdownOut,
     OrderClosuresStatisticsOut,
+    OrderStatusFeedOut,
     PersonnelStatisticsOut,
     PersonnelUserOut,
     PersonnelUserCreate,
@@ -51,6 +52,7 @@ from app.crm.statistics import (
     fetch_field_statistics_summary,
     fetch_geo_statistics,
     fetch_office_statistics_breakdown,
+    fetch_order_status_feed,
     fetch_recent_order_closures,
 )
 from app.crm.tasks_area import update_area_task_number
@@ -220,6 +222,34 @@ def get_personnel_order_closures(
 
     return OrderClosuresStatisticsOut(
         closures=[StatisticsActionDetailOut(**row) for row in rows],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+
+
+@router.get("/order-status", response_model=OrderStatusFeedOut)
+def get_order_status_feed(
+    date_from: date = Query(..., description="Start date (inclusive)"),
+    date_to: date = Query(..., description="End date (inclusive)"),
+    limit: int = Query(100, ge=1, le=500, description="Max events to return"),
+    _user: UserSession = Depends(require_manager_or_admin),
+) -> OrderStatusFeedOut:
+    if date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from must be on or before date_to",
+        )
+
+    with get_connection() as conn:
+        rows = fetch_order_status_feed(
+            conn,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+        )
+
+    return OrderStatusFeedOut(
+        events=[StatisticsActionDetailOut(**row) for row in rows],
         date_from=date_from.isoformat(),
         date_to=date_to.isoformat(),
     )

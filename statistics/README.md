@@ -9,7 +9,7 @@
 
 ## Версия модели
 
-**Statistics v2** — 4 метрики для поля и 6 для офиса. Запись событий выполняется **триггерами PostgreSQL** при изменениях в CRM-таблицах (WebCRM, QGIS, мобильное приложение пишут в одну БД).
+**Statistics v2** — 4 метрики для поля и 8 для офиса (включая две стадии: подготовка данных и анализ полевых данных). Запись событий выполняется **триггерами PostgreSQL** при изменениях в CRM-таблицах (WebCRM, QGIS, мобильное приложение пишут в одну БД).
 
 ## Быстрый доступ в интерфейсе
 
@@ -20,3 +20,4 @@
 - [`sql/12_crm_statistics.sql`](../sql/12_crm_statistics.sql) — таблица и базовые функции
 - [`sql/15_statistics_v2.sql`](../sql/15_statistics_v2.sql) — триггеры v2
 - [`sql/16_statistics_v2_backfill.sql`](../sql/16_statistics_v2_backfill.sql) — пересборка истории
+- [`sql/31_statistics_pre_analise.sql`](../sql/31_statistics_pre_analise.sql) — стадия подготовки (`pre_analise`) + триггеры + backfill

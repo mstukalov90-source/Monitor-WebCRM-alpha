@@ -311,6 +311,7 @@ class GeoStatisticsRowOut(BaseModel):
     orders_closed_ha: float = 0.0
     orders_open: int = 0
     orders_open_ha: float = 0.0
+    pre_analise_completed: int = 0
     analise_completed: int = 0
     progress_pct: float | None = None
 
@@ -326,6 +327,27 @@ class OrderClosuresStatisticsOut(BaseModel):
     closures: list[StatisticsActionDetailOut] = Field(default_factory=list)
     date_from: str
     date_to: str
+
+
+class OrderStatusFeedOut(BaseModel):
+    events: list[StatisticsActionDetailOut] = Field(default_factory=list)
+    date_from: str
+    date_to: str
+
+
+class TaskViewFeatureOut(BaseModel):
+    layer_name: str
+    layer_key: str = ""
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    geometry: dict[str, Any] | None = None
+    task_key: str | None = None
+
+
+class TaskViewContextOut(BaseModel):
+    task_key: str
+    group_name: str
+    subgroup_name: str
+    feature: TaskViewFeatureOut
 
 
 class OrderTrackOut(BaseModel):

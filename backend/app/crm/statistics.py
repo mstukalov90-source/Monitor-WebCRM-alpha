@@ -18,6 +18,8 @@ STATISTICS_TABLE = "statistics"
 OFFICE_SESSION_ROLES = frozenset({"office", "manager", "admin"})
 
 OFFICE_STATISTICS_ACTIONS = (
+    "office_pre_analise_started",
+    "office_pre_analise_completed",
     "office_analise_started",
     "office_analise_completed",
     "office_disruption_absent",
@@ -29,7 +31,16 @@ OFFICE_STATISTICS_ACTIONS = (
 # Closed / analyzed actions shown in the per-employee detail list.
 DETAIL_STATISTICS_ACTIONS = (
     "field_order_closed",
+    "office_pre_analise_completed",
     "office_analise_completed",
+    "office_closed_illegal",
+    "office_closed_legal",
+)
+
+# Manager «Состояние заказов» notification feed.
+ORDER_STATUS_FEED_ACTIONS = (
+    "field_order_closed",
+    "office_pre_analise_completed",
     "office_closed_illegal",
     "office_closed_legal",
 )
@@ -323,6 +334,12 @@ def fetch_employee_action_details(
             END AS area_hectares,
             CASE
                 WHEN s.action = 'field_order_closed' THEN tr.duration_sec
+                WHEN s.action = 'office_pre_analise_completed'
+                     AND ta.pre_analise_started_at IS NOT NULL
+                     AND ta.pre_analise_finished_at IS NOT NULL
+                THEN EXTRACT(
+                    EPOCH FROM (ta.pre_analise_finished_at - ta.pre_analise_started_at)
+                )
                 WHEN s.action = 'office_analise_completed'
                      AND ta.analise_started_at IS NOT NULL
                      AND ta.analise_finished_at IS NOT NULL
@@ -353,6 +370,70 @@ def fetch_employee_action_details(
            AND s.object_key::text = tr.task_key
         WHERE {where}
         ORDER BY s.created_at DESC
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    return [_normalize_detail_row(dict(row)) for row in rows]
+
+
+def fetch_order_status_feed(
+    conn: PgConnection,
+    *,
+    date_from: date,
+    date_to: date,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Recent order/task status events for manager notifications, newest first."""
+    start, end = _period_bounds(date_from, date_to)
+    capped_limit = max(1, min(int(limit), 500))
+
+    from app.config import crm_task_store_config
+    from app.crm.store import _snapshot_table_ref
+
+    store_cfg = crm_task_store_config()
+    done_legal_schema, done_legal_table = _snapshot_table_ref(
+        store_cfg, "done_legal_table", "tasks_done_legal"
+    )
+    done_illegal_schema, done_illegal_table = _snapshot_table_ref(
+        store_cfg, "done_illegal_table", "tasks_done_illegal"
+    )
+
+    action_placeholders = ", ".join(["%s"] * len(ORDER_STATUS_FEED_ACTIONS))
+    params: list[Any] = [start, end, *ORDER_STATUS_FEED_ACTIONS, capped_limit]
+
+    query = f"""
+        SELECT
+            s.user_login,
+            s.user_role,
+            s.object_type,
+            s.action,
+            s.object_key::text AS object_key,
+            s.created_at,
+            ta.task_number,
+            COALESCE(ta.rayon, dl.rayon, di.rayon) AS rayon,
+            CASE
+                WHEN s.object_type = 'order' THEN COALESCE(ta.area, 0) / 10000.0
+                ELSE 0
+            END AS area_hectares,
+            NULL::double precision AS duration_seconds
+        FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        LEFT JOIN crm.tasks_area ta
+          ON s.object_type = 'order'
+         AND s.object_key = ta.key
+        LEFT JOIN "{done_legal_schema}"."{done_legal_table}" dl
+          ON s.object_type = 'task'
+         AND s.action = 'office_closed_legal'
+         AND s.object_key = dl.task_key
+        LEFT JOIN "{done_illegal_schema}"."{done_illegal_table}" di
+          ON s.object_type = 'task'
+         AND s.action = 'office_closed_illegal'
+         AND s.object_key = di.task_key
+        WHERE s.created_at >= %s
+          AND s.created_at <= %s
+          AND s.action IN ({action_placeholders})
+        ORDER BY s.created_at DESC
+        LIMIT %s
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
@@ -467,6 +548,7 @@ def _normalize_detail_row(row: dict[str, Any]) -> dict[str, Any]:
 _GEO_INT_METRICS = (
     "orders_closed",
     "orders_open",
+    "pre_analise_completed",
     "analise_completed",
 )
 
@@ -477,6 +559,8 @@ _GEO_HA_METRICS = (
 
 _GEO_ORDER_ACTIONS = (
     "field_order_closed",
+    "office_pre_analise_completed",
+    "office_pre_analise_started",
     "office_analise_completed",
     "office_analise_started",
 )
@@ -572,6 +656,7 @@ def fetch_geo_statistics(
                     SUM(area) FILTER (WHERE action = 'field_order_closed'),
                     0
                 ) / 10000.0 AS orders_closed_ha,
+                COUNT(*) FILTER (WHERE action = 'office_pre_analise_completed') AS pre_analise_completed,
                 COUNT(*) FILTER (WHERE action = 'office_analise_completed') AS analise_completed
             FROM events
             WHERE rayon_norm IS NOT NULL
@@ -591,6 +676,7 @@ def fetch_geo_statistics(
                 COALESCE(c.rayon_norm, o.rayon_norm) AS rayon_norm,
                 COALESCE(c.orders_closed, 0) AS orders_closed,
                 COALESCE(c.orders_closed_ha, 0) AS orders_closed_ha,
+                COALESCE(c.pre_analise_completed, 0) AS pre_analise_completed,
                 COALESCE(c.analise_completed, 0) AS analise_completed,
                 COALESCE(o.orders_open, 0) AS orders_open,
                 COALESCE(o.orders_open_ha, 0) AS orders_open_ha
@@ -604,6 +690,7 @@ def fetch_geo_statistics(
             c.orders_closed_ha,
             c.orders_open,
             c.orders_open_ha,
+            c.pre_analise_completed,
             c.analise_completed
         FROM combined c
         LEFT JOIN hood h ON c.rayon_norm = h.rayon_norm

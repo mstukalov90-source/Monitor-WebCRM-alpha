@@ -70,10 +70,19 @@ flowchart LR
 
 ### Office (`user_role = office`)
 
+Две стадии камеральной работы с заказом:
+
+| Стадия | Режим UI | Колонки `crm.tasks_area` |
+|--------|----------|---------------------------|
+| Подготовка данных в поле | `pre_analise` | `pre_analise`, `pre_analise_started_*`, `pre_analise_finished_*` |
+| Анализ полевых данных | `analise` | `analise`, `analise_started_*`, `analise_finished_*` |
+
 | action | UI label | Условие |
 |--------|----------|---------|
-| `office_analise_started` | Анализ начат | `tasks_area.analise_started_at` NULL → NOT NULL + `analise_started_by` |
-| `office_analise_completed` | Анализ завершён | `analise` FALSE → TRUE или `analise_finished_at` set + `analise_finished_by` |
+| `office_pre_analise_started` | Подготовка данных начата | `pre_analise_started_at` NULL → NOT NULL + `pre_analise_started_by` |
+| `office_pre_analise_completed` | Подготовка данных завершена | `pre_analise` FALSE → TRUE или `pre_analise_finished_at` set + `pre_analise_finished_by` |
+| `office_analise_started` | Анализ полевых данных начат | `analise_started_at` NULL → NOT NULL + `analise_started_by` |
+| `office_analise_completed` | Анализ полевых данных завершён | `analise` FALSE → TRUE или `analise_finished_at` set + `analise_finished_by` |
 | `office_disruption_absent` | Разрытие отсутствует | INSERT `crm.tasks_clear` без field-report, login из `user_created[1]` |
 | `office_camera_tasks_created` | Создано камеральных задач | INSERT `crm.tasks` с `is_office_task = true` |
 | `office_closed_illegal` | Закрыто нелегально | INSERT `crm.tasks_done_illegal` |
@@ -83,7 +92,7 @@ flowchart LR
 
 ## Триггеры
 
-Файл: [`sql/15_statistics_v2.sql`](../sql/15_statistics_v2.sql).
+Файлы: [`sql/15_statistics_v2.sql`](../sql/15_statistics_v2.sql), [`sql/31_statistics_pre_analise.sql`](../sql/31_statistics_pre_analise.sql).
 
 | Триггер | Таблица | События |
 |---------|---------|---------|
@@ -95,6 +104,7 @@ flowchart LR
 | `trg_statistics_tasks_done_legal_insert` | `crm.tasks_done_legal` | `office_closed_legal` |
 | `trg_statistics_tasks_done_illegal_insert` | `crm.tasks_done_illegal` | `office_closed_illegal` |
 | `trg_statistics_tasks_area_status` | `crm.tasks_area` | `field_order_closed` |
+| `trg_statistics_tasks_area_pre_analise` | `crm.tasks_area` | `office_pre_analise_started`, `office_pre_analise_completed` |
 | `trg_statistics_tasks_area_analise` | `crm.tasks_area` | `office_analise_started`, `office_analise_completed` |
 
 ### Корреляция report + companion (field)
@@ -121,8 +131,10 @@ flowchart LR
 |----------|-------------------|
 | INSERT snapshot (`tasks_clear`, `tasks_done_*`) | `user_created[1]` |
 | INSERT камеральной задачи | `user_created[1]`, `is_office_task = true` |
-| Начало анализа | `analise_started_by`, `analise_started_at` |
-| Завершение анализа | `analise_finished_by`, `analise_finished_at` (или `analise = true`) |
+| Начало подготовки | `pre_analise_started_by`, `pre_analise_started_at` |
+| Завершение подготовки | `pre_analise_finished_by`, `pre_analise_finished_at` (или `pre_analise = true`) |
+| Начало анализа полевых данных | `analise_started_by`, `analise_started_at` |
+| Завершение анализа полевых данных | `analise_finished_by`, `analise_finished_at` (или `analise = true`) |
 
 Без login строка stat **не создаётся**. Login должен существовать в `crm.users`.
 
@@ -167,7 +179,7 @@ Query (опционально, manager/admin): `user_role`, `object_type`, `user
 
 - [`StatisticsScreen.tsx`](../frontend/src/components/StatisticsScreen.tsx) — UI
 - Поле: 4 колонки / карточки
-- Офис: breakdown-таблица, только 6 action из `OFFICE_STATISTICS_ACTIONS`
+- Офис: breakdown-таблица, 8 action из `OFFICE_STATISTICS_ACTIONS` (включая pre_analise)
 
 ## Миграции и backfill
 
@@ -176,8 +188,9 @@ Query (опционально, manager/admin): `user_role`, `object_type`, `user
 | `sql/12_crm_statistics.sql` | Таблица, `statistics_insert_row`, legacy triggers (перезаписываются v2) |
 | `sql/15_statistics_v2.sql` | Helpers + триггеры v2 |
 | `sql/16_statistics_v2_backfill.sql` | DELETE legacy action + idempotent INSERT v2 из источников |
+| `sql/31_statistics_pre_analise.sql` | Колонки `pre_analise_*`, триггер + backfill подготовки |
 
-Порядок деплоя: `15` → `16` (важно: `16` после `15`, т.к. использует `statistics_audit_*`).
+Порядок деплоя: `15` → `16` → … → `31` (важно: `16`/`31` после `15`, т.к. используют `statistics_emit_office_event`).
 
 `deploy/deploy.sh` прогоняет все `sql/[0-9]*.sql` идемпотентно.
 
@@ -222,7 +235,7 @@ WHERE tgname LIKE 'trg_statistics%' AND NOT t.tgisinternal;
 
 | Компонент | Путь |
 |-----------|------|
-| SQL v2 | `sql/15_statistics_v2.sql`, `sql/16_statistics_v2_backfill.sql` |
+| SQL v2 | `sql/15_statistics_v2.sql`, `sql/16_statistics_v2_backfill.sql`, `sql/31_statistics_pre_analise.sql` |
 | Python read | `backend/app/crm/statistics.py` |
 | API | `backend/app/routes/personnel.py` |
 | UI labels | `frontend/src/lib/statisticsLabels.ts` |

@@ -7,14 +7,16 @@ import {
   groupAreaOrdersByRayon,
 } from '../lib/areaOrders'
 import type { DistrictHoodMeta } from '../lib/hoodLayer'
-import type { CollectProgress, EmployeeLocationFeature } from '../types'
+import type { CollectProgress, EmployeeLocationFeature, OfficeAnaliseStage, TaskFeature } from '../types'
 import {
   analiseWorkflowStatus,
   analiseWorkflowStatusClass,
   areaStatusFromAttributes,
   formatAnaliseWorkflowStatus,
   formatAreaStatus,
+  formatPreAnaliseWorkflowStatus,
   normalizeRayonName,
+  preAnaliseWorkflowStatus,
 } from '../types'
 
 interface DistrictStartScreenProps {
@@ -26,15 +28,19 @@ interface DistrictStartScreenProps {
   canCollect: boolean
   canManagePersonnel?: boolean
   showAreaOrders?: boolean
+  showOfficeStageButtons?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
   onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
   onLoadFieldTasks: () => void
+  onStartOfficeStage?: (order: TaskFeature, stage: OfficeAnaliseStage) => void
+  onChangeOfficeMode?: () => void
   onOpenPersonnel?: () => void
   onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
   onOpenStatistics?: () => void
+  onOpenOrderStatus?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -47,15 +53,19 @@ export function DistrictStartScreen({
   canCollect,
   canManagePersonnel,
   showAreaOrders = false,
+  showOfficeStageButtons = false,
   userLogin,
   onRayonChange,
   onApplyDateFilterChange,
   onCollect,
   onLoadFieldTasks,
+  onStartOfficeStage,
+  onChangeOfficeMode,
   onOpenPersonnel,
   onOpenEmployeeLocations,
   onOpenOrderTracks,
   onOpenStatistics,
+  onOpenOrderStatus,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -174,6 +184,11 @@ export function DistrictStartScreen({
         <div className="district-card">
           <div className="workspace-meta district-user-meta">
             <span className="muted">{userLogin}</span>
+            {onChangeOfficeMode && (
+              <button type="button" className="btn" onClick={onChangeOfficeMode}>
+                Сменить режим
+              </button>
+            )}
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
@@ -187,6 +202,11 @@ export function DistrictStartScreen({
             {canManagePersonnel && onOpenOrderTracks && (
               <button type="button" className="btn" onClick={onOpenOrderTracks}>
                 Треки заказов
+              </button>
+            )}
+            {canManagePersonnel && onOpenOrderStatus && (
+              <button type="button" className="btn" onClick={onOpenOrderStatus}>
+                Состояние заказов
               </button>
             )}
             {onOpenStatistics && (
@@ -286,27 +306,57 @@ export function DistrictStartScreen({
                           const name = areaOrderDisplayName(attrs)
                           const surveyStatus = areaStatusFromAttributes(attrs)
                           const surveyLabel = formatAreaStatus(surveyStatus) || '—'
+                          const preWorkflow = preAnaliseWorkflowStatus(attrs)
+                          const preLabel = formatPreAnaliseWorkflowStatus(attrs)
                           const workflow = analiseWorkflowStatus(attrs)
                           const analiseLabel = formatAnaliseWorkflowStatus(attrs)
                           return (
                             <li key={key} className="district-orders-item">
-                              <span className="district-orders-name" title={name}>
-                                {name}
-                              </span>
-                              <span className="district-orders-statuses">
-                                <span
-                                  className={`area-survey-status area-survey-status-${surveyStatus}`}
-                                  title={`Полевое обследование: ${surveyLabel}`}
-                                >
-                                  {surveyLabel}
+                              <div className="district-orders-item-main">
+                                <span className="district-orders-name" title={name}>
+                                  {name}
                                 </span>
-                                <span
-                                  className={`area-analise-status ${analiseWorkflowStatusClass(workflow)}`}
-                                  title={`Анализ: ${analiseLabel}`}
-                                >
-                                  {analiseLabel}
+                                <span className="district-orders-statuses">
+                                  <span
+                                    className={`area-survey-status area-survey-status-${surveyStatus}`}
+                                    title={`Полевое обследование: ${surveyLabel}`}
+                                  >
+                                    {surveyLabel}
+                                  </span>
+                                  <span
+                                    className={`area-analise-status ${analiseWorkflowStatusClass(preWorkflow)}`}
+                                    title={`Подготовка: ${preLabel}`}
+                                  >
+                                    {preLabel}
+                                  </span>
+                                  <span
+                                    className={`area-analise-status ${analiseWorkflowStatusClass(workflow)}`}
+                                    title={`Анализ: ${analiseLabel}`}
+                                  >
+                                    {analiseLabel}
+                                  </span>
                                 </span>
-                              </span>
+                              </div>
+                              {showOfficeStageButtons && onStartOfficeStage && (
+                                <div className="district-orders-actions">
+                                  <button
+                                    type="button"
+                                    className="btn small"
+                                    disabled={loading}
+                                    onClick={() => onStartOfficeStage(order, 'pre_analise')}
+                                  >
+                                    Подготовка данных в поле
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn small primary"
+                                    disabled={loading}
+                                    onClick={() => onStartOfficeStage(order, 'analise')}
+                                  >
+                                    Анализ полевых данных
+                                  </button>
+                                </div>
+                              )}
                             </li>
                           )
                         })}

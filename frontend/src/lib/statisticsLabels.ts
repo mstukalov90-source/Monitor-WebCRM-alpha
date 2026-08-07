@@ -3,8 +3,10 @@ export const STATISTICS_ACTION_LABELS: Record<string, string> = {
   field_disruption_absent: 'Отсутствие разрытия по задаче',
   field_disruption_found: 'Обнаружение разрытия в поле',
   field_order_closed: 'Закрытие заказа',
-  office_analise_started: 'Анализ начат',
-  office_analise_completed: 'Анализ завершён',
+  office_pre_analise_started: 'Подготовка данных начата',
+  office_pre_analise_completed: 'Подготовка данных завершена',
+  office_analise_started: 'Анализ полевых данных начат',
+  office_analise_completed: 'Анализ полевых данных завершён',
   office_disruption_absent: 'Разрытие отсутствует',
   office_camera_tasks_created: 'Создано камеральных задач',
   office_closed_illegal: 'Закрыто нелегально',
@@ -46,5 +48,12 @@ export function defaultStatisticsDateRange(): { dateFrom: string; dateTo: string
   const to = new Date()
   const from = new Date()
   from.setDate(from.getDate() - 30)
+  return { dateFrom: formatIsoDateLocal(from), dateTo: formatIsoDateLocal(to) }
+}
+
+export function defaultOrderStatusDateRange(): { dateFrom: string; dateTo: string } {
+  const to = new Date()
+  const from = new Date()
+  from.setDate(from.getDate() - 7)
   return { dateFrom: formatIsoDateLocal(from), dateTo: formatIsoDateLocal(to) }
 }
