@@ -12,6 +12,8 @@ export interface AuthUser {
   can_manage_field_task_status: boolean
   can_postpone_tasks: boolean
   can_create_users: boolean
+  /** Present on login for API/QGIS clients; browser uses cookie and may ignore. */
+  token?: string
 }
 
 export interface PersonnelUserCreate {

@@ -1,4 +1,4 @@
-"""JWT session tokens stored in httpOnly cookies."""
+"""JWT session tokens (httpOnly cookie for WebCRM; Bearer for QGIS/API clients)."""
 
 from __future__ import annotations
 

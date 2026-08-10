@@ -18,9 +18,21 @@ from app.db import get_connection
 from app.layers.registry import LayerDef
 
 
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
+
+
 def get_current_user(request: Request) -> UserSession:
+    """Resolve session from Authorization Bearer JWT, else session cookie."""
     settings = get_settings()
-    token = request.cookies.get(settings.auth_cookie_name)
+    token = _extract_bearer_token(request.headers.get("Authorization"))
+    if token is None:
+        token = request.cookies.get(settings.auth_cookie_name)
     if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -104,9 +104,13 @@ npm run dev
 | Метод | Путь | Описание |
 |-------|------|----------|
 | GET | `/health` | Проверка (без авторизации) |
-| POST | `/api/auth/login` | Вход |
+| POST | `/api/auth/login` | Вход (тело ответа включает `token` JWT для Bearer-клиентов) |
 | POST | `/api/auth/logout` | Выход |
 | GET | `/api/auth/me` | Текущий пользователь |
+| GET | `/api/tasks/{key}/field-reports/{report_id}/letter-draft` | Черновик письма ОАТИ |
+| GET | `/api/tasks/{key}/field-reports/{report_id}/map-preview` | PNG ситуационного плана |
+| POST | `/api/tasks/{key}/field-reports/{report_id}/letters` | Сформировать DOCX |
+| GET | `/api/tasks/{key}/field-reports/{report_id}/letters/{fid}/download` | Скачать DOCX |
 | GET | `/api/config/layers` | Дерево слоёв |
 | GET | `/api/districts` | Список районов (с учётом work_zones) |
 | GET | `/api/geojson/{layer_key}?bbox=...` | GeoJSON слоя |
@@ -128,7 +132,9 @@ npm run dev
 | POST | `/api/personnel/tasks/bulk-status` | Массовая смена статуса (active/field/clear) |
 | POST | `/api/tasks/{key}/return-to-active` | Вернуть задачу из «В поле» в активные |
 
-Все `/api/*` кроме `/api/auth/login` требуют активной сессии.
+Все `/api/*` кроме `/api/auth/login` требуют активной сессии (cookie `monitor_session` **или** заголовок `Authorization: Bearer <jwt>`).
+
+Интеграция QGIS-плагина с письмами ОАТИ: [docs/qgis_letters_api.md](docs/qgis_letters_api.md).
 
 ## Smoke-test
 
@@ -151,7 +157,7 @@ SELECT * FROM crm.tasks_field ORDER BY sent_at DESC LIMIT 5;
 
 ## Совместимость
 
-WEBCRM и QGIS-плагин используют одну схему `crm` в БД `monitor`. Задачи, созданные в вебе, видны в QGIS и наоборот. Правила ролей совпадают с QGIS-плагином.
+WEBCRM и QGIS-плагин используют одну схему `crm` в БД `monitor`. Задачи, созданные в вебе, видны в QGIS и наоборот. Правила ролей совпадают с QGIS-плагином. Формирование писем ОАТИ из QGIS — через HTTP API WebCRM ([docs/qgis_letters_api.md](docs/qgis_letters_api.md)).
 
 ## Деплой на VPS
 

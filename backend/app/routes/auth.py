@@ -44,8 +44,14 @@ class AuthUserOut(BaseModel):
     can_create_users: bool
 
 
-@router.post("/login", response_model=AuthUserOut)
-def login(body: LoginRequest, response: Response) -> AuthUserOut:
+class AuthLoginOut(AuthUserOut):
+    """Login response: same user flags plus JWT for Bearer clients (QGIS)."""
+
+    token: str
+
+
+@router.post("/login", response_model=AuthLoginOut)
+def login(body: LoginRequest, response: Response) -> AuthLoginOut:
     with get_connection() as conn:
         session = authenticate(conn, body.login, body.password)
     if session is None:
@@ -64,7 +70,8 @@ def login(body: LoginRequest, response: Response) -> AuthUserOut:
         max_age=settings.auth_token_ttl_hours * 3600,
         path="/",
     )
-    return _user_out(session)
+    user = _user_out(session)
+    return AuthLoginOut(**user.model_dump(), token=token)
 
 
 @router.post("/logout")
