@@ -8,6 +8,7 @@ import {
 import {
   defaultStatisticsDateRange,
   formatDurationMinutes,
+  formatIsoDateLocal,
   formatStatisticsAction,
   formatStatisticsObjectType,
 } from '../lib/statisticsLabels'
@@ -35,6 +36,13 @@ type RoleFilter = '' | 'field' | 'office'
 type ObjectTypeFilter = '' | 'task' | 'order'
 type ViewMode = 'people' | 'geo' | 'orders'
 
+interface ClosureAggregateRow {
+  key: string
+  label: string
+  orders_closed: number
+  orders_closed_ha: number
+}
+
 function formatHa(value: number): string {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
 }
@@ -42,6 +50,87 @@ function formatHa(value: number): string {
 function geoPlaceLabel(value: string | null | undefined, emptyLabel: string): string {
   const text = (value || '').trim()
   return text || emptyLabel
+}
+
+function closureDayKey(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  return formatIsoDateLocal(d)
+}
+
+function formatChartDayLabel(isoDay: string): string {
+  const d = new Date(`${isoDay}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return isoDay
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+}
+
+function eachDayInclusive(dateFrom: string, dateTo: string): string[] {
+  const start = new Date(`${dateFrom}T12:00:00`)
+  const end = new Date(`${dateTo}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return []
+  }
+  const days: string[] = []
+  const cursor = new Date(start)
+  while (cursor <= end) {
+    days.push(formatIsoDateLocal(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return days
+}
+
+function aggregateClosuresByUser(rows: StatisticsActionDetail[]): ClosureAggregateRow[] {
+  const byUser = new Map<string, ClosureAggregateRow>()
+  for (const row of rows) {
+    const key = row.user_login
+    const existing = byUser.get(key)
+    if (existing) {
+      existing.orders_closed += 1
+      existing.orders_closed_ha += row.area_hectares || 0
+    } else {
+      byUser.set(key, {
+        key,
+        label: key,
+        orders_closed: 1,
+        orders_closed_ha: row.area_hectares || 0,
+      })
+    }
+  }
+  return Array.from(byUser.values()).sort(
+    (a, b) => b.orders_closed - a.orders_closed || b.orders_closed_ha - a.orders_closed_ha,
+  )
+}
+
+function aggregateClosuresByDay(
+  rows: StatisticsActionDetail[],
+  dateFrom: string,
+  dateTo: string,
+): ClosureAggregateRow[] {
+  const byDay = new Map<string, ClosureAggregateRow>()
+  for (const day of eachDayInclusive(dateFrom, dateTo)) {
+    byDay.set(day, {
+      key: day,
+      label: formatChartDayLabel(day),
+      orders_closed: 0,
+      orders_closed_ha: 0,
+    })
+  }
+  for (const row of rows) {
+    const day = closureDayKey(row.created_at)
+    const existing = byDay.get(day)
+    if (existing) {
+      existing.orders_closed += 1
+      existing.orders_closed_ha += row.area_hectares || 0
+    } else {
+      byDay.set(day, {
+        key: day,
+        label: formatChartDayLabel(day),
+        orders_closed: 1,
+        orders_closed_ha: row.area_hectares || 0,
+      })
+    }
+  }
+  return Array.from(byDay.values()).sort((a, b) => a.key.localeCompare(b.key))
 }
 
 export function StatisticsScreen({
@@ -66,12 +155,15 @@ export function StatisticsScreen({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const employeeUsers = useMemo(
-    () => users.filter((u) => u.role === 'field' || u.role === 'office'),
-    [users],
-  )
-
   const effectiveViewMode: ViewMode = canViewAll ? viewMode : 'people'
+
+  const employeeUsers = useMemo(() => {
+    const employees = users.filter((u) => u.role === 'field' || u.role === 'office')
+    if (effectiveViewMode === 'orders') {
+      return employees.filter((u) => u.role === 'field')
+    }
+    return employees
+  }, [users, effectiveViewMode])
 
   const showFieldSection =
     canViewAll ? roleFilter !== 'office' : userRole === 'field'
@@ -90,6 +182,12 @@ export function StatisticsScreen({
       setViewMode('people')
     }
   }, [canViewAll, viewMode])
+
+  useEffect(() => {
+    if (effectiveViewMode !== 'orders' || !userLoginFilter) return
+    const stillValid = employeeUsers.some((u) => u.login === userLoginFilter)
+    if (!stillValid) setUserLoginFilter('')
+  }, [effectiveViewMode, employeeUsers, userLoginFilter])
 
   const filterParams = useMemo(
     () => ({
@@ -177,12 +275,43 @@ export function StatisticsScreen({
   const hasGeoData = okrugRows.length > 0
   const orderClosureRows = ordersData?.closures ?? []
   const hasOrdersData = orderClosureRows.length > 0
+  const orderUserRows = useMemo(
+    () => aggregateClosuresByUser(orderClosureRows),
+    [orderClosureRows],
+  )
+  const orderDayRows = useMemo(
+    () =>
+      hasOrdersData
+        ? aggregateClosuresByDay(orderClosureRows, dateFrom, dateTo)
+        : [],
+    [hasOrdersData, orderClosureRows, dateFrom, dateTo],
+  )
+  const maxOrderUserClosed = useMemo(
+    () => Math.max(0, ...orderUserRows.map((row) => row.orders_closed)),
+    [orderUserRows],
+  )
+  const maxOrderUserHa = useMemo(
+    () => Math.max(0, ...orderUserRows.map((row) => row.orders_closed_ha)),
+    [orderUserRows],
+  )
+  const maxOrderDayClosed = useMemo(
+    () => Math.max(0, ...orderDayRows.map((row) => row.orders_closed)),
+    [orderDayRows],
+  )
+  const maxOrderDayHa = useMemo(
+    () => Math.max(0, ...orderDayRows.map((row) => row.orders_closed_ha)),
+    [orderDayRows],
+  )
   const hasData =
     effectiveViewMode === 'geo'
       ? hasGeoData
       : effectiveViewMode === 'orders'
         ? hasOrdersData
         : hasPeopleData
+
+  const toggleUserLoginFilter = (login: string) => {
+    setUserLoginFilter((prev) => (prev === login ? '' : login))
+  }
 
   return (
     <div className="district-screen statistics-screen">
@@ -234,6 +363,7 @@ export function StatisticsScreen({
                 onClick={() => {
                   setViewMode('orders')
                   setSelectedOkrug(null)
+                  setRoleFilter((prev) => (prev ? prev : 'field'))
                 }}
               >
                 Заказы
@@ -588,31 +718,97 @@ export function StatisticsScreen({
           )}
 
           {effectiveViewMode === 'orders' && hasOrdersData && (
-            <section className="statistics-section">
-              <h2>Последние закрытия заказов</h2>
-              <div className="personnel-table-wrap">
-                <table className="personnel-table statistics-table statistics-details-table">
-                  <thead>
-                    <tr>
-                      <th>Дата</th>
-                      <th>Номер заказа</th>
-                      <th>Район</th>
-                      <th>Сотрудник</th>
-                      <th>Площадь, га</th>
-                      <th>Длительность</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orderClosureRows.map((row) => (
-                      <OrderClosureRow
-                        key={`${row.object_key}-${row.created_at}-${row.user_login}`}
-                        row={row}
+            <>
+              <section className="statistics-section">
+                <h2>По сотрудникам</h2>
+                <div className="statistics-bars statistics-bars-pair">
+                  <div className="statistics-bars-group">
+                    <h3 className="statistics-bars-title">Закрытие заказов</h3>
+                    {orderUserRows.map((row) => (
+                      <StatisticsBar
+                        key={`user-orders-${row.key}`}
+                        label={row.label}
+                        value={row.orders_closed}
+                        max={maxOrderUserClosed}
+                        display={String(row.orders_closed)}
+                        active={userLoginFilter === row.key}
+                        onClick={() => toggleUserLoginFilter(row.key)}
                       />
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+                  </div>
+                  <div className="statistics-bars-group">
+                    <h3 className="statistics-bars-title">Площадь закрытых, га</h3>
+                    {orderUserRows.map((row) => (
+                      <StatisticsBar
+                        key={`user-ha-${row.key}`}
+                        label={row.label}
+                        value={row.orders_closed_ha}
+                        max={maxOrderUserHa}
+                        display={formatHa(row.orders_closed_ha)}
+                        active={userLoginFilter === row.key}
+                        onClick={() => toggleUserLoginFilter(row.key)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="statistics-section">
+                <h2>Динамика по дням</h2>
+                <div className="statistics-bars statistics-bars-pair">
+                  <div className="statistics-bars-group statistics-bars-scroll">
+                    <h3 className="statistics-bars-title">Закрытие заказов</h3>
+                    {orderDayRows.map((row) => (
+                      <StatisticsBar
+                        key={`day-orders-${row.key}`}
+                        label={row.label}
+                        value={row.orders_closed}
+                        max={maxOrderDayClosed}
+                        display={String(row.orders_closed)}
+                      />
+                    ))}
+                  </div>
+                  <div className="statistics-bars-group statistics-bars-scroll">
+                    <h3 className="statistics-bars-title">Площадь закрытых, га</h3>
+                    {orderDayRows.map((row) => (
+                      <StatisticsBar
+                        key={`day-ha-${row.key}`}
+                        label={row.label}
+                        value={row.orders_closed_ha}
+                        max={maxOrderDayHa}
+                        display={formatHa(row.orders_closed_ha)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              <section className="statistics-section">
+                <h2>Последние закрытия заказов</h2>
+                <div className="personnel-table-wrap">
+                  <table className="personnel-table statistics-table statistics-details-table">
+                    <thead>
+                      <tr>
+                        <th>Дата</th>
+                        <th>Номер заказа</th>
+                        <th>Район</th>
+                        <th>Сотрудник</th>
+                        <th>Площадь, га</th>
+                        <th>Длительность</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderClosureRows.map((row) => (
+                        <OrderClosureRow
+                          key={`${row.object_key}-${row.created_at}-${row.user_login}`}
+                          row={row}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </>
           )}
         </div>
       </div>
@@ -644,29 +840,39 @@ function StatisticsBar({
   value,
   max,
   display,
-  active,
+  active = false,
   onClick,
 }: {
   label: string
   value: number
   max: number
   display: string
-  active: boolean
-  onClick: () => void
+  active?: boolean
+  onClick?: () => void
 }) {
-  const widthPct = max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0
-  return (
-    <button
-      type="button"
-      className={`statistics-bar${active ? ' statistics-bar-active' : ''}`}
-      onClick={onClick}
-      title={label}
-    >
+  const widthPct = value > 0 && max > 0 ? Math.max(2, Math.round((value / max) * 100)) : 0
+  const className = `statistics-bar${active ? ' statistics-bar-active' : ''}${
+    onClick ? '' : ' statistics-bar-static'
+  }`
+  const content = (
+    <>
       <span className="statistics-bar-label">{label}</span>
       <span className="statistics-bar-track">
         <span className="statistics-bar-fill" style={{ width: `${widthPct}%` }} />
       </span>
       <span className="statistics-bar-value">{display}</span>
+    </>
+  )
+  if (!onClick) {
+    return (
+      <div className={className} title={label}>
+        {content}
+      </div>
+    )
+  }
+  return (
+    <button type="button" className={className} onClick={onClick} title={label}>
+      {content}
     </button>
   )
 }
