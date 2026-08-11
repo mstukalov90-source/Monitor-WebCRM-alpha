@@ -23,10 +23,14 @@ import type {
   OrderClosuresStatistics,
   OrderStatusFeed,
   TaskViewContext,
+  TaskGroupMap,
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
   EmployeeLocationsResult,
+  FieldScoreContext,
+  FieldScoreSaved,
+  FieldScoreValue,
   OatiLetterDraft,
   OatiLetterGeneratePayload,
   OatiLetterGenerateResult,
@@ -111,24 +115,23 @@ export function fetchGeoJson(layerKey: string, bbox: string, limit = 2000): Prom
   return request(`/api/geojson/${encodeURIComponent(layerKey)}?${params}`)
 }
 
-export function collectTasks(rayon: string, applyDateFilter: boolean): Promise<TaskResult> {
+export function collectTasks(rayon: string): Promise<TaskResult> {
   return request('/api/tasks/collect', {
     method: 'POST',
-    body: JSON.stringify({ rayon, apply_date_filter: applyDateFilter }),
+    body: JSON.stringify({ rayon, apply_date_filter: false }),
   })
 }
 
-export function fetchCollectPlan(rayon: string, applyDateFilter: boolean): Promise<CollectPlan> {
+export function fetchCollectPlan(rayon: string): Promise<CollectPlan> {
   const params = new URLSearchParams({
     rayon,
-    apply_date_filter: String(applyDateFilter),
+    apply_date_filter: 'false',
   })
   return request(`/api/tasks/collect/plan?${params}`)
 }
 
 export function collectTasksLayer(
   rayon: string,
-  applyDateFilter: boolean,
   layer: {
     group_name: string
     subgroup_name: string
@@ -141,7 +144,7 @@ export function collectTasksLayer(
       method: 'POST',
       body: JSON.stringify({
         rayon,
-        apply_date_filter: applyDateFilter,
+        apply_date_filter: false,
         group_name: layer.group_name,
         subgroup_name: layer.subgroup_name,
         layer_key: layer.layer_key,
@@ -153,10 +156,9 @@ export function collectTasksLayer(
 
 export async function collectTasksByLayers(
   rayon: string,
-  applyDateFilter: boolean,
   onProgress?: (progress: CollectProgress) => void,
 ): Promise<TaskResult> {
-  const plan = await fetchCollectPlan(rayon, applyDateFilter)
+  const plan = await fetchCollectPlan(rayon)
 
   const total = plan.layers.length
   const layerErrors: string[] = [...plan.errors]
@@ -167,23 +169,23 @@ export async function collectTasksByLayers(
       total,
       layerName: layer.layer_name,
     })
-    const chunk = await collectTasksLayer(rayon, applyDateFilter, layer)
+    const chunk = await collectTasksLayer(rayon, layer)
     if (chunk.errors.length) {
       layerErrors.push(...chunk.errors)
     }
   }
 
-  const active = await fetchActiveTasks(rayon, applyDateFilter)
+  const active = await fetchActiveTasks(rayon)
   if (layerErrors.length) {
     active.errors = [...active.errors, ...layerErrors]
   }
   return active
 }
 
-export function fetchActiveTasks(rayon: string, applyDateFilter: boolean): Promise<TaskResult> {
+export function fetchActiveTasks(rayon: string): Promise<TaskResult> {
   const params = new URLSearchParams({
     rayon,
-    apply_date_filter: String(applyDateFilter),
+    apply_date_filter: 'false',
   })
   return request(`/api/tasks/active?${params}`, undefined, 90_000)
 }
@@ -732,9 +734,30 @@ export function fetchTaskViewContext(key: string): Promise<TaskViewContext> {
   return request(`/api/tasks/${encodeURIComponent(key)}/view-context`)
 }
 
+export function fetchTaskGroupMap(key: string): Promise<TaskGroupMap> {
+  return request(`/api/tasks/${encodeURIComponent(key)}/group-map`, undefined, 90_000)
+}
+
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {
   const qs = new URLSearchParams({ rayon })
   return request(`/api/order-tracks?${qs}`)
+}
+
+export function fetchFieldScoreContext(orderKey: string): Promise<FieldScoreContext> {
+  return request(`/api/field-score/${encodeURIComponent(orderKey)}`)
+}
+
+export function saveFieldScore(
+  orderKey: string,
+  body: {
+    task_scores: Record<string, FieldScoreValue>
+    order_score?: FieldScoreValue | null
+  },
+): Promise<FieldScoreSaved> {
+  return request(`/api/field-score/${encodeURIComponent(orderKey)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
 }
 
 export function fetchEmployeeLocations(rayon?: string): Promise<EmployeeLocationsResult> {

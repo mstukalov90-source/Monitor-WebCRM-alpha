@@ -10,12 +10,12 @@ from pydantic import BaseModel, Field, field_validator
 
 class CollectTasksRequest(BaseModel):
     rayon: str
-    apply_date_filter: bool = True
+    apply_date_filter: bool = False
 
 
 class CollectLayerRequest(BaseModel):
     rayon: str
-    apply_date_filter: bool = True
+    apply_date_filter: bool = False
     group_name: str
     subgroup_name: str
     layer_key: str
@@ -32,7 +32,7 @@ class CollectPlanOut(BaseModel):
     district_name: str
     filter_date_from: date
     filter_date_to: date
-    apply_date_filter: bool = True
+    apply_date_filter: bool = False
     groups: list[TaskGroupOut] = Field(default_factory=list)
     layers: list[CollectPlanLayerOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -74,7 +74,7 @@ class TaskResultOut(BaseModel):
     district_name: str
     filter_date_from: date
     filter_date_to: date
-    apply_date_filter: bool = True
+    apply_date_filter: bool = False
     groups: list[TaskGroupOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     persist_stats: PersistStatsOut | None = None
@@ -293,6 +293,7 @@ class StatisticsActionDetailOut(BaseModel):
     rayon: str | None = None
     area_hectares: float = 0.0
     duration_minutes: int | None = None
+    order_score: FieldScoreValue | None = None
 
 
 class PersonnelStatisticsOut(BaseModel):
@@ -350,6 +351,24 @@ class TaskViewContextOut(BaseModel):
     feature: TaskViewFeatureOut
 
 
+class TaskGroupMapFeatureOut(BaseModel):
+    task_key: str
+    subgroup_name: str = ""
+    source: str = "active"
+    layer_name: str = ""
+    layer_key: str = ""
+    geometry: dict[str, Any] | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class TaskGroupMapOut(BaseModel):
+    rayon: str = ""
+    group_name: str = ""
+    selected_task_key: str
+    features: list[TaskGroupMapFeatureOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class OrderTrackOut(BaseModel):
     id: str
     attributes: dict[str, Any]
@@ -360,6 +379,65 @@ class OrderTracksResultOut(BaseModel):
     district_name: str
     tracks: list[OrderTrackOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+FieldScoreValue = Literal["unsatisfactory", "satisfactory", "good"]
+
+
+class FieldScoreOrderOut(BaseModel):
+    order_key: str
+    task_number: str | None = None
+    rayon: str | None = None
+    area: float | None = None
+    status: str | None = None
+    date_survey: str | None = None
+    geometry: dict[str, Any] | None = None
+
+
+class FieldScoreTaskOut(BaseModel):
+    task_key: str
+    report_id: int | None = None
+    source: str
+    group_name: str = ""
+    subgroup_name: str = ""
+    label: str
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    geometry: dict[str, Any] | None = None
+    sent_at: str | None = None
+
+
+class FieldScoreTrackOut(BaseModel):
+    id: str
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    geometry: dict[str, Any]
+    buffer_geometry: dict[str, Any] | None = None
+
+
+class FieldScoreSavedOut(BaseModel):
+    order_key: str
+    task_scores: dict[str, FieldScoreValue] = Field(default_factory=dict)
+    track_coverage_pct: float | None = None
+    order_score: FieldScoreValue | None = None
+    scored_by: str
+    scored_at: str | None = None
+    updated_at: str | None = None
+    coverage_hint: FieldScoreValue | None = None
+
+
+class FieldScoreContextOut(BaseModel):
+    order: FieldScoreOrderOut
+    tasks: list[FieldScoreTaskOut] = Field(default_factory=list)
+    tracks: list[FieldScoreTrackOut] = Field(default_factory=list)
+    track_coverage_pct: float | None = None
+    coverage_hint: FieldScoreValue | None = None
+    buffer_meters: float = 50.0
+    saved: FieldScoreSavedOut | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+class FieldScoreUpsertRequest(BaseModel):
+    task_scores: dict[str, FieldScoreValue] = Field(default_factory=dict)
+    order_score: FieldScoreValue | None = None
 
 
 class EmployeeLocationOut(BaseModel):

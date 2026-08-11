@@ -37,7 +37,11 @@ from app.crm.collector import (
     collect_tasks,
     task_result_to_dict,
 )
-from app.crm.snapshot_loader import collect_snapshot_tasks, snapshot_result_to_dict
+from app.crm.snapshot_loader import (
+    build_task_group_map,
+    collect_snapshot_tasks,
+    snapshot_result_to_dict,
+)
 from app.crm.schemas import (
     CollectLayerRequest,
     CollectTasksRequest,
@@ -50,6 +54,8 @@ from app.crm.schemas import (
     SnapshotActionRequest,
     SnapshotResultOut,
     TaskFormFieldsOut,
+    TaskGroupMapFeatureOut,
+    TaskGroupMapOut,
     TaskRecordOut,
     TaskRecordUpdate,
     TaskViewContextOut,
@@ -198,12 +204,13 @@ def get_districts(user: UserSession = Depends(get_current_user)) -> dict:
 @router.get("/tasks/collect/plan", dependencies=[Depends(require_can_collect)])
 def get_collect_plan(
     rayon: str = Query(...),
-    apply_date_filter: bool = Query(True),
+    apply_date_filter: bool = Query(False),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
     check_task_source(user, "active")
     check_rayon(user, rayon)
-    result, layers = build_collect_plan(rayon, apply_date_filter)
+    del apply_date_filter  # date filter disabled; ETL loads full task set
+    result, layers = build_collect_plan(rayon, False)
     return collect_plan_to_dict(result, layers)
 
 
@@ -219,7 +226,7 @@ def post_collect_layer(
             features, errors = collect_layer_tasks(
                 conn,
                 body.rayon,
-                body.apply_date_filter,
+                False,
                 body.group_name,
                 body.subgroup_name,
                 body.layer_key,
@@ -266,7 +273,7 @@ def post_collect_tasks(
             result, _ = collect_tasks(
                 conn,
                 body.rayon,
-                body.apply_date_filter,
+                False,
                 persist=True,
                 filter_sent=True,
                 login=user.login,
@@ -312,11 +319,12 @@ def lookup_task_by_feature(
 @router.get("/tasks/active")
 def get_active_tasks(
     rayon: str = Query(...),
-    apply_date_filter: bool = Query(True),
+    apply_date_filter: bool = Query(False),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
     check_task_source(user, "active")
     check_rayon(user, rayon)
+    del apply_date_filter  # date filter disabled; ETL loads full task set
     with get_connection() as conn:
         store_cfg = crm_task_store_config()
         try:
@@ -326,7 +334,7 @@ def get_active_tasks(
         result, _ = collect_tasks(
             conn,
             rayon,
-            apply_date_filter,
+            False,
             persist=can_collect(user.role),
             filter_sent=True,
             login=user.login if can_collect(user.role) else "",
@@ -422,6 +430,22 @@ def get_task_view_context(key: str) -> TaskViewContextOut:
         group_name=context["group_name"],
         subgroup_name=context["subgroup_name"],
         feature=TaskViewFeatureOut(**context["feature"]),
+    )
+
+
+@router.get("/tasks/{key}/group-map", response_model=TaskGroupMapOut)
+def get_task_group_map(key: str) -> TaskGroupMapOut:
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        payload = build_task_group_map(conn, store_cfg, key)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskGroupMapOut(
+        rayon=payload.get("rayon") or "",
+        group_name=payload.get("group_name") or "",
+        selected_task_key=payload["selected_task_key"],
+        features=[TaskGroupMapFeatureOut(**f) for f in payload.get("features") or []],
+        errors=list(payload.get("errors") or []),
     )
 
 

@@ -394,13 +394,6 @@ export function TaskPanel({
         <span className="muted">
           {TASK_SOURCE_LABELS[taskSource]}: {totalCount}
         </span>
-        {taskSource === 'active' && taskResult.apply_date_filter ? (
-          <div className="muted small">
-            Период: {taskResult.filter_date_from} — {taskResult.filter_date_to}
-          </div>
-        ) : taskSource === 'active' ? (
-          <div className="muted small">Без фильтра по дате</div>
-        ) : null}
         {linkLoading && <div className="muted small">Загрузка привязок…</div>}
         {linkInfo && !linkLoading && <div className="muted small">{linkInfo}</div>}
         {actionMessage && <div className="muted small">{actionMessage}</div>}

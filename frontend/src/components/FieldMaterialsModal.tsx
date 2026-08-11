@@ -4,9 +4,11 @@ import { PhotoLightboxImage } from './PhotoLightboxImage'
 import { OatiLetterForm } from './OatiLetterForm'
 import {
   formatTaskTableCell,
+  FIELD_SCORE_LABELS,
   type FieldPhoto,
   type FieldPhotosResult,
   type FieldReportFeature,
+  type FieldScoreValue,
 } from '../types'
 
 interface FieldMaterialsModalProps {
@@ -14,6 +16,12 @@ interface FieldMaterialsModalProps {
   reportId?: number | null
   canGenerateLetter?: boolean
   onClose: () => void
+  scoring?: {
+    value: FieldScoreValue | ''
+    onChange: (value: FieldScoreValue) => void
+    onNextTask?: () => void
+    hasNextTask: boolean
+  }
 }
 
 function reportScopeLabel(report: FieldReportFeature, index: number): string {
@@ -36,6 +44,7 @@ export function FieldMaterialsModal({
   reportId = null,
   canGenerateLetter = false,
   onClose,
+  scoring,
 }: FieldMaterialsModalProps) {
   const [result, setResult] = useState<FieldPhotosResult | null>(null)
   const [reports, setReports] = useState<FieldReportFeature[]>([])
@@ -367,6 +376,28 @@ export function FieldMaterialsModal({
               </section>
             )}
           </>
+        )}
+
+        {scoring && (
+          <div className="field-materials-scoring-footer">
+            <div className="field-materials-scoring-grades" role="group" aria-label="Оценка задачи">
+              {(['unsatisfactory', 'satisfactory', 'good'] as FieldScoreValue[]).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`btn small${scoring.value === value ? ' primary' : ''}`}
+                  onClick={() => scoring.onChange(value)}
+                >
+                  {FIELD_SCORE_LABELS[value]}
+                </button>
+              ))}
+            </div>
+            {scoring.value && scoring.hasNextTask && scoring.onNextTask && (
+              <button type="button" className="btn primary small" onClick={scoring.onNextTask}>
+                Следующая задача
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

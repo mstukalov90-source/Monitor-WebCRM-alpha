@@ -416,7 +416,8 @@ def fetch_order_status_feed(
                 WHEN s.object_type = 'order' THEN COALESCE(ta.area, 0) / 10000.0
                 ELSE 0
             END AS area_hectares,
-            NULL::double precision AS duration_seconds
+            NULL::double precision AS duration_seconds,
+            fs.order_score
         FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
         LEFT JOIN crm.tasks_area ta
           ON s.object_type = 'order'
@@ -429,6 +430,9 @@ def fetch_order_status_feed(
           ON s.object_type = 'task'
          AND s.action = 'office_closed_illegal'
          AND s.object_key = di.task_key
+        LEFT JOIN crm.field_score fs
+          ON s.object_type = 'order'
+         AND s.object_key = fs.order_key
         WHERE s.created_at >= %s
           AND s.created_at <= %s
           AND s.action IN ({action_placeholders})
@@ -542,6 +546,16 @@ def _normalize_detail_row(row: dict[str, Any]) -> dict[str, Any]:
         row["task_number"] = str(row["task_number"]).strip() or None
     if row.get("rayon") is not None:
         row["rayon"] = str(row["rayon"]).strip() or None
+    order_score = row.get("order_score")
+    if order_score is None or str(order_score).strip() == "":
+        row["order_score"] = None
+    else:
+        score = str(order_score).strip()
+        row["order_score"] = (
+            score
+            if score in {"unsatisfactory", "satisfactory", "good"}
+            else None
+        )
     return row
 
 

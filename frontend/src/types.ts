@@ -93,6 +93,7 @@ export interface StatisticsActionDetail {
   rayon: string | null
   area_hectares: number
   duration_minutes: number | null
+  order_score?: FieldScoreValue | null
 }
 
 export interface PersonnelStatistics {
@@ -142,7 +143,90 @@ export interface TaskViewContext {
   feature: TaskFeature
 }
 
-export type AppView = 'workspace' | 'personnel' | 'statistics' | 'order_tracks' | 'employee_locations'
+export interface TaskGroupMapFeature {
+  task_key: string
+  subgroup_name: string
+  source: string
+  layer_name: string
+  layer_key: string
+  geometry?: GeoJSON.Geometry | null
+  attributes: Record<string, unknown>
+}
+
+export interface TaskGroupMap {
+  rayon: string
+  group_name: string
+  selected_task_key: string
+  features: TaskGroupMapFeature[]
+  errors: string[]
+}
+
+export type AppView =
+  | 'workspace'
+  | 'personnel'
+  | 'statistics'
+  | 'order_tracks'
+  | 'employee_locations'
+  | 'field_score'
+
+export type FieldScoreValue = 'unsatisfactory' | 'satisfactory' | 'good'
+
+export const FIELD_SCORE_LABELS: Record<FieldScoreValue, string> = {
+  unsatisfactory: 'Неудовлетворительно',
+  satisfactory: 'Удовлетворительно',
+  good: 'Хорошо',
+}
+
+export interface FieldScoreOrder {
+  order_key: string
+  task_number: string | null
+  rayon: string | null
+  area: number | null
+  status: string | null
+  date_survey: string | null
+  geometry?: GeoJSON.Geometry | null
+}
+
+export interface FieldScoreTask {
+  task_key: string
+  report_id?: number | null
+  source: string
+  group_name: string
+  subgroup_name: string
+  label: string
+  attributes: Record<string, unknown>
+  geometry?: GeoJSON.Geometry | null
+  sent_at: string | null
+}
+
+export interface FieldScoreTrack {
+  id: string
+  attributes: Record<string, unknown>
+  geometry: GeoJSON.Geometry
+  buffer_geometry?: GeoJSON.Geometry | null
+}
+
+export interface FieldScoreSaved {
+  order_key: string
+  task_scores: Record<string, FieldScoreValue>
+  track_coverage_pct: number | null
+  order_score: FieldScoreValue | null
+  scored_by: string
+  scored_at: string | null
+  updated_at: string | null
+  coverage_hint?: FieldScoreValue | null
+}
+
+export interface FieldScoreContext {
+  order: FieldScoreOrder
+  tasks: FieldScoreTask[]
+  tracks: FieldScoreTrack[]
+  track_coverage_pct: number | null
+  coverage_hint: FieldScoreValue | null
+  buffer_meters: number
+  saved: FieldScoreSaved | null
+  errors: string[]
+}
 
 export interface TrackFeature {
   id: string

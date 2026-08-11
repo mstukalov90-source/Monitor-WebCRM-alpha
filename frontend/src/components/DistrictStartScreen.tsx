@@ -21,7 +21,6 @@ import {
 
 interface DistrictStartScreenProps {
   rayon: string
-  applyDateFilter: boolean
   loading: boolean
   error: string | null
   progress: CollectProgress | null
@@ -31,7 +30,6 @@ interface DistrictStartScreenProps {
   showOfficeStageButtons?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
-  onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
   onLoadFieldTasks: () => void
   onStartOfficeStage?: (order: TaskFeature, stage: OfficeAnaliseStage) => void
@@ -46,7 +44,6 @@ interface DistrictStartScreenProps {
 
 export function DistrictStartScreen({
   rayon,
-  applyDateFilter,
   loading,
   error,
   progress,
@@ -56,7 +53,6 @@ export function DistrictStartScreen({
   showOfficeStageButtons = false,
   userLogin,
   onRayonChange,
-  onApplyDateFilterChange,
   onCollect,
   onLoadFieldTasks,
   onStartOfficeStage,
@@ -257,18 +253,6 @@ export function DistrictStartScreen({
               ))}
             </select>
           </label>
-
-          {canCollect && (
-            <label className="checkbox-label district-checkbox">
-              <input
-                type="checkbox"
-                checked={applyDateFilter}
-                onChange={(e) => onApplyDateFilterChange(e.target.checked)}
-                disabled={loading}
-              />
-              Фильтр по дате (ордера и уведомления)
-            </label>
-          )}
 
           <button
             type="button"

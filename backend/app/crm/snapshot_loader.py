@@ -1001,3 +1001,132 @@ def snapshot_result_to_dict(result: TaskResult, source: str) -> dict[str, Any]:
     data = task_result_to_dict(result)
     data["task_source"] = source
     return data
+
+
+def _find_rayon_for_task_key(
+    conn: PgConnection,
+    store_cfg: dict[str, Any],
+    task_key: str,
+) -> str | None:
+    """Return rayon from any snapshot table that references the task."""
+    from app.crm.store import ensure_rayon_column
+
+    for config_key, default_table in SNAPSHOT_SOURCES.values():
+        schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
+        ensure_rayon_column(conn, schema, table)
+        query = (
+            f'SELECT rayon FROM "{schema}"."{table}" '
+            f"WHERE task_key = %s::uuid AND rayon IS NOT NULL AND trim(rayon) <> '' "
+            f"LIMIT 1"
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query, (task_key,))
+                row = cur.fetchone()
+            if row and row[0]:
+                return normalize_rayon_name(str(row[0])) or None
+        except Exception:
+            continue
+    return None
+
+
+GROUP_MAP_RADIUS_M = 100.0
+
+
+def build_task_group_map(
+    conn: PgConnection,
+    store_cfg: dict[str, Any],
+    key: str,
+) -> dict[str, Any] | None:
+    """CRM-group geometries within 100m of the selected task, all workflow statuses."""
+    from app.crm.store import detect_task_workflow_status, fetch_task_by_key
+    from app.layers.geojson import fetch_task_features_near_geometry
+
+    record = fetch_task_by_key(conn, store_cfg, key)
+    if record is None:
+        return None
+
+    crm_cfg = crm_tasks_config()
+    resolved = _find_subgroup_for_record(record, store_cfg)
+    subgroup_name = resolved[0] if resolved else (record.type or "")
+    group_name = _find_group_name(subgroup_name, crm_cfg) or record.type or ""
+    rayon = _find_rayon_for_task_key(conn, store_cfg, key) or ""
+
+    metric_crs = crm_cfg.get("metric_crs", "EPSG:32637")
+    metric_srid = int(metric_crs.split(":")[-1]) if ":" in metric_crs else 32637
+
+    # Same resolution path as view-context (task_key → source anchor → business_id lookup).
+    selected_feature = _lookup_feature_for_record(conn, record, subgroup_name, store_cfg)
+    selected_geometry = (
+        selected_feature.get("geometry")
+        if selected_feature and isinstance(selected_feature.get("geometry"), dict)
+        else None
+    )
+    if not selected_geometry:
+        return {
+            "rayon": rayon,
+            "group_name": group_name,
+            "selected_task_key": key,
+            "features": [],
+            "errors": ["Нет геометрии у выбранной задачи"],
+        }
+
+    selected_source = detect_task_workflow_status(conn, store_cfg, key)
+    by_key: dict[str, dict[str, Any]] = {}
+    errors: list[str] = []
+
+    selected_attrs = dict(selected_feature.get("attributes") or {}) if selected_feature else {}
+    selected_attrs["_task_key"] = key
+    by_key[key] = {
+        "task_key": key,
+        "subgroup_name": subgroup_name,
+        "source": selected_source,
+        "layer_name": (selected_feature or {}).get("layer_name", subgroup_name or ""),
+        "layer_key": (selected_feature or {}).get("layer_key", ""),
+        "geometry": selected_geometry,
+        "attributes": selected_attrs,
+    }
+
+    try:
+        nearby = fetch_task_features_near_geometry(
+            conn,
+            store_cfg,
+            group_name,
+            selected_geometry,
+            GROUP_MAP_RADIUS_M,
+            metric_srid=metric_srid,
+        )
+    except Exception as exc:
+        nearby = []
+        errors.append(f"near: {exc}")
+
+    nearby_keys = [item["task_key"] for item in nearby if item.get("task_key")]
+    status_map: dict[str, str] = {}
+    if nearby_keys:
+        from app.crm.store import fetch_workflow_status_map
+
+        status_map = {
+            k: str(v) for k, v in fetch_workflow_status_map(conn, store_cfg, nearby_keys).items()
+        }
+
+    for item in nearby:
+        task_key = item["task_key"]
+        if task_key == key or task_key in by_key:
+            continue
+        by_key[task_key] = {
+            "task_key": task_key,
+            "subgroup_name": item.get("subgroup_name") or "",
+            "source": status_map.get(task_key, "active"),
+            "layer_name": item.get("layer_name") or "",
+            "layer_key": item.get("layer_key") or "",
+            "geometry": item.get("geometry"),
+            "attributes": item.get("attributes") or {},
+        }
+
+    return {
+        "rayon": rayon,
+        "group_name": group_name,
+        "selected_task_key": key,
+        "features": list(by_key.values()),
+        "errors": errors,
+    }

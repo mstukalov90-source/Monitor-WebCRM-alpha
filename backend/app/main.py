@@ -11,7 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.crm.delay_scheduler import delayed_tasks_restore_loop
 from app.db import close_pool, init_pool
-from app.routes import auth, employee_locations, layers, letters, order_tracks, personnel, photos, tasks
+from app.routes import (
+    auth,
+    employee_locations,
+    field_score,
+    layers,
+    letters,
+    order_tracks,
+    personnel,
+    photos,
+    tasks,
+)
 
 
 @asynccontextmanager
@@ -56,6 +66,7 @@ app.include_router(tasks.router)
 app.include_router(letters.router)
 app.include_router(order_tracks.router)
 app.include_router(employee_locations.router)
+app.include_router(field_score.router)
 app.include_router(photos.router)
 app.include_router(personnel.router)
 

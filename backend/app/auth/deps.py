@@ -114,10 +114,10 @@ def require_can_postpone_tasks(
 
 
 def require_office_or_admin(user: UserSession = Depends(get_current_user)) -> UserSession:
-    if user.role not in ("office", "admin"):
+    if user.role not in ("office", "manager", "admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступно только для роли office",
+            detail="Доступно только для ролей office и manager",
         )
     return user
 

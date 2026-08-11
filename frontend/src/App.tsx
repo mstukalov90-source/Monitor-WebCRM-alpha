@@ -24,6 +24,7 @@ import { MapLegend } from './components/MapLegend'
 import { EmployeeLocationsScreen } from './components/EmployeeLocationsScreen'
 import { OrderTracksScreen } from './components/OrderTracksScreen'
 import { OfficeWorkModeModal } from './components/OfficeWorkModeModal'
+import { FieldScoreScreen } from './components/FieldScoreScreen'
 import { OrderStatusModal } from './components/OrderStatusModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
@@ -87,6 +88,7 @@ function App() {
   const [appView, setAppView] = useState<AppView>('workspace')
   const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
   const [orderStatusOpen, setOrderStatusOpen] = useState(false)
+  const [fieldScoreOrderKey, setFieldScoreOrderKey] = useState<string | null>(null)
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
   const [lastTaskSource, setLastTaskSource] = useState<TaskSource>('active')
   const [taskFilterSelection, setTaskFilterSelection] = useState<TaskFilterSelection>(TASK_FILTER_NONE)
@@ -102,7 +104,7 @@ function App() {
     reportId?: number | null
   } | null>(null)
 
-  const isOfficeUser = user?.role === 'office'
+  const isOfficeUser = user?.role === 'office' || user?.role === 'manager'
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
@@ -157,7 +159,7 @@ function App() {
     }
   }, [])
 
-  const loadStageOrders = useCallback(async (stage: OfficeAnaliseStage, applyDateFilter: boolean) => {
+  const loadStageOrders = useCallback(async (stage: OfficeAnaliseStage) => {
     setAreaOrdersLoading(true)
     setLoadError(null)
     try {
@@ -174,7 +176,7 @@ function App() {
       await Promise.all(
         rayons.map(async (rayon) => {
           try {
-            byRayon[rayon] = await fetchActiveTasks(rayon, applyDateFilter)
+            byRayon[rayon] = await fetchActiveTasks(rayon)
           } catch {
             /* skip rayon on error */
           }
@@ -259,12 +261,12 @@ function App() {
   }, [taskResult, taskSource, taskFilterSelection, isOfficeUser, officeAreaOrder, officeFilteredTaskResult])
 
   const loadTasks = useCallback(
-    async (rayon: string, source: TaskSource, applyDateFilter: boolean) => {
+    async (rayon: string, source: TaskSource) => {
       setSourceLoading(true)
       setLoadError(null)
       try {
         if (source === 'active') {
-          const result = await fetchActiveTasks(rayon, applyDateFilter)
+          const result = await fetchActiveTasks(rayon)
           setTaskResult(result)
         } else if (isAreaSource(source)) {
           const result = await fetchTasksArea(rayon)
@@ -369,7 +371,6 @@ function App() {
       if (user?.can_collect) {
         const collected = await collectTasksByLayers(
           rayon,
-          collection.applyDateFilter,
           () => {},
         )
         setTaskResult(collected)
@@ -416,7 +417,7 @@ function App() {
   const handleSourceChange = async (source: TaskSource) => {
     if (!taskResult?.district_name) return
     try {
-      await loadTasks(taskResult.district_name, source, collection.applyDateFilter)
+      await loadTasks(taskResult.district_name, source)
     } catch {
       /* loadError set in loadTasks */
     }
@@ -484,7 +485,7 @@ function App() {
       officeStage
     ) {
       setOfficeOrderPickerOpen(true)
-      void loadStageOrders(officeStage, collection.applyDateFilter)
+      void loadStageOrders(officeStage)
     } else {
       setOfficeOrderPickerOpen(false)
       setAreaOrders([])
@@ -499,7 +500,7 @@ function App() {
     if (mode === 'pre_analise' || mode === 'analise') {
       setOfficeStage(mode)
       setOfficeOrderPickerOpen(true)
-      void loadStageOrders(mode, collection.applyDateFilter)
+      void loadStageOrders(mode)
     } else {
       setOfficeStage(null)
       setOfficeOrderPickerOpen(false)
@@ -582,7 +583,7 @@ function App() {
         })
         resetPlacePointMode()
         if (taskResult?.district_name) {
-          await loadTasks(taskResult.district_name, 'active', collection.applyDateFilter)
+          await loadTasks(taskResult.district_name, 'active')
         }
       } catch (e) {
         alert(String(e))
@@ -597,7 +598,6 @@ function App() {
       resetPlacePointMode,
       taskResult?.district_name,
       loadTasks,
-      collection.applyDateFilter,
     ],
   )
 
@@ -639,7 +639,7 @@ function App() {
       if (cached) {
         setTaskResult(cached)
       } else {
-        await loadTasks(rayon, 'active', collection.applyDateFilter)
+        await loadTasks(rayon, 'active')
       }
       collection.setRayon(rayon)
 
@@ -656,7 +656,7 @@ function App() {
       setLoadError(message)
       alert(message)
       if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
-        await loadStageOrders(officeStage, collection.applyDateFilter)
+        await loadStageOrders(officeStage)
       } else if (taskResult?.district_name) {
         await loadAreaOrders(taskResult.district_name)
       }
@@ -682,7 +682,7 @@ function App() {
         await startAreaAnalise(key)
       }
       collection.setRayon(rayon)
-      await loadTasks(rayon, 'active', collection.applyDateFilter)
+      await loadTasks(rayon, 'active')
       setOfficeStage(stage)
       setOfficeWorkMode('map')
       setOfficeAreaOrder(order)
@@ -723,7 +723,7 @@ function App() {
       if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
         setTaskResult(null)
         setOfficeOrderPickerOpen(true)
-        await loadStageOrders(officeStage, collection.applyDateFilter)
+        await loadStageOrders(officeStage)
       } else if (taskResult?.district_name) {
         const rayon = taskResult.district_name
         const result = await fetchTasksArea(rayon)
@@ -766,9 +766,9 @@ function App() {
       if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
         setTaskResult(null)
         setOfficeOrderPickerOpen(true)
-        await loadStageOrders(officeStage, collection.applyDateFilter)
+        await loadStageOrders(officeStage)
       } else if (rayon) {
-        const refreshed = await fetchActiveTasks(rayon, collection.applyDateFilter)
+        const refreshed = await fetchActiveTasks(rayon)
         setTaskResult(refreshed)
         setTaskSource('active')
         const result = await fetchTasksArea(rayon)
@@ -789,7 +789,7 @@ function App() {
 
   const handleRefreshAreaOrders = () => {
     if (officeStage && (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise')) {
-      void loadStageOrders(officeStage, collection.applyDateFilter)
+      void loadStageOrders(officeStage)
     } else if (taskResult?.district_name) {
       void loadAreaOrders(taskResult.district_name)
     }
@@ -827,6 +827,22 @@ function App() {
         userRole={user.role}
         canViewAll={user.can_manage_personnel}
         onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
+  if (appView === 'field_score' && fieldScoreOrderKey && user.can_manage_personnel) {
+    return (
+      <FieldScoreScreen
+        orderKey={fieldScoreOrderKey}
+        userLogin={user.login}
+        canGenerateLetters={user.can_generate_letters}
+        onBack={() => {
+          setFieldScoreOrderKey(null)
+          setAppView('workspace')
+          setOrderStatusOpen(true)
+        }}
         onLogout={logout}
       />
     )
@@ -884,7 +900,6 @@ function App() {
       <>
         <DistrictStartScreen
           rayon={collection.rayon}
-          applyDateFilter={collection.applyDateFilter}
           loading={collection.loading || sourceLoading}
           error={collection.error || loadError}
           progress={collection.progress}
@@ -894,7 +909,6 @@ function App() {
           showOfficeStageButtons={isOfficeUser && officeWorkMode === 'map'}
           userLogin={user.login}
           onRayonChange={collection.setRayon}
-          onApplyDateFilterChange={collection.setApplyDateFilter}
           onCollect={handleCollect}
           onLoadFieldTasks={handleLoadFieldTasks}
           onStartOfficeStage={(order, stage) => void handleStartOfficeStageFromMap(order, stage)}
@@ -912,6 +926,11 @@ function App() {
           <OrderStatusModal
             onClose={() => setOrderStatusOpen(false)}
             onSelectEvent={handleOrderStatusSelect}
+            onQualityAssessment={(event) => {
+              setOrderStatusOpen(false)
+              setFieldScoreOrderKey(event.object_key)
+              setAppView('field_score')
+            }}
           />
         )}
         <TaskEditModal
@@ -924,6 +943,7 @@ function App() {
           canManageFieldStatus={user.can_manage_field_task_status}
           canPostponeTasks={user.can_postpone_tasks}
           userRole={user.role}
+          showGroupMap
           onClose={() => setEditContext(null)}
           onTaskRemoved={() => setEditContext(null)}
           onHighlightChange={setModalHighlight}

@@ -6,6 +6,7 @@ import {
   fetchLinkedFeatures,
   fetchTask,
   fetchTaskFormFields,
+  fetchTaskGroupMap,
   lookupFieldSnapshot,
   lookupTaskByFeature,
   markDisruptionAbsent,
@@ -24,11 +25,13 @@ import {
 import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { PhotoViewModal } from './PhotoViewModal'
+import { TaskGroupMapView } from './TaskGroupMapView'
 import type {
   FieldReportFeature,
   LinkLayerInfo,
   SelectedTaskContext,
   TaskFeature,
+  TaskGroupMap,
   TaskHighlight,
   TaskRecord,
   TaskSource,
@@ -189,6 +192,7 @@ interface TaskEditModalProps {
   canPostponeTasks: boolean
   userRole: UserRole
   officeWorking?: boolean
+  showGroupMap?: boolean
   onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
   onClose: () => void
   onTaskRemoved: (taskKey: string) => void
@@ -210,6 +214,7 @@ export function TaskEditModal({
   canPostponeTasks,
   userRole,
   officeWorking = false,
+  showGroupMap = false,
   onStartPlaceOfficePoint,
   onClose,
   onTaskRemoved,
@@ -237,6 +242,9 @@ export function TaskEditModal({
   const [photoUuid, setPhotoUuid] = useState<string | null>(null)
   const [fieldMaterialsKey, setFieldMaterialsKey] = useState<string | null>(null)
   const [fieldSurveyMeta, setFieldSurveyMeta] = useState<FieldSurveyMeta | null>(null)
+  const [groupMap, setGroupMap] = useState<TaskGroupMap | null>(null)
+  const [groupMapLoading, setGroupMapLoading] = useState(false)
+  const [groupMapError, setGroupMapError] = useState<string | null>(null)
   const autoPhotoOpenedRef = useRef(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
@@ -284,7 +292,7 @@ export function TaskEditModal({
     return taskTableColumnsForSubgroup(context.subgroupName) ?? []
   }, [context])
   const canAddOfficePoint =
-    userRole === 'office' &&
+    (userRole === 'office' || userRole === 'manager') &&
     officeWorking &&
     context?.groupName === CRM_GROUP_ORDERS &&
     Boolean(onStartPlaceOfficePoint)
@@ -400,6 +408,9 @@ export function TaskEditModal({
       setPhotoUuid(null)
       setFieldMaterialsKey(null)
       setFieldSurveyMeta(null)
+      setGroupMap(null)
+      setGroupMapError(null)
+      setGroupMapLoading(false)
       autoPhotoOpenedRef.current = false
       onPickModeChange(false, [])
       return
@@ -487,6 +498,42 @@ export function TaskEditModal({
       cancelled = true
     }
   }, [context, taskSource, record?.key])
+
+  useEffect(() => {
+    if (!showGroupMap || !context) {
+      setGroupMap(null)
+      setGroupMapError(null)
+      setGroupMapLoading(false)
+      return
+    }
+
+    const mapKey = context.taskKey || record?.key || null
+    if (!mapKey) return
+
+    let cancelled = false
+    setGroupMapLoading(true)
+    setGroupMapError(null)
+    fetchTaskGroupMap(mapKey)
+      .then((data) => {
+        if (cancelled) return
+        setGroupMap(data)
+        if (data.errors?.length) {
+          setGroupMapError(data.errors.join('; '))
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setGroupMap(null)
+        setGroupMapError(String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setGroupMapLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [showGroupMap, context, record?.key])
 
   async function lookupAndLoad(ctx: SelectedTaskContext) {
     const rec = ctx.taskKey
@@ -655,7 +702,10 @@ export function TaskEditModal({
   return (
     <>
       <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={['modal', showGroupMap && 'task-edit-modal--with-map'].filter(Boolean).join(' ')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>{isReadonly ? 'Просмотр задачи' : 'Исполнить задачу'}</h2>
         <p className="muted small">Источник: {TASK_SOURCE_LABELS[taskSource]}</p>
         {loading && <p>Загрузка…</p>}
@@ -978,6 +1028,35 @@ export function TaskEditModal({
               )}
             </div>
           </>
+        )}
+
+        {showGroupMap && (
+          <div className="task-group-map-section">
+            <h4>Карта группы</h4>
+            {groupMap?.group_name && (
+              <p className="muted small">
+                {groupMap.group_name}
+                {groupMap.rayon ? ` · ${groupMap.rayon}` : ''}
+                {' · радиус 100 м'}
+                {groupMap.features.length
+                  ? ` · объектов: ${groupMap.features.length}`
+                  : ''}
+              </p>
+            )}
+            {groupMapLoading && <p className="muted small">Загрузка карты…</p>}
+            {groupMapError && <p className="error-banner small">{groupMapError}</p>}
+            {!groupMapLoading && groupMap && groupMap.features.length > 0 && (
+              <div className="task-group-map-wrap">
+                <TaskGroupMapView
+                  features={groupMap.features}
+                  selectedTaskKey={groupMap.selected_task_key}
+                />
+              </div>
+            )}
+            {!groupMapLoading && groupMap && groupMap.features.length === 0 && !groupMapError && (
+              <p className="muted small">Нет объектов группы с геометрией</p>
+            )}
+          </div>
         )}
       </div>
       </div>

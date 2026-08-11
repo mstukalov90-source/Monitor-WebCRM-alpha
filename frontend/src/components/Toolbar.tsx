@@ -4,19 +4,15 @@ import type { CollectProgress } from '../types'
 
 interface ToolbarProps {
   rayon: string
-  applyDateFilter: boolean
   loading: boolean
   onRayonChange: (v: string) => void
-  onApplyDateFilterChange: (v: boolean) => void
   onCollect: () => void
 }
 
 export function Toolbar({
   rayon,
-  applyDateFilter,
   loading,
   onRayonChange,
-  onApplyDateFilterChange,
   onCollect,
 }: ToolbarProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -40,15 +36,6 @@ export function Toolbar({
           ))}
         </select>
       </label>
-      <label className="checkbox-label">
-        <input
-          type="checkbox"
-          checked={applyDateFilter}
-          onChange={(e) => onApplyDateFilterChange(e.target.checked)}
-          disabled={loading}
-        />
-        Фильтр по дате (ордера/уведомления)
-      </label>
       <button type="button" className="btn primary" disabled={!rayon || loading} onClick={onCollect}>
         {loading ? 'Загрузка…' : 'Обновить активные'}
       </button>
@@ -58,7 +45,6 @@ export function Toolbar({
 
 export function useTaskCollection() {
   const [rayon, setRayon] = useState('')
-  const [applyDateFilter, setApplyDateFilter] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<CollectProgress | null>(null)
@@ -69,7 +55,7 @@ export function useTaskCollection() {
     setError(null)
     setProgress(null)
     try {
-      return await collectTasksByLayers(rayon, applyDateFilter, setProgress)
+      return await collectTasksByLayers(rayon, setProgress)
     } catch (e) {
       setError(String(e))
       return null
@@ -82,8 +68,6 @@ export function useTaskCollection() {
   return {
     rayon,
     setRayon,
-    applyDateFilter,
-    setApplyDateFilter,
     loading,
     error,
     progress,

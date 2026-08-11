@@ -4,11 +4,13 @@ import {
   defaultOrderStatusDateRange,
   formatStatisticsAction,
 } from '../lib/statisticsLabels'
-import type { StatisticsActionDetail } from '../types'
+import type { FieldScoreValue, StatisticsActionDetail } from '../types'
+import { FIELD_SCORE_LABELS } from '../types'
 
 interface OrderStatusModalProps {
   onClose: () => void
   onSelectEvent: (event: StatisticsActionDetail) => void | Promise<void>
+  onQualityAssessment?: (event: StatisticsActionDetail) => void
 }
 
 const SURVEYED_ACTIONS = new Set(['field_order_closed'])
@@ -28,16 +30,23 @@ function eventLabel(event: StatisticsActionDetail): string {
   return parts.join(' · ')
 }
 
+function qualityButtonLabel(orderScore: FieldScoreValue | null | undefined): string {
+  if (!orderScore) return 'Оценка качества'
+  return `Оценка: ${FIELD_SCORE_LABELS[orderScore]}`
+}
+
 function EventList({
   title,
   events,
   busy,
   onSelect,
+  onQualityAssessment,
 }: {
   title: string
   events: StatisticsActionDetail[]
   busy: boolean
   onSelect: (event: StatisticsActionDetail) => void
+  onQualityAssessment?: (event: StatisticsActionDetail) => void
 }) {
   return (
     <section className="order-status-section">
@@ -48,29 +57,58 @@ function EventList({
         <p className="muted small">Нет событий</p>
       ) : (
         <ul className="order-status-list">
-          {events.map((event) => (
-            <li key={`${event.action}-${event.object_key}-${event.created_at}`}>
-              <button
-                type="button"
-                className="order-status-item"
-                disabled={busy}
-                onClick={() => onSelect(event)}
-              >
-                <span className="order-status-item-main">{eventLabel(event)}</span>
-                <span className="order-status-item-meta muted small">
-                  {formatEventDate(event.created_at)} · {event.user_login} ·{' '}
-                  {formatStatisticsAction(event.action)}
-                </span>
-              </button>
-            </li>
-          ))}
+          {events.map((event) => {
+            const scored = Boolean(event.order_score)
+            return (
+              <li key={`${event.action}-${event.object_key}-${event.created_at}`}>
+                <div className="order-status-item-row">
+                  <button
+                    type="button"
+                    className="order-status-item"
+                    disabled={busy}
+                    onClick={() => onSelect(event)}
+                  >
+                    <span className="order-status-item-main">{eventLabel(event)}</span>
+                    <span className="order-status-item-meta muted small">
+                      {formatEventDate(event.created_at)} · {event.user_login} ·{' '}
+                      {formatStatisticsAction(event.action)}
+                    </span>
+                  </button>
+                  {onQualityAssessment && (
+                    <button
+                      type="button"
+                      className={`btn order-status-quality-btn${
+                        scored ? ' order-status-quality-btn--scored' : ''
+                      }`}
+                      disabled={busy}
+                      title={
+                        scored && event.order_score
+                          ? `Оценка заказа: ${FIELD_SCORE_LABELS[event.order_score]}`
+                          : undefined
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onQualityAssessment(event)
+                      }}
+                    >
+                      {qualityButtonLabel(event.order_score)}
+                    </button>
+                  )}
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>
   )
 }
 
-export function OrderStatusModal({ onClose, onSelectEvent }: OrderStatusModalProps) {
+export function OrderStatusModal({
+  onClose,
+  onSelectEvent,
+  onQualityAssessment,
+}: OrderStatusModalProps) {
   const initialRange = useMemo(() => defaultOrderStatusDateRange(), [])
   const [events, setEvents] = useState<StatisticsActionDetail[]>([])
   const [loading, setLoading] = useState(false)
@@ -143,6 +181,7 @@ export function OrderStatusModal({ onClose, onSelectEvent }: OrderStatusModalPro
               events={surveyed}
               busy={busy}
               onSelect={(e) => void handleSelect(e)}
+              onQualityAssessment={onQualityAssessment}
             />
             <EventList
               title="Подготовлены в поле"

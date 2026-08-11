@@ -692,3 +692,105 @@ def geometry_in_district(
         cur.execute(query, params)
         row = cur.fetchone()
     return bool(row and row[0])
+
+
+def geometry_within_meters(
+    conn: PgConnection,
+    geometry_a: dict[str, Any],
+    geometry_b: dict[str, Any],
+    meters: float,
+    metric_srid: int = 32637,
+) -> bool:
+    """True if two GeoJSON geometries are within ``meters`` (metric CRS)."""
+    import json
+
+    query = f"""
+        SELECT ST_DWithin(
+            ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), {metric_srid}),
+            ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), {metric_srid}),
+            %s
+        )
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, (json.dumps(geometry_a), json.dumps(geometry_b), meters))
+        row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def fetch_task_features_near_geometry(
+    conn: PgConnection,
+    store_cfg: dict[str, Any],
+    group_name: str,
+    center_geometry: dict[str, Any],
+    radius_m: float,
+    metric_srid: int = 32637,
+) -> list[dict[str, Any]]:
+    """Layer features with task_key within radius of center, limited to one CRM group."""
+    import json
+
+    from app.config import crm_tasks_config
+    from app.layers.registry import get_registry
+
+    registry = get_registry()
+    crm_cfg = crm_tasks_config()
+    center_json = json.dumps(center_geometry)
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for group_cfg in crm_cfg.get("groups", []):
+        if group_cfg.get("name") != group_name:
+            continue
+        for sub_cfg in group_cfg.get("subgroups", []):
+            subgroup_name = sub_cfg.get("name") or ""
+            mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
+            if not mapping:
+                continue
+            layers, _ = registry.resolve_subgroup_layers(
+                sub_cfg.get("layers", []),
+                sub_cfg.get("groups", []),
+            )
+            for layer in layers:
+                if not _is_data_mos_items_table(layer.qualified_table):
+                    continue
+                geom_col = layer.geometry_column
+                query = f"""
+                    SELECT t.task_key::text AS task_key,
+                           to_jsonb(t) - '{geom_col}' AS attrs,
+                           ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+                    FROM {layer.qualified_table} t
+                    WHERE t.task_key IS NOT NULL
+                      AND t."{geom_col}" IS NOT NULL
+                      AND ST_DWithin(
+                          ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(%s), 4326), {metric_srid}),
+                          ST_Transform(t."{geom_col}", {metric_srid}),
+                          %s
+                      )
+                """
+                try:
+                    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                        cur.execute(query, (center_json, radius_m))
+                        rows = cur.fetchall()
+                except Exception:
+                    conn.rollback()
+                    continue
+                for row in rows:
+                    task_key = str(row.get("task_key") or "")
+                    geom = row.get("geometry")
+                    if not task_key or not geom or task_key in seen:
+                        continue
+                    seen.add(task_key)
+                    attrs = dict(row["attrs"]) if row.get("attrs") else {}
+                    attrs["_task_key"] = task_key
+                    results.append(
+                        {
+                            "task_key": task_key,
+                            "subgroup_name": subgroup_name,
+                            "layer_name": layer.display_name,
+                            "layer_key": layer.layer_key,
+                            "geometry": geom,
+                            "attributes": attrs,
+                        }
+                    )
+        break
+
+    return results
