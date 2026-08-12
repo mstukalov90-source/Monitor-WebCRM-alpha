@@ -44,6 +44,7 @@ from app.layers.geojson import (
     geometry_in_district,
     lookup_feature,
     normalize_rayon_name,
+    sql_rayon_matches,
 )
 from app.layers.registry import get_registry
 
@@ -197,7 +198,7 @@ def fetch_snapshot_rows(
         params.append(field_executor_login)
     if rayon:
         rayon_norm = normalize_rayon_name(rayon)
-        filters.append("(rayon = %s OR rayon IS NULL)")
+        filters.append(sql_rayon_matches('"rayon"'))
         params.append(rayon_norm)
 
     where = f"WHERE {' AND '.join(filters)}" if filters else ""

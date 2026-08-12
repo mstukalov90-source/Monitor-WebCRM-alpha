@@ -121,7 +121,7 @@ def list_clear_tasks_for_management(
     schema = store_cfg.get("schema", "crm")
     table = store_cfg.get("clear_table", "tasks_clear")
     from app.crm.store import ensure_rayon_column
-    from app.layers.geojson import normalize_rayon_name
+    from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
 
     ensure_rayon_column(conn, schema, table)
 
@@ -129,7 +129,7 @@ def list_clear_tasks_for_management(
     params: list[Any] = []
     if rayon:
         rayon_norm = normalize_rayon_name(rayon)
-        filters.append("(rayon = %s OR rayon IS NULL)")
+        filters.append(sql_rayon_matches('"rayon"'))
         params.append(rayon_norm)
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
     query = f"""
@@ -429,10 +429,10 @@ def list_field_tasks_for_assignment(
 
     if rayon:
         from app.crm.store import ensure_rayon_column
-        from app.layers.geojson import normalize_rayon_name
+        from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
 
         ensure_rayon_column(conn, schema, table)
-        filters.append("(rayon = %s OR rayon IS NULL)")
+        filters.append(sql_rayon_matches('"rayon"'))
         params.append(normalize_rayon_name(rayon))
 
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
@@ -515,8 +515,10 @@ def list_area_tasks_for_assignment(
     params: list[Any] = []
 
     if rayon:
-        filters.append('"rayon" = %s')
-        params.append(rayon)
+        from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
+
+        filters.append(sql_rayon_matches('"rayon"', allow_null=False))
+        params.append(normalize_rayon_name(rayon))
     if status:
         filters.append('"status" = %s')
         params.append(status)

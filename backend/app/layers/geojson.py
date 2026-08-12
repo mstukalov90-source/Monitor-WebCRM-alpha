@@ -552,6 +552,14 @@ def sql_normalize_rayon_expr(field_sql: str) -> str:
     )
 
 
+def sql_rayon_matches(field_sql: str = '"rayon"', *, allow_null: bool = True) -> str:
+    """Parameterized SQL predicate: normalized column equals %s (optionally OR column IS NULL)."""
+    expr = f"{sql_normalize_rayon_expr(field_sql)} = %s"
+    if allow_null:
+        return f"({expr} OR {field_sql} IS NULL)"
+    return expr
+
+
 def fetch_district_wkt(
     conn: PgConnection,
     rayon: str,

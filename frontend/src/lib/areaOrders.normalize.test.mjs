@@ -25,6 +25,7 @@ describe('normalizeRayonName', () => {
       ['Нагатино-\r\nСадовники', 'Нагатино-Садовники'],
       ['Орехово-\r\nБорисово \r\nСеверное', 'Орехово-Борисово Северное'],
       ['Чертаново \r\n Южное', 'Чертаново Южное'],
+      ['Чертаново \r\nСеверное', 'Чертаново Северное'],
     ]
     for (const [raw, expected] of cases) {
       assert.equal(normalizeRayonName(raw), expected)

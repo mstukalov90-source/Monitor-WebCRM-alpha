@@ -7,8 +7,14 @@ from unittest.mock import MagicMock, patch
 
 from app.auth.service import fetch_allowed_rayons, is_rayon_allowed
 from app.auth.session import UserSession
+from app.crm.personnel import list_area_tasks_for_assignment, list_field_tasks_for_assignment
+from app.crm.snapshot_loader import fetch_snapshot_rows
 from app.crm.tasks_area import fetch_tasks_area_geojson
-from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
+from app.layers.geojson import (
+    normalize_rayon_name,
+    sql_normalize_rayon_expr,
+    sql_rayon_matches,
+)
 
 
 def _cursor_cm(cursor: MagicMock) -> MagicMock:
@@ -30,6 +36,7 @@ class NormalizeRayonNameTests(unittest.TestCase):
             ("Орехово-\r\nБорисово \r\nЮжное", "Орехово-Борисово Южное"),
             ("Чертаново \r\nЦентральное", "Чертаново Центральное"),
             ("Чертаново \r\n Южное", "Чертаново Южное"),
+            ("Чертаново \r\nСеверное", "Чертаново Северное"),
             ("Тропарево- Никулино", "Тропарево-Никулино"),
             ("Фили- Давыдково", "Фили-Давыдково"),
             ("Братеево", "Братеево"),
@@ -49,6 +56,78 @@ class NormalizeRayonNameTests(unittest.TestCase):
         self.assertIn("regexp_replace", expr)
         self.assertIn("\\s+", expr)
         self.assertIn("\\s*-\\s*", expr)
+
+    def test_sql_rayon_matches_includes_null_fallback(self) -> None:
+        expr = sql_rayon_matches('"rayon"')
+        self.assertIn("regexp_replace", expr)
+        self.assertIn('"rayon" IS NULL', expr)
+        self.assertIn("= %s", expr)
+
+    def test_sql_rayon_matches_can_disallow_null(self) -> None:
+        expr = sql_rayon_matches('"rayon"', allow_null=False)
+        self.assertNotIn("IS NULL", expr)
+        self.assertIn("= %s", expr)
+
+
+class FetchSnapshotRowsRayonFilterTests(unittest.TestCase):
+    def test_rayon_filter_uses_normalized_sql_and_param(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+        store_cfg = {"schema": "crm", "field_table": "tasks_field"}
+
+        with patch("app.crm.store.ensure_rayon_column", return_value=True):
+            fetch_snapshot_rows(
+                conn,
+                store_cfg,
+                "field_table",
+                "tasks_field",
+                rayon="Чертаново \r\nЦентральное",
+            )
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("regexp_replace", sql)
+        self.assertIn("\\s*-\\s*", sql)
+        self.assertIn("IS NULL", sql)
+        self.assertEqual(params[0], "Чертаново Центральное")
+
+
+class ListFieldTasksRayonFilterTests(unittest.TestCase):
+    def test_rayon_filter_uses_normalized_sql_and_param(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+
+        with patch("app.crm.personnel.ensure_all_executor_columns"), patch(
+            "app.crm.store.ensure_rayon_column",
+            return_value=True,
+        ), patch(
+            "app.crm.personnel.crm_task_store_config",
+            return_value={"schema": "crm", "field_table": "tasks_field"},
+        ), patch("app.layers.geojson.fetch_district_wkt", return_value=None):
+            list_field_tasks_for_assignment(conn, rayon="Чертаново \r\n Южное")
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("regexp_replace", sql)
+        self.assertEqual(params[0], "Чертаново Южное")
+
+
+class ListAreaTasksRayonFilterTests(unittest.TestCase):
+    def test_rayon_filter_uses_normalized_sql_and_param(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+
+        with patch("app.crm.personnel.ensure_all_executor_columns"):
+            list_area_tasks_for_assignment(conn, rayon="Чертаново \r\nСеверное")
+
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("regexp_replace", sql)
+        self.assertNotIn("IS NULL", sql)
+        self.assertEqual(params[0], "Чертаново Северное")
 
 
 class FetchTasksAreaGeojsonRayonFilterTests(unittest.TestCase):
