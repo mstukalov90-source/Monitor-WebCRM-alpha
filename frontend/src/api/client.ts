@@ -280,7 +280,7 @@ export function updateTask(key: string, data: Partial<TaskRecord>): Promise<Task
 
 export interface CreateOfficeTaskPayload {
   geometry: GeoJSON.Point
-  area_task_key: string
+  area_task_key?: string | null
   link_prefill?: Record<string, string> | null
 }
 

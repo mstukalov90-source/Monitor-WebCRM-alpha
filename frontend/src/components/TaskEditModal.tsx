@@ -292,8 +292,7 @@ export function TaskEditModal({
     return taskTableColumnsForSubgroup(context.subgroupName) ?? []
   }, [context])
   const canAddOfficePoint =
-    (userRole === 'office' || userRole === 'manager') &&
-    officeWorking &&
+    ((userRole === 'office' && officeWorking) || userRole === 'manager') &&
     context?.groupName === CRM_GROUP_ORDERS &&
     Boolean(onStartPlaceOfficePoint)
 

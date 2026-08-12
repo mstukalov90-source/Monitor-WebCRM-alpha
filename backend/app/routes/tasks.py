@@ -558,6 +558,7 @@ def post_create_office_task(
                 body.geometry,
                 body.area_task_key,
                 body.link_prefill,
+                role=user.role,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

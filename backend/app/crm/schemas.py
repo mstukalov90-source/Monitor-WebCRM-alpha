@@ -106,7 +106,7 @@ class TaskRecordOut(BaseModel):
 
 class CreateOfficeTaskRequest(BaseModel):
     geometry: dict[str, Any]
-    area_task_key: str
+    area_task_key: str | None = None
     link_prefill: dict[str, str] | None = None
 
 

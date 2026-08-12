@@ -14,10 +14,12 @@ from app.crm.store import (
     _normalize_id_value,
     _task_select_columns_sql,
 )
-from app.crm.tasks_area import analise_lock_holder
+from app.crm.tasks_area import analise_lock_holder, pre_analise_lock_holder
 from app.crm.user_audit import make_user_audit
 
 _LINK_PREFILL_COLUMNS = frozenset({"oati_id", "earthwork_id", "localwork_id", "avr_mos_id"})
+_STAGE_OPERATOR_ROLES = frozenset({"office"})
+_FREE_PLACE_ROLES = frozenset({"manager", "admin"})
 
 
 def _validate_point_geometry(geometry: dict[str, Any]) -> tuple[float, float]:
@@ -32,12 +34,14 @@ def _validate_point_geometry(geometry: dict[str, Any]) -> tuple[float, float]:
     return lng, lat
 
 
-def _require_active_analise(conn: PgConnection, area_task_key: str, login: str) -> None:
+def _require_active_stage_lock(conn: PgConnection, area_task_key: str, login: str) -> None:
     holder = analise_lock_holder(conn, area_task_key)
     if holder is None:
-        raise ValueError("Площадный заказ не в режиме камерального анализа")
+        holder = pre_analise_lock_holder(conn, area_task_key)
+    if holder is None:
+        raise ValueError("Площадный заказ не в режиме подготовки или анализа")
     if holder.strip() != login.strip():
-        raise ValueError("Камеральный анализ выполняет другой пользователь")
+        raise ValueError("Заказ выполняет другой пользователь")
 
 
 def _point_inside_area(conn: PgConnection, area_task_key: str, lng: float, lat: float) -> None:
@@ -59,16 +63,54 @@ def _point_inside_area(conn: PgConnection, area_task_key: str, lng: float, lat: 
         raise ValueError("Точка должна находиться внутри полигона площадного заказа")
 
 
+def _resolve_area_task_key(conn: PgConnection, lng: float, lat: float) -> str:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT key::text
+            FROM crm.tasks_area
+            WHERE geom IS NOT NULL
+              AND ST_Contains(
+                  geom,
+                  ST_SetSRID(ST_MakePoint(%s, %s), 4326)
+              )
+            ORDER BY area ASC NULLS LAST, key ASC
+            LIMIT 1
+            """,
+            (lng, lat),
+        )
+        row = cur.fetchone()
+    if not row:
+        raise ValueError("Точка вне площадных заказов")
+    return str(row[0])
+
+
 def create_office_task(
     conn: PgConnection,
     login: str,
     geometry: dict[str, Any],
-    area_task_key: str,
+    area_task_key: str | None = None,
     link_prefill: dict[str, Any] | None = None,
+    *,
+    role: str,
 ) -> TaskRecord:
     lng, lat = _validate_point_geometry(geometry)
-    _require_active_analise(conn, area_task_key, login)
-    _point_inside_area(conn, area_task_key, lng, lat)
+    role_normalized = (role or "").strip().lower()
+
+    if role_normalized in _STAGE_OPERATOR_ROLES:
+        if not area_task_key or not str(area_task_key).strip():
+            raise ValueError("area_task_key обязателен для роли office")
+        resolved_key = str(area_task_key).strip()
+        _require_active_stage_lock(conn, resolved_key, login)
+        _point_inside_area(conn, resolved_key, lng, lat)
+    elif role_normalized in _FREE_PLACE_ROLES:
+        if area_task_key and str(area_task_key).strip():
+            resolved_key = str(area_task_key).strip()
+            _point_inside_area(conn, resolved_key, lng, lat)
+        else:
+            _resolve_area_task_key(conn, lng, lat)
+    else:
+        raise ValueError("Создание office-точки недоступно для вашей роли")
 
     id_values: dict[str, str | None] = {col: None for col in TASK_ID_COLUMNS}
     if link_prefill:

@@ -104,7 +104,8 @@ function App() {
     reportId?: number | null
   } | null>(null)
 
-  const isOfficeUser = user?.role === 'office' || user?.role === 'manager'
+  const isOfficeUser = user?.role === 'office'
+  const canPlaceOfficePoints = user?.role === 'office' || user?.role === 'manager'
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
@@ -561,13 +562,20 @@ function App() {
 
   const handleMapPointPlaced = useCallback(
     async (lng: number, lat: number) => {
-      if (!officeAreaOrder || placePointBusy) return
-      const areaKey = officeAreaOrder.task_key ?? String(officeAreaOrder.attributes.key ?? '')
-      if (!areaKey) return
+      if (placePointBusy) return
+      const isManagerPlace = user?.role === 'manager' || user?.role === 'admin'
+      const areaKey = officeAreaOrder
+        ? officeAreaOrder.task_key ?? String(officeAreaOrder.attributes.key ?? '')
+        : null
+
+      if (!isManagerPlace) {
+        if (!officeAreaOrder || !areaKey) return
+      }
 
       const point: GeoJSON.Point = { type: 'Point', coordinates: [lng, lat] }
       if (
-        officeAreaOrder.geometry &&
+        !isManagerPlace &&
+        officeAreaOrder?.geometry &&
         !geometryInsideArea(point, officeAreaOrder.geometry)
       ) {
         alert('Точка должна находиться внутри полигона площадного заказа.')
@@ -578,7 +586,7 @@ function App() {
       try {
         await createOfficeTask({
           geometry: point,
-          area_task_key: areaKey,
+          area_task_key: areaKey || null,
           link_prefill: pendingOfficeLinkPrefill,
         })
         resetPlacePointMode()
@@ -592,6 +600,7 @@ function App() {
       }
     },
     [
+      user?.role,
       officeAreaOrder,
       placePointBusy,
       pendingOfficeLinkPrefill,
@@ -999,6 +1008,8 @@ function App() {
 
   const officeAwaitingOrder = isOfficeUser && !officeAreaOrder
   const officeWorking = isOfficeUser && officeAreaOrder != null
+  const showPlaceOfficePoint =
+    (isOfficeUser && officeWorking) || (canPlaceOfficePoints && !isOfficeUser && taskResult != null)
 
   return (
     <div className="app">
@@ -1081,10 +1092,10 @@ function App() {
               (taskFilterSelection === TASK_FILTER_NONE && !isAreaSource(taskSource)) ||
               officeAwaitingOrder
             }
-            officeWorking={officeWorking}
+            showPlacePoint={showPlaceOfficePoint}
             placePointMode={placePointMode}
             placePointDisabled={loading || placePointBusy || pickMode}
-            onTogglePlacePoint={handleTogglePlacePointMode}
+            onTogglePlacePoint={showPlaceOfficePoint ? handleTogglePlacePointMode : undefined}
             onExecute={handleExecuteTask}
             onViewArea={setAreaViewFeature}
             onSelectHighlight={setPanelHighlight}

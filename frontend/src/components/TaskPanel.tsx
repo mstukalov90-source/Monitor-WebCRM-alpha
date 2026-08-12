@@ -15,7 +15,7 @@ interface TaskPanelProps {
   taskResult: TaskResult | null
   taskSource: TaskSource
   tasksHidden?: boolean
-  officeWorking?: boolean
+  showPlacePoint?: boolean
   placePointMode?: boolean
   placePointDisabled?: boolean
   onTogglePlacePoint?: () => void
@@ -31,7 +31,7 @@ export function TaskPanel({
   taskResult,
   taskSource,
   tasksHidden = false,
-  officeWorking = false,
+  showPlacePoint = false,
   placePointMode = false,
   placePointDisabled = false,
   onTogglePlacePoint,
@@ -544,7 +544,7 @@ export function TaskPanel({
           >
             {taskExecuteButtonLabel(taskSource)}
           </button>
-          {officeWorking && onTogglePlacePoint && (
+          {showPlacePoint && onTogglePlacePoint && (
             <button
               type="button"
               className={`btn${placePointMode ? ' primary' : ''}`}

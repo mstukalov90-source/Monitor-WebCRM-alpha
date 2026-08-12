@@ -459,12 +459,12 @@ QGIS MUST: для роли office воспроизвести выбор ступ
 Специфика **`pre_analise`**:
 
 - Фокус: задачи **без** полевого обследования → типично дозаполнить связи и **отправить в поле** (W1), чтобы потом `field_observed` стал true после работы полевика/ETL.
-- Создание office-точки на бэкенде **не** допускается (lock проверяет именно `analise`).
+- [ ] **Добавить разрытие на карте** (O1): как на `analise`, но требуется **активный `pre_analise`-lock** текущего login.
 
 Специфика **`analise`**:
 
 - Фокус: задачи **с** `field_observed` → просмотр field materials (§4.6), закрытия legal/illegal/clear, анализ.
-- [ ] **Добавить разрытие на карте** (O1): клик точки **внутри** полигона рабочего `tasks_area`; INSERT `crm.tasks` (`is_office_task`) + `crm.office_task_points`; опциональный link-prefill с ордера (oati/earthwork/…). Требуется **активный analise-lock** текущего login (не pause, не done, не чужой).
+- [ ] **Добавить разрытие на карте** (O1): клик точки **внутри** полигона рабочего `tasks_area`; INSERT `crm.tasks` (`is_office_task`) + `crm.office_task_points`; опциональный link-prefill с ордера (oati/earthwork/…). Требуется **активный `analise`-lock** текущего login (не pause, не done, не чужой).
 - Из карточки ордера группы «Новые ордера…» можно стартовать place-point с prefill business id.
 
 #### 5.5.6. Суточный reset lock (не «таймаут N минут»)
@@ -483,7 +483,7 @@ QGIS MUST вызывать ту же семантику до показа спи
 - [ ] Start / pause / complete с lock одного login.  
 - [ ] Фильтр карты и панели на время работы.  
 - [ ] Complete disabled при remaining > 0.  
-- [ ] Office point только при analise-lock + точка в полигоне.  
+- [ ] Office point при pre_analise\|analise-lock (office) или resolve по полигону (manager) + точка в полигоне.  
 - [ ] Суточный MSK reset.  
 - [ ] События статистики через триггеры (не руками).
 
@@ -567,10 +567,10 @@ QGIS MUST вызывать ту же семантику до показа спи
 
 | #   | Действие                   | Запись                                                                                                                                                                   |
 | --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| O1  | Создать камеральную задачу | Только при **активном `analise`-lock** текущего login на `area_task_key` (не pause/done/чужой). `INSERT crm.tasks (…, is_office_task=true)` + `crm.office_task_points`; Point **внутри** `tasks_area.geom`; опционально prefill `oati_id`/`earthwork_id`/`localwork_id`/`avr_mos_id`. |
+| O1  | Создать камеральную задачу | **office**: активный lock `pre_analise` **или** `analise` текущего login на `area_task_key` (не pause/done/чужой); Point внутри этого `tasks_area.geom`. **manager/admin**: stage-lock не проверяется; `area_task_key` опционален — если не задан, резолв по `ST_Contains(geom, point)` (при нескольких — наименьший `area`, затем `key`). `INSERT crm.tasks (…, is_office_task=true)` + `crm.office_task_points`; опционально prefill `oati_id`/`earthwork_id`/`localwork_id`/`avr_mos_id`. |
 
 
-Это **единственный** штатный сценарий, где клиент создаёт новую строку `crm.tasks` в операторском UI. На стадии `pre_analise` O1 **запрещён**.
+Это **единственный** штатный сценарий, где клиент создаёт новую строку `crm.tasks` в операторском UI.
 
 ### 6.3a. Полевые отчёты и фото (`mggt_field`) — только чтение
 
@@ -711,7 +711,7 @@ Field: `executor = me OR executor IS NULL` на `tasks_field`.
 7. Не обходить триггеры статистики.
 8. Scoped business id: разные геометрии одного raw id — разные задачи.
 9. Согласовывать `layers_config.json` с WebCRM и MONITOR ETL.
-10. Офисные стадии: lock одного login; complete только без pause и (в UI) при remaining=0; O1 только под analise-lock.
+10. Офисные стадии: lock одного login; complete только без pause и (в UI) при remaining=0; O1 для office под `pre_analise`\|`analise`-lock; manager/admin — resolve по полигону без lock.
 
 ---
 
@@ -729,7 +729,7 @@ Field: `executor = me OR executor IS NULL` на `tasks_field`.
 8. analise: список observed → start → materials/закрытия → office point внутри полигона OK, снаружи / без lock — ошибка → complete при 0.
 9. Пауза → заказ не у другого; на следующий день MSK вчерашний lock сброшен.
 10. Задача из Web видна в QGIS и наоборот.
-11. Office point create → новый `crm.tasks.key` с `is_office_task` (только analise).
+11. Office point create → новый `crm.tasks.key` с `is_office_task` (pre_analise или analise; manager — без lock, resolve по полигону).
 12. Нет всплеска в `crm.tasks_deletion_log`.
 13. Задача с `mggt_field.reports`: на карте видны точки/линии отчётов; материалы показывают комментарий и фото; смена `report_id` сужает набор фото.
 
@@ -771,7 +771,7 @@ Field: `executor = me OR executor IS NULL` на `tasks_field`.
 | Путать survey `status` и стадии pre_analise/analise | Разные колонки; стадии независимы     |
 | Фильтровать stage только по флагу `analise` на area | Список заказов — по active∩geom∩field_observed |
 | Complete при remaining > 0                        | Кнопка disabled, пока в полигоне есть задачи стадии |
-| Office point на pre_analise                       | O1 только при analise-lock текущего login |
+| Office point вне полигона / без lock у office     | O1: office — lock `pre_analise`\|`analise`; manager — resolve по `ST_Contains` |
 | Сбрасывать lock по «N минут»                      | Сброс по календарному дню Europe/Moscow |
 
 
@@ -781,6 +781,7 @@ Field: `executor = me OR executor IS NULL` на `tasks_field`.
 
 ## См. также
 
+- Рабочие процессы роли `office`: [office_role_workflows.md](office_role_workflows.md)  
 - Письма ОАТИ (HTTP API для плагина): [qgis_letters_api.md](qgis_letters_api.md)  
 - Vault: `Projects/MONITOR WebCRM/14 — Спецификация данных для QGIS-модуля.md`  
 - Changelog WebCRM: `Projects/MONITOR WebCRM/13 — Нововведения (changelog).md`  
