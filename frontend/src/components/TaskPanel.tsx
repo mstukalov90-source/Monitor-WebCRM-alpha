@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchFieldReports, fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
+import { OrderGroupSearchModal, OrderMapPreviewModal } from './OrderGroupSearchModal'
 import {
   buildGroupedTableRows,
   countNotificationGroup,
@@ -8,8 +9,74 @@ import {
   normalizeLinkValue,
   siblingsToLinkedFeatures,
 } from '../lib/notificationSiblings'
-import type { SelectedTaskContext, TaskFeature, TaskGroup, TaskHighlight, TaskResult, TaskSource, TaskTableColumn } from '../types'
-import { formatTaskTableCell, isAreaSource, isFieldObserved, resolveTaskTableColumns, TASK_SOURCE_LABELS, taskExecuteButtonLabel, areaStatusFromAttributes, AREA_STATUS_COLORS, CRM_GROUP_ORDERS } from '../types'
+import type {
+  OrderSearchHit,
+  SelectedTaskContext,
+  TaskFeature,
+  TaskGroup,
+  TaskHighlight,
+  TaskResult,
+  TaskSource,
+  TaskTableColumn,
+} from '../types'
+import {
+  formatTaskTableCell,
+  isAreaSource,
+  isFieldObserved,
+  resolveTaskTableColumns,
+  TASK_SOURCE_LABELS,
+  taskExecuteButtonLabel,
+  areaStatusFromAttributes,
+  AREA_STATUS_COLORS,
+  CRM_GROUP_ORDERS,
+  ORDER_GROUP_SEARCH_FIELDS,
+} from '../types'
+
+function attrMatch(a: unknown, b: unknown): boolean {
+  const left = String(a ?? '').trim().toLowerCase()
+  const right = String(b ?? '').trim().toLowerCase()
+  return Boolean(left) && left === right
+}
+
+function findOrderHitInResult(
+  groups: TaskGroup[],
+  hit: OrderSearchHit,
+): { groupIndex: number; subIndex: number; featureIndex: number; feature: TaskFeature } | null {
+  const idField = ORDER_GROUP_SEARCH_FIELDS[hit.subgroup_name]?.id
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi]
+    if (group.name !== CRM_GROUP_ORDERS) continue
+    for (let si = 0; si < group.subgroups.length; si++) {
+      const sub = group.subgroups[si]
+      if (sub.name !== hit.subgroup_name) continue
+      const featureIndex = sub.features.findIndex((feat) => {
+        const featKey = feat.task_key ?? String(feat.attributes._task_key ?? '')
+        if (hit.task_key && featKey && featKey === hit.task_key) return true
+        if (idField && attrMatch(feat.attributes[idField], hit.attributes[idField])) return true
+        return false
+      })
+      if (featureIndex >= 0) {
+        return {
+          groupIndex: gi,
+          subIndex: si,
+          featureIndex,
+          feature: sub.features[featureIndex],
+        }
+      }
+    }
+  }
+  return null
+}
+
+function hitToTaskFeature(hit: OrderSearchHit): TaskFeature {
+  return {
+    layer_name: hit.layer_name,
+    layer_key: hit.layer_key,
+    attributes: hit.attributes,
+    geometry: hit.geometry ?? null,
+    task_key: hit.task_key ?? null,
+  }
+}
 
 interface TaskPanelProps {
   taskResult: TaskResult | null
@@ -50,6 +117,8 @@ export function TaskPanel({
   const [linkInfo, setLinkInfo] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [mapPreviewHit, setMapPreviewHit] = useState<OrderSearchHit | null>(null)
   const selectFromMapRef = useRef(selectFromMap)
   selectFromMapRef.current = selectFromMap
 
@@ -202,6 +271,52 @@ export function TaskPanel({
     setSelectedRow(row)
     setActionMessage(null)
     void loadHighlight(row)
+  }
+
+  const handleShowOrderOnMap = (hit: OrderSearchHit) => {
+    setSearchOpen(false)
+    if (!hit.in_selected_rayon) {
+      setMapPreviewHit(hit)
+      return
+    }
+
+    setMapPreviewHit(null)
+    const located = findOrderHitInResult(groups, hit)
+    if (located) {
+      const linkField = getSubgroupLinkField(groups[located.groupIndex].subgroups[located.subIndex].name)
+      if (linkField) {
+        const linkValue = normalizeLinkValue(located.feature.attributes[linkField])
+        if (linkValue) {
+          const groupKey = `${linkField}:${linkValue}`
+          setCollapsedGroups((prev) =>
+            prev[groupKey] ? { ...prev, [groupKey]: false } : prev,
+          )
+        }
+      }
+      setSelectedGroup(located.groupIndex)
+      setSelectedSub(located.subIndex)
+      setSelectedRow(located.featureIndex)
+      setActionMessage(null)
+      void loadHighlight(located.featureIndex, {
+        subgroup: groups[located.groupIndex].subgroups[located.subIndex],
+        groupName: groups[located.groupIndex].name,
+        features: groups[located.groupIndex].subgroups[located.subIndex].features,
+      })
+      return
+    }
+
+    const feature = hitToTaskFeature(hit)
+    onSelectHighlight({
+      primary: feature.geometry ?? null,
+      linked: [],
+      popup: {
+        groupName: CRM_GROUP_ORDERS,
+        subgroupName: hit.subgroup_name,
+        feature,
+        taskKey: hit.task_key ?? undefined,
+      },
+      taskKey: hit.task_key ?? undefined,
+    })
   }
 
   useEffect(() => {
@@ -388,6 +503,7 @@ export function TaskPanel({
   }
 
   return (
+    <>
     <div className="task-panel">
       <div className="task-panel-header">
         <strong>{taskResult.district_name}</strong>
@@ -404,8 +520,19 @@ export function TaskPanel({
           {groups.map((group: TaskGroup, gi) => (
             <div key={group.name} className="task-tree-group">
               <div className="task-tree-group-name">
-                {group.name} (
-                {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
+                <span>
+                  {group.name} (
+                  {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
+                </span>
+                {group.name === CRM_GROUP_ORDERS && (
+                  <button
+                    type="button"
+                    className="btn task-tree-group-search"
+                    onClick={() => setSearchOpen(true)}
+                  >
+                    Поиск
+                  </button>
+                )}
               </div>
               {group.subgroups.map((sub, si) => (
                 <button
@@ -557,5 +684,19 @@ export function TaskPanel({
         </div>
       )}
     </div>
+    {searchOpen && taskResult && (
+      <OrderGroupSearchModal
+        rayon={taskResult.district_name}
+        onClose={() => setSearchOpen(false)}
+        onShowOnMap={handleShowOrderOnMap}
+      />
+    )}
+    {mapPreviewHit && (
+      <OrderMapPreviewModal
+        hit={mapPreviewHit}
+        onClose={() => setMapPreviewHit(null)}
+      />
+    )}
+    </>
   )
 }

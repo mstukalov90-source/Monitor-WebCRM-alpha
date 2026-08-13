@@ -24,6 +24,7 @@ import type {
   OrderStatusFeed,
   TaskViewContext,
   TaskGroupMap,
+  OrderSearchResult,
   WorkflowTargetStatus,
   BulkStatusResult,
   OrderTracksResult,
@@ -736,6 +737,11 @@ export function fetchTaskViewContext(key: string): Promise<TaskViewContext> {
 
 export function fetchTaskGroupMap(key: string): Promise<TaskGroupMap> {
   return request(`/api/tasks/${encodeURIComponent(key)}/group-map`, undefined, 90_000)
+}
+
+export function searchOrderGroup(query: string, rayon: string): Promise<OrderSearchResult> {
+  const qs = new URLSearchParams({ q: query, rayon })
+  return request(`/api/tasks/orders/search?${qs}`, undefined, 90_000)
 }
 
 export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {

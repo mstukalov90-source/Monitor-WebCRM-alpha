@@ -369,6 +369,23 @@ class TaskGroupMapOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class OrderSearchHitOut(BaseModel):
+    subgroup_name: str
+    layer_name: str
+    layer_key: str
+    task_key: str | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    geometry: dict[str, Any] | None = None
+    in_selected_rayon: bool = False
+
+
+class OrderSearchResultOut(BaseModel):
+    query: str
+    rayon: str = ""
+    hits: list[OrderSearchHitOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class OrderTrackOut(BaseModel):
     id: str
     attributes: dict[str, Any]

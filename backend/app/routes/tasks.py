@@ -49,6 +49,8 @@ from app.crm.schemas import (
     FieldPhotosResultOut,
     FieldReportOut,
     FieldReportsResultOut,
+    OrderSearchHitOut,
+    OrderSearchResultOut,
     PostponeTaskRequest,
     SendToFieldRequest,
     SnapshotActionRequest,
@@ -84,6 +86,7 @@ from app.crm.link_resolver import (
     resolve_linked_features,
 )
 from app.crm.office_tasks import create_office_task
+from app.crm.order_search import MIN_QUERY_LENGTH, search_order_group
 from app.crm.field_data_loader import (
     fetch_field_report_rows,
     report_row_to_attributes,
@@ -406,6 +409,29 @@ def get_tasks_area_list(
             field_executor_login=_field_executor_login(user),
         )
     return tasks_area_result_to_dict(result, "area")
+
+
+@router.get("/tasks/orders/search", response_model=OrderSearchResultOut)
+def search_order_group_tasks(
+    q: str = Query(..., min_length=1, description="Номер ордера, исполнитель или заказчик"),
+    rayon: str = Query(..., description="Выбранный район сессии"),
+    user: UserSession = Depends(get_current_user),
+) -> OrderSearchResultOut:
+    check_rayon(user, rayon)
+    query = q.strip()
+    if len(query) < MIN_QUERY_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Введите не меньше {MIN_QUERY_LENGTH} символов",
+        )
+    with get_connection() as conn:
+        payload = search_order_group(conn, query, rayon)
+    return OrderSearchResultOut(
+        query=payload.get("query") or query,
+        rayon=payload.get("rayon") or rayon,
+        hits=[OrderSearchHitOut(**hit) for hit in payload.get("hits") or []],
+        errors=list(payload.get("errors") or []),
+    )
 
 
 @router.get("/tasks/{key}")

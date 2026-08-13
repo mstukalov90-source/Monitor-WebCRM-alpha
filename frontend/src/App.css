@@ -609,6 +609,16 @@ body,
   font-weight: 600;
   font-size: 0.85em;
   margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-tree-group-search {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 2px 8px;
 }
 
 .task-tree-item {
@@ -951,6 +961,41 @@ body,
 
 .modal.task-edit-modal--with-map {
   width: min(720px, 96vw);
+}
+
+.modal.order-group-search-modal {
+  width: min(960px, 96vw);
+}
+
+.order-group-search-form {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+
+.order-group-search-form input {
+  flex: 1;
+  min-width: 0;
+}
+
+.order-group-search-table-wrap {
+  overflow: auto;
+  max-height: 50vh;
+  margin: 8px 0;
+}
+
+.order-group-search-action {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.modal.order-map-preview-modal {
+  width: min(720px, 96vw);
+}
+
+.order-map-preview-wrap {
+  height: 420px;
+  margin-top: 8px;
 }
 
 .task-group-map-section {

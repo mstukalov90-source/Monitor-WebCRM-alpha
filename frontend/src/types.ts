@@ -161,6 +161,23 @@ export interface TaskGroupMap {
   errors: string[]
 }
 
+export interface OrderSearchHit {
+  subgroup_name: string
+  layer_name: string
+  layer_key: string
+  task_key?: string | null
+  attributes: Record<string, unknown>
+  geometry?: GeoJSON.Geometry | null
+  in_selected_rayon: boolean
+}
+
+export interface OrderSearchResult {
+  query: string
+  rayon: string
+  hits: OrderSearchHit[]
+  errors: string[]
+}
+
 export type AppView =
   | 'workspace'
   | 'personnel'
@@ -678,6 +695,30 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
     { field: 'earthwork_id', label: 'Земляные работы' },
     { field: 'avr_mos_id', label: 'АВР' },
   ],
+}
+
+export const ORDER_GROUP_SEARCH_FIELDS: Record<
+  string,
+  { id: string; executor?: string; customer?: string }
+> = {
+  [OATI_ORDERS_SUBGROUP]: {
+    id: 'order_number',
+    executor: 'general_contractor',
+    customer: 'customer_construction',
+  },
+  [EARTHWORK_SUBGROUP]: {
+    id: 'registration_number_notifications',
+    executor: 'executor',
+  },
+  [AVR_SUBGROUP]: {
+    id: 'em_call_reg_num',
+    executor: 'lead_of_work',
+    customer: 'balanceholder',
+  },
+  [LOCAL_REPAIR_SUBGROUP]: {
+    id: 'global_id',
+    customer: 'customer',
+  },
 }
 
 export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
