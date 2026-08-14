@@ -1,18 +1,21 @@
 import type { PathOptions } from 'leaflet'
-import type { TaskFeature } from '../types'
+import type { AreaStatus, TaskFeature } from '../types'
 import {
   AREA_STATUS_COLORS,
   areaStatusFromAttributes,
   isAnaliseComplete,
   normalizeRayonName,
 } from '../types'
+import { AREA_STATUS_BLINK_RED, AREA_STATUS_BLINK_YELLOW } from './areaMapStyle'
 
 export type DistrictFillKind = 'done' | 'free' | 'empty' | 'mixed'
 export type DistrictHatchKind = 'green' | 'red' | 'none'
+export type DistrictBlinkKind = 'red' | 'yellow' | 'none'
 
 export interface DistrictOrderVisual {
   fill: DistrictFillKind
   hatch: DistrictHatchKind
+  blink: DistrictBlinkKind
 }
 
 /** Fill colors for district polygons aggregated from area orders. */
@@ -43,9 +46,21 @@ export const DISTRICT_FILL_COLORS: Record<
   },
 }
 
+function districtBlink(statuses: AreaStatus[]): DistrictBlinkKind {
+  if (statuses.some((s) => s === 'in_pause')) return 'red'
+  if (statuses.some((s) => s === 'wip_field')) return 'yellow'
+  return 'none'
+}
+
+export function districtBlinkClassName(blink: DistrictBlinkKind): string | undefined {
+  if (blink === 'red') return AREA_STATUS_BLINK_RED
+  if (blink === 'yellow') return AREA_STATUS_BLINK_YELLOW
+  return undefined
+}
+
 export function districtOrderVisual(orders: TaskFeature[]): DistrictOrderVisual {
   if (!orders.length) {
-    return { fill: 'empty', hatch: 'none' }
+    return { fill: 'empty', hatch: 'none', blink: 'none' }
   }
 
   const statuses = orders.map((o) => areaStatusFromAttributes(o.attributes))
@@ -60,7 +75,7 @@ export function districtOrderVisual(orders: TaskFeature[]): DistrictOrderVisual 
   const allAnalysed = orders.every((o) => isAnaliseComplete(o.attributes.analise))
   const hatch: DistrictHatchKind = allAnalysed ? 'green' : 'red'
 
-  return { fill, hatch }
+  return { fill, hatch, blink: districtBlink(statuses) }
 }
 
 export function districtBasePathStyle(
@@ -68,11 +83,13 @@ export function districtBasePathStyle(
   selected: boolean,
 ): PathOptions {
   const colors = DISTRICT_FILL_COLORS[visual.fill]
+  const className = districtBlinkClassName(visual.blink)
   return {
     color: selected ? '#0d6efd' : colors.color,
     weight: selected ? 3 : 2,
     fillColor: colors.fillColor,
     fillOpacity: colors.fillOpacity,
+    ...(className ? { className } : {}),
   }
 }
 

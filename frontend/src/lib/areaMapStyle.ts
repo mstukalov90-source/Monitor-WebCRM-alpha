@@ -1,6 +1,15 @@
 import L from 'leaflet'
 import type { AreaStatus } from '../types'
-import { AREA_STATUS_COLORS } from '../types'
+import { AREA_STATUS_COLORS, areaStatusFromAttributes } from '../types'
+
+export const AREA_STATUS_BLINK_YELLOW = 'area-status-blink-yellow'
+export const AREA_STATUS_BLINK_RED = 'area-status-blink-red'
+
+export function areaStatusBlinkClass(status: AreaStatus): string | undefined {
+  if (status === 'in_pause') return AREA_STATUS_BLINK_RED
+  if (status === 'wip_field') return AREA_STATUS_BLINK_YELLOW
+  return undefined
+}
 
 const HATCH_GREEN_ID = 'area-hatch-green'
 const HATCH_RED_ID = 'area-hatch-red'
@@ -15,19 +24,16 @@ export function parseAreaAnalise(value: unknown): boolean {
   return ['true', 't', '1', 'yes', 'да'].includes(text)
 }
 
-export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaStatus {
-  const key = String(attrs.status ?? '').trim().toLowerCase()
-  if (key === 'free' || key === 'wip' || key === 'done') return key
-  return 'free'
-}
-
 export function areaBasePathStyle(attrs: Record<string, unknown>): L.PathOptions {
-  const color = AREA_STATUS_COLORS[areaStatusFromAttributes(attrs)]
+  const status = areaStatusFromAttributes(attrs)
+  const color = AREA_STATUS_COLORS[status]
+  const className = areaStatusBlinkClass(status)
   return {
     color,
     weight: 2,
     fillColor: color,
     fillOpacity: 0.35,
+    ...(className ? { className } : {}),
   }
 }
 

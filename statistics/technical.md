@@ -66,7 +66,7 @@ flowchart LR
 | `field_camera_survey` | Обследование камеральной задачи | INSERT `mggt_field.reports` **и** DELETE `crm.tasks_field` (по `tasks_key`) |
 | `field_disruption_absent` | Отсутствие разрытия по задаче | INSERT `reports` **и** INSERT `crm.tasks_clear` |
 | `field_disruption_found` | Обнаружение разрытия в поле | INSERT `reports` **и** INSERT/строка `crm.tasks` с `is_field_data = true` |
-| `field_order_closed` | Закрытие заказа | `crm.tasks_area.status`: `wip` → `done`, `executor` — полевой пользователь |
+| `field_order_closed` | Закрытие заказа | `crm.tasks_area.status`: `wip` / `wip_field` / `in_pause` → `done`, `executor` — полевой пользователь |
 
 ### Office (`user_role = office`)
 
@@ -189,6 +189,8 @@ Query (опционально, manager/admin): `user_role`, `object_type`, `user
 | `sql/15_statistics_v2.sql` | Helpers + триггеры v2 |
 | `sql/16_statistics_v2_backfill.sql` | DELETE legacy action + idempotent INSERT v2 из источников |
 | `sql/31_statistics_pre_analise.sql` | Колонки `pre_analise_*`, триггер + backfill подготовки |
+| `sql/37_statistics_order_closed_statuses.sql` | `field_order_closed`: `wip` / `wip_field` / `in_pause` → `done` + backfill с 2026-08-13 |
+| `sql/38_statistics_order_closed_aug13_backfill.sql` | Backfill закрытий 2026-08-13 по `date_survey` (mobile не пишет `user_last_edit`) |
 
 Порядок деплоя: `15` → `16` → … → `31` (важно: `16`/`31` после `15`, т.к. используют `statistics_emit_office_event`).
 
@@ -228,14 +230,14 @@ WHERE tgname LIKE 'trg_statistics%' AND NOT t.tgisinternal;
 
 1. **Один счётчик на (задача/заказ, тип события)** — повторное обследование той же задачи не увеличит `field_camera_survey`.
 2. **Backfill `field_camera_survey`** — эвристика без журнала DELETE; live-триггеры точнее.
-3. **Field close заказа** — при `status → done` и field `executor` без проверки `user_last_edit`; офисное закрытие заказа в stat v2 не учитывается.
+3. **Field close заказа** — при `status` `wip` / `wip_field` / `in_pause` → `done` и field `executor` без проверки `user_last_edit`; офисное закрытие заказа в stat v2 не учитывается.
 4. **Окно корреляции report** — 5 минут; события вне окна могут не склеиться (редко при нормальной синхронизации mobile).
 
 ## Связанные файлы
 
 | Компонент | Путь |
 |-----------|------|
-| SQL v2 | `sql/15_statistics_v2.sql`, `sql/16_statistics_v2_backfill.sql`, `sql/31_statistics_pre_analise.sql` |
+| SQL v2 | `sql/15_statistics_v2.sql`, `sql/16_statistics_v2_backfill.sql`, `sql/31_statistics_pre_analise.sql`, `sql/37_statistics_order_closed_statuses.sql` |
 | Python read | `backend/app/crm/statistics.py` |
 | API | `backend/app/routes/personnel.py` |
 | UI labels | `frontend/src/lib/statisticsLabels.ts` |

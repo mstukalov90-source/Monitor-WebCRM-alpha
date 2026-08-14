@@ -27,7 +27,7 @@ export interface MapLegendItem {
   symbology?: Symbology
 }
 
-const AREA_STATUS_ORDER: AreaStatus[] = ['free', 'wip', 'done']
+const AREA_STATUS_ORDER: AreaStatus[] = ['free', 'wip', 'wip_field', 'in_pause', 'done']
 
 const DISTRICT_BOUNDARY_ITEM: MapLegendItem = {
   id: 'district_boundary',

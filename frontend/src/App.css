@@ -357,6 +357,48 @@ body,
   color: #2e7d32;
 }
 
+.area-survey-status-wip_field {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.area-survey-status-in_pause {
+  background: #ffebee;
+  color: #c62828;
+}
+
+@keyframes area-status-blink-yellow {
+  0%,
+  100% {
+    fill: #fdd835;
+    fill-opacity: 0.2;
+  }
+  50% {
+    fill: #fdd835;
+    fill-opacity: 0.85;
+  }
+}
+
+@keyframes area-status-blink-red {
+  0%,
+  100% {
+    fill: #e53935;
+    fill-opacity: 0.2;
+  }
+  50% {
+    fill: #e53935;
+    fill-opacity: 0.85;
+  }
+}
+
+.area-status-blink-yellow {
+  animation: area-status-blink-yellow 1s ease-in-out infinite;
+}
+
+.area-status-blink-red {
+  animation: area-status-blink-red 1s ease-in-out infinite;
+}
+
 .collect-progress {
   margin-top: 10px;
   height: 6px;

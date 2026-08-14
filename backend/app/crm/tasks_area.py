@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
@@ -12,15 +13,19 @@ from app.crm.collector import TaskFeature, TaskGroup, TaskResult, TaskSubgroup
 from app.crm.executor import ensure_executor_column
 from app.crm.user_audit import make_user_audit, user_audit_migration_statements
 
+logger = logging.getLogger(__name__)
+
 AREA_LAYER_KEY = "tasks_area"
 AREA_LAYER_NAME = "Площадные заказы"
 AREA_GROUP_NAME = "Площадные заказы"
 
-AREA_STATUSES = ("free", "wip", "done")
+AREA_STATUSES = ("free", "wip", "wip_field", "in_pause", "done")
 
 AREA_STATUS_LABELS = {
     "free": "Свободные",
     "wip": "На обследовании",
+    "wip_field": "В работе в поле",
+    "in_pause": "Приостановлен в поле",
     "done": "Завершённые",
 }
 
@@ -29,6 +34,15 @@ TASKS_AREA_TABLE = "tasks_area"
 _tasks_area_audit_ready = False
 _analise_audit_ready = False
 _pre_analise_audit_ready = False
+
+ANALISE_RESET_HOUR = 7
+_SNAPSHOT_RESET_TABLES = (
+    ("field_table", "tasks_field"),
+    ("done_legal_table", "tasks_done_legal"),
+    ("done_illegal_table", "tasks_done_illegal"),
+    ("clear_table", "tasks_clear"),
+    ("delay_table", "tasks_delay"),
+)
 
 ANALISE_AUDIT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("analise_started_by", "TEXT"),
@@ -76,8 +90,12 @@ def fetch_tasks_area_geojson(
     *,
     field_executor_login: str | None = None,
 ) -> dict[str, Any]:
-    clear_stale_analise_locks(conn)
-    clear_stale_pre_analise_locks(conn)
+    try:
+        clear_stale_analise_locks(conn)
+        clear_stale_pre_analise_locks(conn)
+    except Exception:
+        conn.rollback()
+        logger.exception("Failed to reset stale analise/pre_analise locks")
 
     from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
 
@@ -250,6 +268,140 @@ def complete_area_survey(conn: PgConnection, key: str, login: str) -> str:
     return _transition_area_status(conn, key, login=login, from_status="wip", to_status="done")
 
 
+def _moscow_reset_at_sql() -> str:
+    """Most recent ANALISE_RESET_HOUR:00 Europe/Moscow as timestamptz."""
+    hhmm = f"{ANALISE_RESET_HOUR:02d}:00:00"
+    return (
+        "("
+        "CASE "
+        f"WHEN (NOW() AT TIME ZONE 'Europe/Moscow')::time >= TIME '{hhmm}' "
+        f"THEN date_trunc('day', NOW() AT TIME ZONE 'Europe/Moscow') + TIME '{hhmm}' "
+        f"ELSE date_trunc('day', NOW() AT TIME ZONE 'Europe/Moscow') "
+        f"- INTERVAL '1 day' + TIME '{hhmm}' "
+        "END"
+        ") AT TIME ZONE 'Europe/Moscow'"
+    )
+
+
+def _snapshot_table_names() -> list[tuple[str, str]]:
+    from app.config import crm_task_store_config
+
+    store_cfg = crm_task_store_config()
+    schema = store_cfg.get("schema", "crm")
+    return [
+        (schema, store_cfg.get(config_key, default_table))
+        for config_key, default_table in _SNAPSHOT_RESET_TABLES
+    ]
+
+
+def _not_in_snapshots_sql(task_alias: str = "t") -> str:
+    clauses = [
+        f'NOT EXISTS (SELECT 1 FROM "{schema}"."{table}" s '
+        f"WHERE s.task_key = {task_alias}.key)"
+        for schema, table in _snapshot_table_names()
+    ]
+    return " AND ".join(clauses) if clauses else "TRUE"
+
+
+def _in_field_sql(task_alias: str = "t") -> str:
+    schema, table = _snapshot_table_names()[0]
+    return (
+        f'EXISTS (SELECT 1 FROM "{schema}"."{table}" s '
+        f"WHERE s.task_key = {task_alias}.key)"
+    )
+
+
+def _task_geom_union_sql() -> str:
+    # tasks_field.geom was dropped (sql/29): resolve geometry from points, reports, items_*.
+    parts = [
+        "SELECT p.task_key, p.point AS geom "
+        "FROM crm.office_task_points p WHERE p.point IS NOT NULL",
+    ]
+    try:
+        from app.config import crm_task_store_config, crm_tasks_config
+        from app.crm.field_data_loader import _field_data_mapping, _reports_qualified_table
+        from app.layers.geojson import _is_data_mos_items_table
+        from app.layers.registry import get_registry
+
+        store_cfg = crm_task_store_config()
+        mapping = _field_data_mapping(store_cfg)
+        reports_table = _reports_qualified_table(mapping)
+        tasks_key_col = mapping.get("reports_tasks_key", "tasks_key")
+        report_geom_col = mapping.get("reports_geometry", "point")
+        parts.append(
+            f'SELECT r."{tasks_key_col}" AS task_key, r."{report_geom_col}" AS geom '
+            f"FROM {reports_table} r "
+            f'WHERE r."{tasks_key_col}" IS NOT NULL AND r."{report_geom_col}" IS NOT NULL'
+        )
+
+        registry = get_registry()
+        crm_cfg = crm_tasks_config()
+        seen_tables: set[str] = set()
+        for group_cfg in crm_cfg.get("groups", []):
+            for sub_cfg in group_cfg.get("subgroups", []):
+                subgroup_name = sub_cfg.get("name", "")
+                sub_mapping = store_cfg.get("subgroups", {}).get(subgroup_name) or {}
+                if not sub_mapping.get("scoped_geometry_id"):
+                    continue
+                layers, _ = registry.resolve_subgroup_layers(
+                    sub_cfg.get("layers", []),
+                    sub_cfg.get("groups", []),
+                )
+                for layer in layers:
+                    if not _is_data_mos_items_table(layer.qualified_table):
+                        continue
+                    if layer.qualified_table in seen_tables:
+                        continue
+                    seen_tables.add(layer.qualified_table)
+                    layer_geom_col = layer.geometry_column
+                    parts.append(
+                        f'SELECT i.task_key, i."{layer_geom_col}" AS geom '
+                        f"FROM {layer.qualified_table} i "
+                        f'WHERE i.task_key IS NOT NULL AND i."{layer_geom_col}" IS NOT NULL'
+                    )
+    except Exception:
+        pass
+    return " UNION ALL ".join(f"({p})" for p in parts)
+
+
+def _new_stage_tasks_exist_sql(stage: str) -> str:
+    """EXISTS: new CRM tasks inside the order polygon after the stage finished."""
+    finished_col = (
+        "a.analise_finished_at" if stage == "analise" else "a.pre_analise_finished_at"
+    )
+    started_col = (
+        "a.analise_started_at" if stage == "analise" else "a.pre_analise_started_at"
+    )
+    observed_pred = (
+        "t.field_observed IS TRUE"
+        if stage == "analise"
+        else "COALESCE(t.field_observed, FALSE) = FALSE"
+    )
+    if stage == "analise":
+        section_pred = _not_in_snapshots_sql("t")
+    else:
+        section_pred = f"({_in_field_sql('t')} OR ({_not_in_snapshots_sql('t')}))"
+    geom_union = _task_geom_union_sql()
+    return f"""
+              EXISTS (
+                SELECT 1
+                FROM crm.tasks t
+                WHERE {observed_pred}
+                  AND {section_pred}
+                  AND (t.user_created)[2]::timestamptz
+                      > COALESCE({finished_col}, {started_col}, TIMESTAMPTZ '1970-01-01')
+                  AND EXISTS (
+                    SELECT 1
+                    FROM ({geom_union}) g
+                    WHERE g.task_key = t.key
+                      AND g.geom IS NOT NULL
+                      AND a.geom IS NOT NULL
+                      AND ST_Intersects(ST_Transform(g.geom, 4326), a.geom)
+                  )
+              )
+    """
+
+
 def ensure_analise_audit_columns(conn: PgConnection) -> bool:
     global _analise_audit_ready
     if _analise_audit_ready:
@@ -270,17 +422,20 @@ def ensure_analise_audit_columns(conn: PgConnection) -> bool:
 
 
 def clear_stale_analise_locks(conn: PgConnection) -> int:
-    """Reset analise state for a new Moscow calendar day.
+    """Reset analise after the 07:00 Europe/Moscow cutoff.
 
-    - Completed analyses finished on a previous day → idle (analise=false, audit cleared)
-    - Incomplete locks started on a previous day → lock released
+    - Completed analyses finished before the last 07:00, if new Active tasks
+      with field_observed=true appeared in the order after completion → idle
+    - Incomplete locks started before the last 07:00 → lock released
     """
     ensure_analise_audit_columns(conn)
+    reset_at = _moscow_reset_at_sql()
+    new_tasks = _new_stage_tasks_exist_sql("analise")
     cleared = 0
     with conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE crm.tasks_area SET
+            f"""
+            UPDATE crm.tasks_area AS a SET
                 analise = FALSE,
                 analise_started_by = NULL,
                 analise_started_at = NULL,
@@ -288,29 +443,29 @@ def clear_stale_analise_locks(conn: PgConnection) -> int:
                 analise_finished_at = NULL,
                 analise_paused_by = NULL,
                 analise_paused_at = NULL
-            WHERE COALESCE(analise, FALSE) = TRUE
+            WHERE COALESCE(a.analise, FALSE) = TRUE
               AND COALESCE(
-                    (analise_finished_at AT TIME ZONE 'Europe/Moscow')::date,
-                    (analise_started_at AT TIME ZONE 'Europe/Moscow')::date,
-                    DATE '1970-01-01'
-                  ) < (NOW() AT TIME ZONE 'Europe/Moscow')::date
-            RETURNING key
+                    a.analise_finished_at,
+                    a.analise_started_at,
+                    TIMESTAMPTZ '1970-01-01'
+                  ) < {reset_at}
+              AND {new_tasks}
+            RETURNING a.key
             """
         )
         cleared += len(cur.fetchall())
 
         cur.execute(
-            """
-            UPDATE crm.tasks_area SET
+            f"""
+            UPDATE crm.tasks_area AS a SET
                 analise_started_by = NULL,
                 analise_started_at = NULL,
                 analise_paused_by = NULL,
                 analise_paused_at = NULL
-            WHERE COALESCE(analise, FALSE) = FALSE
-              AND analise_started_at IS NOT NULL
-              AND (analise_started_at AT TIME ZONE 'Europe/Moscow')::date
-                  < (NOW() AT TIME ZONE 'Europe/Moscow')::date
-            RETURNING key
+            WHERE COALESCE(a.analise, FALSE) = FALSE
+              AND a.analise_started_at IS NOT NULL
+              AND a.analise_started_at < {reset_at}
+            RETURNING a.key
             """
         )
         cleared += len(cur.fetchall())
@@ -510,17 +665,21 @@ def ensure_pre_analise_audit_columns(conn: PgConnection) -> bool:
 
 
 def clear_stale_pre_analise_locks(conn: PgConnection) -> int:
-    """Reset pre_analise state for a new Moscow calendar day.
+    """Reset pre_analise after the 07:00 Europe/Moscow cutoff.
 
-    - Completed preparations finished on a previous day → idle
-    - Incomplete locks started on a previous day → lock released
+    - Completed preparations finished before the last 07:00, if new Active or
+      Field tasks with field_observed=false appeared in the order after
+      completion → idle
+    - Incomplete locks started before the last 07:00 → lock released
     """
     ensure_pre_analise_audit_columns(conn)
+    reset_at = _moscow_reset_at_sql()
+    new_tasks = _new_stage_tasks_exist_sql("pre_analise")
     cleared = 0
     with conn.cursor() as cur:
         cur.execute(
-            """
-            UPDATE crm.tasks_area SET
+            f"""
+            UPDATE crm.tasks_area AS a SET
                 pre_analise = FALSE,
                 pre_analise_started_by = NULL,
                 pre_analise_started_at = NULL,
@@ -528,29 +687,29 @@ def clear_stale_pre_analise_locks(conn: PgConnection) -> int:
                 pre_analise_finished_at = NULL,
                 pre_analise_paused_by = NULL,
                 pre_analise_paused_at = NULL
-            WHERE COALESCE(pre_analise, FALSE) = TRUE
+            WHERE COALESCE(a.pre_analise, FALSE) = TRUE
               AND COALESCE(
-                    (pre_analise_finished_at AT TIME ZONE 'Europe/Moscow')::date,
-                    (pre_analise_started_at AT TIME ZONE 'Europe/Moscow')::date,
-                    DATE '1970-01-01'
-                  ) < (NOW() AT TIME ZONE 'Europe/Moscow')::date
-            RETURNING key
+                    a.pre_analise_finished_at,
+                    a.pre_analise_started_at,
+                    TIMESTAMPTZ '1970-01-01'
+                  ) < {reset_at}
+              AND {new_tasks}
+            RETURNING a.key
             """
         )
         cleared += len(cur.fetchall())
 
         cur.execute(
-            """
-            UPDATE crm.tasks_area SET
+            f"""
+            UPDATE crm.tasks_area AS a SET
                 pre_analise_started_by = NULL,
                 pre_analise_started_at = NULL,
                 pre_analise_paused_by = NULL,
                 pre_analise_paused_at = NULL
-            WHERE COALESCE(pre_analise, FALSE) = FALSE
-              AND pre_analise_started_at IS NOT NULL
-              AND (pre_analise_started_at AT TIME ZONE 'Europe/Moscow')::date
-                  < (NOW() AT TIME ZONE 'Europe/Moscow')::date
-            RETURNING key
+            WHERE COALESCE(a.pre_analise, FALSE) = FALSE
+              AND a.pre_analise_started_at IS NOT NULL
+              AND a.pre_analise_started_at < {reset_at}
+            RETURNING a.key
             """
         )
         cleared += len(cur.fetchall())

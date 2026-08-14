@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.crm.delay_scheduler import delayed_tasks_restore_loop
+from app.crm.delay_scheduler import analise_reset_loop, delayed_tasks_restore_loop
 from app.db import close_pool, init_pool
 from app.routes import (
     auth,
@@ -29,18 +29,20 @@ async def lifespan(_app: FastAPI):
     init_pool()
     stop = asyncio.Event()
     restore_task = asyncio.create_task(delayed_tasks_restore_loop(stop))
+    analise_task = asyncio.create_task(analise_reset_loop(stop))
     try:
         yield
     finally:
         stop.set()
-        try:
-            await asyncio.wait_for(restore_task, timeout=5)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            restore_task.cancel()
+        for task in (restore_task, analise_task):
             try:
-                await restore_task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(task, timeout=5)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         close_pool()
 
 

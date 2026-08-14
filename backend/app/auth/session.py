@@ -31,10 +31,10 @@ DEFAULT_TASK_SOURCE: dict[str, TaskSource] = {
 }
 
 ROLE_AREA_STATUSES: dict[str, list[str]] = {
-    "admin": ["free", "wip", "done"],
-    "field": ["wip"],
-    "office": ["free", "wip", "done"],
-    "manager": ["free", "wip", "done"],
+    "admin": ["free", "wip", "wip_field", "in_pause", "done"],
+    "field": ["wip", "wip_field", "in_pause"],
+    "office": ["free", "wip", "wip_field", "in_pause", "done"],
+    "manager": ["free", "wip", "wip_field", "in_pause", "done"],
 }
 
 HOOD_SCHEMA = "odh_export"

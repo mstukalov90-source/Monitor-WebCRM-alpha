@@ -7,7 +7,7 @@ import {
   groupAreaOrdersByRayon,
 } from '../lib/areaOrders'
 import type { DistrictHoodMeta } from '../lib/hoodLayer'
-import type { CollectProgress, EmployeeLocationFeature, OfficeAnaliseStage, TaskFeature } from '../types'
+import type { CollectProgress, EmployeeLocationFeature } from '../types'
 import {
   analiseWorkflowStatus,
   analiseWorkflowStatusClass,
@@ -27,13 +27,10 @@ interface DistrictStartScreenProps {
   canCollect: boolean
   canManagePersonnel?: boolean
   showAreaOrders?: boolean
-  showOfficeStageButtons?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
   onCollect: () => void
   onLoadFieldTasks: () => void
-  onStartOfficeStage?: (order: TaskFeature, stage: OfficeAnaliseStage) => void
-  onChangeOfficeMode?: () => void
   onOpenPersonnel?: () => void
   onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
@@ -50,13 +47,10 @@ export function DistrictStartScreen({
   canCollect,
   canManagePersonnel,
   showAreaOrders = false,
-  showOfficeStageButtons = false,
   userLogin,
   onRayonChange,
   onCollect,
   onLoadFieldTasks,
-  onStartOfficeStage,
-  onChangeOfficeMode,
   onOpenPersonnel,
   onOpenEmployeeLocations,
   onOpenOrderTracks,
@@ -180,11 +174,6 @@ export function DistrictStartScreen({
         <div className="district-card">
           <div className="workspace-meta district-user-meta">
             <span className="muted">{userLogin}</span>
-            {onChangeOfficeMode && (
-              <button type="button" className="btn" onClick={onChangeOfficeMode}>
-                Сменить режим
-              </button>
-            )}
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
@@ -321,26 +310,6 @@ export function DistrictStartScreen({
                                   </span>
                                 </span>
                               </div>
-                              {showOfficeStageButtons && onStartOfficeStage && (
-                                <div className="district-orders-actions">
-                                  <button
-                                    type="button"
-                                    className="btn small"
-                                    disabled={loading}
-                                    onClick={() => onStartOfficeStage(order, 'pre_analise')}
-                                  >
-                                    Подготовка данных в поле
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn small primary"
-                                    disabled={loading}
-                                    onClick={() => onStartOfficeStage(order, 'analise')}
-                                  >
-                                    Анализ полевых данных
-                                  </button>
-                                </div>
-                              )}
                             </li>
                           )
                         })}

@@ -39,13 +39,28 @@ class ClearStaleAnaliseLocksTests(unittest.TestCase):
         completed_sql = cursor.execute.call_args_list[0].args[0]
         self.assertIn("analise = FALSE", completed_sql)
         self.assertIn("analise_finished_at = NULL", completed_sql)
-        self.assertIn("COALESCE(analise, FALSE) = TRUE", completed_sql)
+        self.assertIn("COALESCE(a.analise, FALSE) = TRUE", completed_sql)
         self.assertIn("Europe/Moscow", completed_sql)
+        self.assertIn("07:00:00", completed_sql)
+        self.assertIn("EXISTS", completed_sql)
+        self.assertIn("field_observed", completed_sql)
+        self.assertIn("user_created", completed_sql)
+        self.assertIn("t.field_observed IS TRUE", completed_sql)
+        self.assertIn('NOT EXISTS (SELECT 1 FROM "crm"."tasks_field"', completed_sql)
+        self.assertNotIn("f.geom", completed_sql)
+        self.assertIn("office_task_points", completed_sql)
+        self.assertNotIn(
+            'EXISTS (SELECT 1 FROM "crm"."tasks_field" s WHERE s.task_key = t.key) OR',
+            completed_sql,
+        )
 
         lock_sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("COALESCE(analise, FALSE) = FALSE", lock_sql)
+        self.assertIn("COALESCE(a.analise, FALSE) = FALSE", lock_sql)
         self.assertIn("analise_started_by = NULL", lock_sql)
         self.assertIn("Europe/Moscow", lock_sql)
+        self.assertIn("07:00:00", lock_sql)
+        self.assertNotIn("field_observed", lock_sql)
+        self.assertNotIn("user_created", lock_sql)
 
         conn.commit.assert_called_once()
 
@@ -218,13 +233,25 @@ class ClearStalePreAnaliseLocksTests(unittest.TestCase):
         completed_sql = cursor.execute.call_args_list[0].args[0]
         self.assertIn("pre_analise = FALSE", completed_sql)
         self.assertIn("pre_analise_finished_at = NULL", completed_sql)
-        self.assertIn("COALESCE(pre_analise, FALSE) = TRUE", completed_sql)
+        self.assertIn("COALESCE(a.pre_analise, FALSE) = TRUE", completed_sql)
         self.assertIn("Europe/Moscow", completed_sql)
+        self.assertIn("07:00:00", completed_sql)
+        self.assertIn("EXISTS", completed_sql)
+        self.assertIn("field_observed", completed_sql)
+        self.assertIn("user_created", completed_sql)
+        self.assertIn("COALESCE(t.field_observed, FALSE) = FALSE", completed_sql)
+        self.assertIn(
+            'EXISTS (SELECT 1 FROM "crm"."tasks_field" s WHERE s.task_key = t.key) OR',
+            completed_sql,
+        )
 
         lock_sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("COALESCE(pre_analise, FALSE) = FALSE", lock_sql)
+        self.assertIn("COALESCE(a.pre_analise, FALSE) = FALSE", lock_sql)
         self.assertIn("pre_analise_started_by = NULL", lock_sql)
         self.assertIn("Europe/Moscow", lock_sql)
+        self.assertIn("07:00:00", lock_sql)
+        self.assertNotIn("field_observed", lock_sql)
+        self.assertNotIn("user_created", lock_sql)
 
         conn.commit.assert_called_once()
 
@@ -318,6 +345,44 @@ class StartAreaPreAnaliseAfterDailyResetTests(unittest.TestCase):
             result = start_area_pre_analise(conn, self.key, "OtherUser")
 
         self.assertEqual(result, "skipped")
+
+
+class FetchTasksAreaSurvivesResetFailureTests(unittest.TestCase):
+    def test_geojson_loads_when_reset_raises(self) -> None:
+        from app.crm.tasks_area import fetch_tasks_area_geojson
+
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "geojson": {"type": "FeatureCollection", "features": []}
+        }
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+
+        with patch(
+            "app.crm.tasks_area.clear_stale_analise_locks",
+            side_effect=Exception("column f.geom does not exist"),
+        ):
+            result = fetch_tasks_area_geojson(conn)
+
+        self.assertEqual(result["type"], "FeatureCollection")
+        conn.rollback.assert_called()
+
+
+class AnaliseResetCutoffTests(unittest.TestCase):
+    def test_moscow_reset_at_uses_seven_am(self) -> None:
+        from app.crm.tasks_area import ANALISE_RESET_HOUR, _moscow_reset_at_sql
+
+        self.assertEqual(ANALISE_RESET_HOUR, 7)
+        sql = _moscow_reset_at_sql()
+        self.assertIn("07:00:00", sql)
+        self.assertIn("Europe/Moscow", sql)
+
+    def test_seconds_until_next_analise_reset_is_positive(self) -> None:
+        from app.crm.delay_scheduler import _seconds_until_next_moscow_analise_reset
+
+        delay = _seconds_until_next_moscow_analise_reset()
+        self.assertGreater(delay, 0)
+        self.assertLessEqual(delay, 24 * 3600 + 1)
 
 
 if __name__ == "__main__":

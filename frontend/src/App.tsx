@@ -5,7 +5,6 @@ import {
   collectTasksByLayers,
   createOfficeTask,
   fetchActiveTasks,
-  fetchAllTasksAreaGeoJson,
   fetchLayersConfig,
   fetchSnapshotTasks,
   fetchTasksArea,
@@ -37,7 +36,6 @@ import { TaskSourceTabs } from './components/TaskSourceTabs'
 import { useWorkspaceLayout } from './hooks/useWorkspaceLayout'
 import { useAuth } from './context/AuthContext'
 import { useTaskCollection } from './components/Toolbar'
-import { geoJsonToAreaTaskFeatures } from './lib/areaOrders'
 import { allTaskFeaturesOnMap, layerConfigMap } from './lib/taskFeatures'
 import {
   countTaskResultFeatures,
@@ -98,7 +96,6 @@ function App() {
   const [officeStage, setOfficeStage] = useState<OfficeAnaliseStage | null>(null)
   const [areaOrders, setAreaOrders] = useState<TaskFeature[]>([])
   const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
-  const [stageTasksByRayon, setStageTasksByRayon] = useState<Record<string, TaskResult>>({})
   const [fieldMaterials, setFieldMaterials] = useState<{
     taskKey: string
     reportId?: number | null
@@ -133,7 +130,6 @@ function App() {
     setOfficeAreaOrder(null)
     setOfficeOrderPickerOpen(false)
     setAreaOrders([])
-    setStageTasksByRayon({})
   }, [user?.login])
 
   useEffect(() => {
@@ -145,60 +141,27 @@ function App() {
   const allLayers = useMemo(() => flattenLayers(layerGroups), [layerGroups])
   const layerConfigByKey = useMemo(() => layerConfigMap(allLayers), [allLayers])
 
-  const loadAreaOrders = useCallback(async (rayon: string) => {
-    setAreaOrdersLoading(true)
-    try {
-      const result = await fetchTasksArea(rayon)
-      setAreaOrders(
-        result.groups.flatMap((group) => group.subgroups.flatMap((subgroup) => subgroup.features)),
-      )
-    } catch (e) {
-      setLoadError(String(e))
-      setAreaOrders([])
-    } finally {
-      setAreaOrdersLoading(false)
-    }
-  }, [])
-
-  const loadStageOrders = useCallback(async (stage: OfficeAnaliseStage) => {
-    setAreaOrdersLoading(true)
-    setLoadError(null)
-    try {
-      const geojson = await fetchAllTasksAreaGeoJson()
-      const allOrders = geoJsonToAreaTaskFeatures(geojson)
-      const rayons = [
-        ...new Set(
-          allOrders
-            .map((order) => normalizeRayonName(String(order.attributes.rayon ?? '')))
-            .filter(Boolean),
-        ),
-      ]
-      const byRayon: Record<string, TaskResult> = {}
-      await Promise.all(
-        rayons.map(async (rayon) => {
-          try {
-            byRayon[rayon] = await fetchActiveTasks(rayon)
-          } catch {
-            /* skip rayon on error */
-          }
-        }),
-      )
-      setStageTasksByRayon(byRayon)
-      setAreaOrders(
-        allOrders.filter((order) => {
-          const rayon = normalizeRayonName(String(order.attributes.rayon ?? ''))
-          const tasks = byRayon[rayon]
-          return tasks ? orderHasStageTasks(tasks, order, stage) : false
-        }),
-      )
-    } catch (e) {
-      setLoadError(String(e))
-      setAreaOrders([])
-      setStageTasksByRayon({})
-    } finally {
-      setAreaOrdersLoading(false)
-    }
-  }, [])
+  const loadStageOrdersForRayon = useCallback(
+    async (rayon: string, stage: OfficeAnaliseStage, activeTasks: TaskResult) => {
+      setAreaOrdersLoading(true)
+      setLoadError(null)
+      try {
+        const result = await fetchTasksArea(rayon)
+        const features = result.groups.flatMap((group) =>
+          group.subgroups.flatMap((subgroup) => subgroup.features),
+        )
+        setAreaOrders(
+          features.filter((order) => orderHasStageTasks(activeTasks, order, stage)),
+        )
+      } catch (e) {
+        setLoadError(String(e))
+        setAreaOrders([])
+      } finally {
+        setAreaOrdersLoading(false)
+      }
+    },
+    [],
+  )
 
   const officeFilteredTaskResult = useMemo((): TaskResult | null => {
     if (!taskResult || !officeAreaOrder || !officeStage) return null
@@ -214,12 +177,19 @@ function App() {
     if (!taskResult) return []
     if (isAreaSource(taskSource)) return allTaskFeaturesOnMap(taskResult.groups)
     if (taskFilterSelection === TASK_FILTER_NONE) return []
-    if (isOfficeUser) {
-      if (!officeAreaOrder || !officeFilteredTaskResult) return []
+    if (isOfficeUser && officeStage && officeAreaOrder && officeFilteredTaskResult) {
       return allTaskFeaturesOnMap(officeFilteredTaskResult.groups)
     }
     return allTaskFeaturesOnMap(taskResult.groups)
-  }, [taskResult, taskSource, taskFilterSelection, isOfficeUser, officeAreaOrder, officeFilteredTaskResult])
+  }, [
+    taskResult,
+    taskSource,
+    taskFilterSelection,
+    isOfficeUser,
+    officeStage,
+    officeAreaOrder,
+    officeFilteredTaskResult,
+  ])
 
   const modalSubgroupFeatures = useMemo(() => {
     if (!editContext || !taskResult) return []
@@ -307,17 +277,14 @@ function App() {
       setModalHighlight(null)
       setLoadError(null)
       setOfficeAreaOrder(null)
+      setOfficeStage(null)
+      setOfficeWorkMode(null)
+      setOfficeOrderPickerOpen(false)
 
-      if (isOfficeUser && collection.rayon && officeWorkMode === 'map') {
+      if (isOfficeUser) {
         setTaskFilterSelection('active')
-        setOfficeOrderPickerOpen(false)
-      } else if (isOfficeUser && collection.rayon && officeStage) {
-        setTaskFilterSelection('active')
-        setOfficeOrderPickerOpen(true)
-        void loadAreaOrders(collection.rayon)
       } else {
         setTaskFilterSelection(TASK_FILTER_NONE)
-        setOfficeOrderPickerOpen(false)
       }
     }
   }
@@ -480,33 +447,28 @@ function App() {
     setPendingOfficeLinkPrefill(null)
     setLoadError(null)
     setOfficeAreaOrder(null)
-    if (
-      isOfficeUser &&
-      (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') &&
-      officeStage
-    ) {
-      setOfficeOrderPickerOpen(true)
-      void loadStageOrders(officeStage)
-    } else {
-      setOfficeOrderPickerOpen(false)
-      setAreaOrders([])
-    }
+    setOfficeStage(null)
+    setOfficeWorkMode(null)
+    setOfficeOrderPickerOpen(false)
+    setAreaOrders([])
   }
 
   const handleOfficeModeSelect = (mode: OfficeWorkMode) => {
     setOfficeWorkMode(mode)
     setOfficeAreaOrder(null)
-    setTaskResult(null)
     setLoadError(null)
     if (mode === 'pre_analise' || mode === 'analise') {
       setOfficeStage(mode)
       setOfficeOrderPickerOpen(true)
-      void loadStageOrders(mode)
+      const rayon = taskResult?.district_name ?? collection.rayon
+      if (rayon && taskResult) {
+        void loadStageOrdersForRayon(rayon, mode, taskResult)
+      }
     } else {
       setOfficeStage(null)
       setOfficeOrderPickerOpen(false)
       setAreaOrders([])
-      setStageTasksByRayon({})
+      setTaskFilterSelection('active')
     }
   }
 
@@ -515,10 +477,8 @@ function App() {
     setOfficeStage(null)
     setOfficeAreaOrder(null)
     setOfficeOrderPickerOpen(false)
-    setTaskResult(null)
     setAreaOrders([])
-    setStageTasksByRayon({})
-    setTaskFilterSelection(TASK_FILTER_NONE)
+    setTaskFilterSelection('active')
     setAreaPolygonsOnMap(false)
   }
 
@@ -629,7 +589,9 @@ function App() {
     const key = order.task_key ?? String(order.attributes.key ?? '')
     if (!key || !officeStage) return
 
-    const rayon = normalizeRayonName(String(order.attributes.rayon ?? ''))
+    const rayon =
+      taskResult?.district_name ||
+      normalizeRayonName(String(order.attributes.rayon ?? ''))
     if (!rayon) {
       alert('У заказа не указан район')
       return
@@ -644,13 +606,10 @@ function App() {
         await startAreaAnalise(key)
       }
 
-      const cached = stageTasksByRayon[rayon]
-      if (cached) {
-        setTaskResult(cached)
-      } else {
+      if (!taskResult || normalizeRayonName(taskResult.district_name) !== rayon) {
         await loadTasks(rayon, 'active')
+        collection.setRayon(rayon)
       }
-      collection.setRayon(rayon)
 
       setOfficeAreaOrder(order)
       setOfficeOrderPickerOpen(false)
@@ -664,48 +623,9 @@ function App() {
       const message = String(e)
       setLoadError(message)
       alert(message)
-      if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
-        await loadStageOrders(officeStage)
-      } else if (taskResult?.district_name) {
-        await loadAreaOrders(taskResult.district_name)
+      if (officeStage && taskResult) {
+        await loadStageOrdersForRayon(taskResult.district_name, officeStage, taskResult)
       }
-    } finally {
-      setSourceLoading(false)
-    }
-  }
-
-  const handleStartOfficeStageFromMap = async (
-    order: TaskFeature,
-    stage: OfficeAnaliseStage,
-  ) => {
-    const key = order.task_key ?? String(order.attributes.key ?? '')
-    const rayon = normalizeRayonName(String(order.attributes.rayon ?? '')) || collection.rayon
-    if (!key || !rayon) return
-
-    setSourceLoading(true)
-    setLoadError(null)
-    try {
-      if (stage === 'pre_analise') {
-        await startAreaPreAnalise(key)
-      } else {
-        await startAreaAnalise(key)
-      }
-      collection.setRayon(rayon)
-      await loadTasks(rayon, 'active')
-      setOfficeStage(stage)
-      setOfficeWorkMode('map')
-      setOfficeAreaOrder(order)
-      setOfficeOrderPickerOpen(false)
-      setAreaPolygonsOnMap(false)
-      setTaskFilterSelection('active')
-      setTaskSource('active')
-      setPanelHighlight(null)
-      setModalHighlight(null)
-      setEditContext(null)
-    } catch (e) {
-      const message = String(e)
-      setLoadError(message)
-      alert(message)
     } finally {
       setSourceLoading(false)
     }
@@ -729,19 +649,8 @@ function App() {
       setPanelHighlight(null)
       setModalHighlight(null)
       setEditContext(null)
-      if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
-        setTaskResult(null)
-        setOfficeOrderPickerOpen(true)
-        await loadStageOrders(officeStage)
-      } else if (taskResult?.district_name) {
-        const rayon = taskResult.district_name
-        const result = await fetchTasksArea(rayon)
-        const features = result.groups.flatMap((group) =>
-          group.subgroups.flatMap((subgroup) => subgroup.features),
-        )
-        setAreaOrders(
-          features.filter((order) => orderHasStageTasks(taskResult, order, officeStage)),
-        )
+      if (officeStage && taskResult) {
+        await loadStageOrdersForRayon(taskResult.district_name, officeStage, taskResult)
         setOfficeOrderPickerOpen(true)
       }
     } catch (e) {
@@ -772,21 +681,11 @@ function App() {
       setPanelHighlight(null)
       setModalHighlight(null)
       setEditContext(null)
-      if (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') {
-        setTaskResult(null)
-        setOfficeOrderPickerOpen(true)
-        await loadStageOrders(officeStage)
-      } else if (rayon) {
+      if (officeStage && rayon) {
         const refreshed = await fetchActiveTasks(rayon)
         setTaskResult(refreshed)
         setTaskSource('active')
-        const result = await fetchTasksArea(rayon)
-        const features = result.groups.flatMap((group) =>
-          group.subgroups.flatMap((subgroup) => subgroup.features),
-        )
-        setAreaOrders(
-          features.filter((order) => orderHasStageTasks(refreshed, order, officeStage)),
-        )
+        await loadStageOrdersForRayon(rayon, officeStage, refreshed)
         setOfficeOrderPickerOpen(true)
       }
     } catch (e) {
@@ -797,10 +696,8 @@ function App() {
   }
 
   const handleRefreshAreaOrders = () => {
-    if (officeStage && (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise')) {
-      void loadStageOrders(officeStage)
-    } else if (taskResult?.district_name) {
-      void loadAreaOrders(taskResult.district_name)
+    if (officeStage && taskResult) {
+      void loadStageOrdersForRayon(taskResult.district_name, officeStage, taskResult)
     }
   }
 
@@ -879,32 +776,6 @@ function App() {
   }
 
   if (!taskResult) {
-    if (isOfficeUser && officeWorkMode == null) {
-      return <OfficeWorkModeModal onSelect={handleOfficeModeSelect} />
-    }
-
-    if (
-      isOfficeUser &&
-      (officeWorkMode === 'pre_analise' || officeWorkMode === 'analise') &&
-      officeStage
-    ) {
-      return (
-        <div className="district-screen">
-          {loadError && <div className="error-banner">{loadError}</div>}
-          <AreaOrderPickerModal
-            orders={areaOrders}
-            currentUserLogin={user.login}
-            stage={officeStage}
-            groupByRayon
-            loading={areaOrdersLoading || sourceLoading}
-            onSelect={(order) => void handleOfficeOrderSelect(order)}
-            onRefresh={handleRefreshAreaOrders}
-            onChangeMode={handleChangeOfficeMode}
-          />
-        </div>
-      )
-    }
-
     return (
       <>
         <DistrictStartScreen
@@ -915,13 +786,10 @@ function App() {
           canCollect={user.can_collect}
           canManagePersonnel={user.can_manage_personnel}
           showAreaOrders={user.allowed_task_sources.includes('area')}
-          showOfficeStageButtons={isOfficeUser && officeWorkMode === 'map'}
           userLogin={user.login}
           onRayonChange={collection.setRayon}
           onCollect={handleCollect}
           onLoadFieldTasks={handleLoadFieldTasks}
-          onStartOfficeStage={(order, stage) => void handleStartOfficeStageFromMap(order, stage)}
-          onChangeOfficeMode={isOfficeUser ? handleChangeOfficeMode : undefined}
           onOpenPersonnel={() => setAppView('personnel')}
           onOpenEmployeeLocations={() => setAppView('employee_locations')}
           onOpenOrderTracks={() => setAppView('order_tracks')}
@@ -1006,7 +874,7 @@ function App() {
     }
   }
 
-  const officeAwaitingOrder = isOfficeUser && !officeAreaOrder
+  const officeAwaitingOrder = isOfficeUser && officeStage != null && !officeAreaOrder
   const officeWorking = isOfficeUser && officeAreaOrder != null
   const showPlaceOfficePoint =
     (isOfficeUser && officeWorking) || (canPlaceOfficePoints && !isOfficeUser && taskResult != null)
@@ -1207,12 +1075,18 @@ function App() {
         />
       )}
 
+      {isOfficeUser && officeWorkMode == null && (
+        <OfficeWorkModeModal
+          rayon={taskResult.district_name}
+          onSelect={handleOfficeModeSelect}
+        />
+      )}
+
       {isOfficeUser && officeOrderPickerOpen && officeStage && (
         <AreaOrderPickerModal
           orders={areaOrders}
           currentUserLogin={user.login}
           stage={officeStage}
-          groupByRayon={officeWorkMode !== 'map'}
           loading={areaOrdersLoading || loading}
           onSelect={(order) => void handleOfficeOrderSelect(order)}
           onRefresh={handleRefreshAreaOrders}

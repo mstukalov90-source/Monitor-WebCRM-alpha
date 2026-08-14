@@ -5,7 +5,12 @@ import 'leaflet/dist/leaflet.css'
 import { fetchGeoJson, fetchLayersConfig } from '../api/client'
 import { BasemapLayers } from './BasemapLayers'
 import { EmployeeLocationMarkersLayer } from './EmployeeLocationMarkersLayer'
-import { createAreaSvgRenderer, hatchFillStyle } from '../lib/areaMapStyle'
+import {
+  AREA_STATUS_BLINK_RED,
+  AREA_STATUS_BLINK_YELLOW,
+  createAreaSvgRenderer,
+  hatchFillStyle,
+} from '../lib/areaMapStyle'
 import {
   buildDistrictOrdersPopupHtml,
   ordersForRayon,
@@ -14,6 +19,7 @@ import {
 import {
   buildDistrictStyleByRayon,
   districtBasePathStyle,
+  districtBlinkClassName,
   type DistrictOrderVisual,
 } from '../lib/districtOrderStyle'
 import {
@@ -58,7 +64,17 @@ const HOOD_STYLE_SELECTED: L.PathOptions = {
   fillOpacity: 0.25,
 }
 
-const EMPTY_VISUAL: DistrictOrderVisual = { fill: 'empty', hatch: 'none' }
+const EMPTY_VISUAL: DistrictOrderVisual = { fill: 'empty', hatch: 'none', blink: 'none' }
+
+const DISTRICT_BLINK_CLASSES = [AREA_STATUS_BLINK_RED, AREA_STATUS_BLINK_YELLOW] as const
+
+function applyDistrictBlinkClass(path: L.Path, className?: string): void {
+  const el = (path as L.Path & { _path?: SVGElement })._path
+  if (!el) return
+  for (const cls of DISTRICT_BLINK_CLASSES) {
+    el.classList.toggle(cls, cls === className)
+  }
+}
 
 interface DistrictPickerMapProps {
   selectedRayon: string
@@ -192,6 +208,7 @@ function HoodDistrictsLayer({
               const path = pathLayer as DistrictPath
               path._districtRayon = rayonNorm
               path._districtVisual = visual ?? undefined
+              applyDistrictBlinkClass(path, districtBlinkClassName(visual?.blink ?? 'none'))
               const label = rayonNorm || 'Район'
               path.bindTooltip(label, { sticky: true, opacity: 0.9 })
               path.bindPopup(popupHtml, {
@@ -221,6 +238,13 @@ function HoodDistrictsLayer({
 
         baseGroup.addTo(map)
         hatchGroup.addTo(map)
+        baseGroup.eachLayer((pathLayer) => {
+          const path = pathLayer as DistrictPath
+          applyDistrictBlinkClass(
+            path,
+            districtBlinkClassName(path._districtVisual?.blink ?? 'none'),
+          )
+        })
         baseGroupRef.current = baseGroup
         hatchGroupRef.current = hatchGroup
 
@@ -268,6 +292,7 @@ function HoodDistrictsLayer({
       const visual = path._districtVisual ?? null
       const isSelected = selectedNorm !== '' && rayonNorm === selectedNorm
       path.setStyle(baseStyleFor(visual, isSelected))
+      applyDistrictBlinkClass(path, districtBlinkClassName(visual?.blink ?? 'none'))
       if (isSelected && typeof path.bringToFront === 'function') {
         path.bringToFront()
       }

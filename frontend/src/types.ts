@@ -410,11 +410,13 @@ export type TaskFilterSelection = '' | TaskSource
 export const TASK_FILTER_NONE = '' as const
 export const TASK_FILTER_LABEL = 'Задачи'
 
-export type AreaStatus = 'free' | 'wip' | 'done'
+export type AreaStatus = 'free' | 'wip' | 'wip_field' | 'in_pause' | 'done'
 
 export const AREA_STATUS_COLORS: Record<AreaStatus, string> = {
   free: '#ff9800',
   wip: '#fdd835',
+  wip_field: '#fdd835',
+  in_pause: '#e53935',
   done: '#43a047',
 }
 
@@ -733,6 +735,8 @@ export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
 export const AREA_TASK_STATUS_LABELS: Record<AreaStatus, string> = {
   free: 'Свободный заказ',
   wip: 'На обследовании',
+  wip_field: 'В работе в поле',
+  in_pause: 'Приостановлен в поле',
   done: 'Завершённый',
 }
 
@@ -1047,6 +1051,14 @@ export function isAreaSource(source: TaskSource): boolean {
 
 export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaStatus {
   const key = String(attrs.status ?? '').trim().toLowerCase()
-  if (key === 'free' || key === 'wip' || key === 'done') return key
+  if (
+    key === 'free' ||
+    key === 'wip' ||
+    key === 'wip_field' ||
+    key === 'in_pause' ||
+    key === 'done'
+  ) {
+    return key
+  }
   return 'free'
 }

@@ -378,13 +378,16 @@ def get_snapshot_tasks(
 @router.get("/tasks/area")
 def get_tasks_area_list(
     rayon: str = Query(...),
-    status: str = Query("", description="Optional: free | wip | done"),
+    status: str = Query("", description="Optional: free | wip | wip_field | in_pause | done"),
     user: UserSession = Depends(get_current_user),
 ) -> dict:
     check_rayon(user, rayon)
     if status:
         if status not in AREA_STATUSES:
-            raise HTTPException(status_code=400, detail="status must be free, wip, or done")
+            raise HTTPException(
+                status_code=400,
+                detail="status must be free, wip, wip_field, in_pause, or done",
+            )
         check_area_status(user, status)
         with get_connection() as conn:
             result = collect_tasks_area(
@@ -890,7 +893,10 @@ def get_tasks_area(
     statuses: list[str] | None = None
     if status:
         if status not in AREA_STATUSES:
-            raise HTTPException(status_code=400, detail="status must be free, wip, or done")
+            raise HTTPException(
+                status_code=400,
+                detail="status must be free, wip, wip_field, in_pause, or done",
+            )
         check_area_status(user, status)
     else:
         statuses = allowed_area_statuses(user.role)

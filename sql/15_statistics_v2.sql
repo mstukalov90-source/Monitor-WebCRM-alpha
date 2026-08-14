@@ -418,7 +418,7 @@ CREATE TRIGGER trg_statistics_tasks_done_illegal_insert
     FOR EACH ROW
     EXECUTE FUNCTION crm.trg_statistics_tasks_done_illegal_insert();
 
--- Field: order closed by field executor.
+-- Field: order closed by field executor (wip / wip_field / in_pause -> done).
 CREATE OR REPLACE FUNCTION crm.trg_statistics_tasks_area_status()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -429,7 +429,7 @@ BEGIN
     END IF;
 
     IF OLD.status IS DISTINCT FROM NEW.status
-       AND OLD.status = 'wip'
+       AND OLD.status IN ('wip', 'wip_field', 'in_pause')
        AND NEW.status = 'done'
        AND NULLIF(TRIM(NEW.executor), '') IS NOT NULL
        AND crm.statistics_resolve_role(NEW.executor) = 'field'

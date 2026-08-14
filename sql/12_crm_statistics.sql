@@ -205,7 +205,8 @@ CREATE TRIGGER trg_statistics_reports_insert
     FOR EACH ROW
     EXECUTE FUNCTION crm.trg_statistics_reports_insert();
 
--- Field: order completed when field executor closes survey wip -> done via mobile.
+-- Field: order completed when field executor closes survey
+-- wip / wip_field / in_pause -> done via mobile or WebCRM.
 CREATE OR REPLACE FUNCTION crm.trg_statistics_tasks_area_status()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -216,7 +217,7 @@ BEGIN
     END IF;
 
     IF OLD.status IS DISTINCT FROM NEW.status
-       AND OLD.status = 'wip'
+       AND OLD.status IN ('wip', 'wip_field', 'in_pause')
        AND NEW.status = 'done'
        AND NULLIF(TRIM(NEW.executor), '') IS NOT NULL
        AND NULLIF(TRIM(NEW.user_last_edit[1]), '') = NULLIF(TRIM(NEW.executor), '')
