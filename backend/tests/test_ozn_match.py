@@ -194,6 +194,7 @@ class OznMatchLoaderTests(unittest.TestCase):
         self.assertIn("ozn_order_name", sql)
         self.assertIn("ozn_date", sql)
         self.assertIn("ozn_executor", sql)
+        self.assertIn('NULLIF(TRIM(o."executor"::text), \'\') IS NOT NULL', sql)
 
     def test_ozn_and_order_executor_fields_mapped(self) -> None:
         geom = {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}

@@ -193,6 +193,12 @@ def fetch_ozn_matches(
         f"o.{geom_ident} IS NOT NULL",
         f"ta.status IN ({', '.join(repr(s) for s in _VISIBLE_STATUSES)})",
     ]
+    if cols.get("executor"):
+        filters.append(
+            f"NULLIF(TRIM(o.{_quote_ident(cols['executor'])}::text), '') IS NOT NULL"
+        )
+    else:
+        filters.append("FALSE")
     params: list[Any] = []
     rayon_norm_sql = sql_normalize_rayon_expr("ta.rayon")
 
