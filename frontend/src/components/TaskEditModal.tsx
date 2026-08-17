@@ -24,6 +24,7 @@ import {
 } from '../lib/notificationSiblings'
 import { TaskExecutorAssign } from './TaskExecutorAssign'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
+import { LensPhotoModal } from './LensPhotoModal'
 import { PhotoViewModal } from './PhotoViewModal'
 import { TaskGroupMapView } from './TaskGroupMapView'
 import type {
@@ -44,6 +45,8 @@ import {
   formatTaskTableCell,
   isAiPhotoContext,
   isFieldObserved,
+  isLensPhotoContext,
+  lensExternalIdFromAttributes,
   TASK_SOURCE_LABELS,
   taskTableColumnsForSubgroup,
 } from '../types'
@@ -240,6 +243,7 @@ export function TaskEditModal({
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
   const [photoUuid, setPhotoUuid] = useState<string | null>(null)
+  const [lensReportId, setLensReportId] = useState<string | null>(null)
   const [fieldMaterialsKey, setFieldMaterialsKey] = useState<string | null>(null)
   const [fieldSurveyMeta, setFieldSurveyMeta] = useState<FieldSurveyMeta | null>(null)
   const [groupMap, setGroupMap] = useState<TaskGroupMap | null>(null)
@@ -280,6 +284,10 @@ export function TaskEditModal({
       ? String(context.feature.attributes.delay_until)
       : null
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
+  const isLensPhoto = context
+    ? isLensPhotoContext(context.subgroupName, context.feature.layer_key)
+    : false
+  const showPhotoButton = (isAiPhoto || isLensPhoto) && Boolean(record)
   const showFieldMaterials =
     isFieldObserved(record?.field_observed) ||
     isFieldObserved(context?.feature.attributes.field_observed)
@@ -304,6 +312,18 @@ export function TaskEditModal({
 
   const handleViewPhoto = () => {
     if (!context) return
+    if (isLensPhoto) {
+      const reportId =
+        record?.photo_lens?.trim() ||
+        lensExternalIdFromAttributes(context.feature.attributes) ||
+        null
+      if (!reportId) {
+        setMessage('ID фотографии Объектив не найден')
+        return
+      }
+      setLensReportId(reportId)
+      return
+    }
     const uuid =
       record?.photo_uuid?.trim() ||
       aiPhotoUuidFromAttributes(context.feature.attributes) ||
@@ -324,11 +344,22 @@ export function TaskEditModal({
   }
 
   const openPhotoIfAvailable = () => {
-    if (!context || !isAiPhoto || autoPhotoOpenedRef.current) return
+    if (!context || autoPhotoOpenedRef.current) return
+    if (!isAiPhoto && !isLensPhoto) return
     if (
       isFieldObserved(record?.field_observed) ||
       isFieldObserved(context.feature.attributes.field_observed)
     ) {
+      return
+    }
+    if (isLensPhoto) {
+      const reportId =
+        record?.photo_lens?.trim() ||
+        lensExternalIdFromAttributes(context.feature.attributes) ||
+        null
+      if (!reportId) return
+      autoPhotoOpenedRef.current = true
+      setLensReportId(reportId)
       return
     }
     const uuid =
@@ -405,6 +436,7 @@ export function TaskEditModal({
       setLinkSectionOpen(false)
       setStationSectionOpen(false)
       setPhotoUuid(null)
+      setLensReportId(null)
       setFieldMaterialsKey(null)
       setFieldSurveyMeta(null)
       setGroupMap(null)
@@ -417,6 +449,7 @@ export function TaskEditModal({
 
     autoPhotoOpenedRef.current = false
     setPhotoUuid(null)
+    setLensReportId(null)
     setFieldMaterialsKey(null)
     setFieldSurveyMeta(null)
     setPendingStatusAction(null)
@@ -457,7 +490,7 @@ export function TaskEditModal({
 
   useEffect(() => {
     openPhotoIfAvailable()
-  }, [context, isAiPhoto, record?.key, record?.photo_uuid, record?.field_observed])
+  }, [context, isAiPhoto, isLensPhoto, record?.key, record?.photo_uuid, record?.photo_lens, record?.field_observed])
 
   useEffect(() => {
     if (!context || taskSource !== 'field' || !record) {
@@ -860,7 +893,7 @@ export function TaskEditModal({
               <div className="modal-action-group">
                 <h4>Управление задачей</h4>
                 <div className="modal-action-buttons">
-                  {isAiPhoto && record && (
+                  {showPhotoButton && (
                     <button type="button" className="btn" onClick={handleViewPhoto} disabled={loading}>
                       Просмотр фотографии
                     </button>
@@ -1066,6 +1099,20 @@ export function TaskEditModal({
           onClose={() => setPhotoUuid(null)}
           taskActions={
             isAiPhoto && canMarkDisruptionAbsent
+              ? {
+                  canMarkDisruptionAbsent: true,
+                  onMarkDisruptionAbsent: () => handleAction('clear'),
+                }
+              : undefined
+          }
+        />
+      )}
+      {lensReportId && (
+        <LensPhotoModal
+          externalReportId={lensReportId}
+          onClose={() => setLensReportId(null)}
+          taskActions={
+            isLensPhoto && canMarkDisruptionAbsent
               ? {
                   canMarkDisruptionAbsent: true,
                   onMarkDisruptionAbsent: () => handleAction('clear'),

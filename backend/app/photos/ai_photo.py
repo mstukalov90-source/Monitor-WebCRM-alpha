@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,36 @@ ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 PHOTO_FETCH_TIMEOUT_SEC = 60
 
 
+def normalize_bboxes(raw: Any) -> list[Any]:
+    """Return a JSON list of detections; invalid payloads become []."""
+    if raw is None:
+        return []
+    if isinstance(raw, memoryview):
+        raw = raw.tobytes().decode("utf-8")
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return []
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(raw, dict):
+        for key in ("bboxes", "boxes", "detections"):
+            nested = raw.get(key)
+            if isinstance(nested, list):
+                return list(nested)
+        return []
+    if isinstance(raw, list):
+        return list(raw)
+    return []
+
+
 @dataclass
 class AiPhotoMeta:
     uuid: str
@@ -29,6 +60,7 @@ class AiPhotoMeta:
     date: str | None
     azimuth_deg: float | None
     order_id: str | None
+    bboxes: list[Any] = field(default_factory=list)
 
     def to_dict(self, image_url: str) -> dict[str, Any]:
         return {
@@ -37,6 +69,7 @@ class AiPhotoMeta:
             "date": self.date,
             "azimuth_deg": self.azimuth_deg,
             "order_id": self.order_id,
+            "bboxes": self.bboxes,
             "url": image_url,
         }
 
@@ -49,7 +82,7 @@ def resolve_ai_photo(conn: PgConnection, uuid: str) -> AiPhotoMeta | None:
     if not is_valid_uuid(uuid):
         return None
     query = """
-        SELECT uuid, image_name, date, azimuth_deg, order_id
+        SELECT uuid, image_name, date, azimuth_deg, order_id, bboxes
         FROM genplan.photo_meta
         WHERE uuid = %s
         LIMIT 1
@@ -65,6 +98,7 @@ def resolve_ai_photo(conn: PgConnection, uuid: str) -> AiPhotoMeta | None:
         date=row.get("date"),
         azimuth_deg=row.get("azimuth_deg"),
         order_id=row.get("order_id"),
+        bboxes=normalize_bboxes(row.get("bboxes")),
     )
 
 

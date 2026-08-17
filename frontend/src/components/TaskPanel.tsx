@@ -506,10 +506,23 @@ export function TaskPanel({
     <>
     <div className="task-panel">
       <div className="task-panel-header">
-        <strong>{taskResult.district_name}</strong>
-        <span className="muted">
-          {TASK_SOURCE_LABELS[taskSource]}: {totalCount}
-        </span>
+        <div className="task-panel-header-row">
+          <div className="task-panel-header-meta">
+            <strong>{taskResult.district_name}</strong>
+            <span className="muted">
+              {TASK_SOURCE_LABELS[taskSource]}: {totalCount}
+            </span>
+          </div>
+          {!isArea && (
+            <button
+              type="button"
+              className="btn task-panel-order-search"
+              onClick={() => setSearchOpen(true)}
+            >
+              Поиск ордеров
+            </button>
+          )}
+        </div>
         {linkLoading && <div className="muted small">Загрузка привязок…</div>}
         {linkInfo && !linkLoading && <div className="muted small">{linkInfo}</div>}
         {actionMessage && <div className="muted small">{actionMessage}</div>}
@@ -520,19 +533,8 @@ export function TaskPanel({
           {groups.map((group: TaskGroup, gi) => (
             <div key={group.name} className="task-tree-group">
               <div className="task-tree-group-name">
-                <span>
-                  {group.name} (
-                  {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
-                </span>
-                {group.name === CRM_GROUP_ORDERS && (
-                  <button
-                    type="button"
-                    className="btn task-tree-group-search"
-                    onClick={() => setSearchOpen(true)}
-                  >
-                    Поиск
-                  </button>
-                )}
+                {group.name} (
+                {group.subgroups.reduce((a, s) => a + s.features.length, 0)})
               </div>
               {group.subgroups.map((sub, si) => (
                 <button

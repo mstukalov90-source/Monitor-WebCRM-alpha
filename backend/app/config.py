@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     """Local directory with MGGT Field photo files."""
     field_photo_sftp_remote_dir: str = "/opt/monitor/mggtfield_photo"
     """Remote directory for field photos when fetching via SFTP (dev)."""
+    lens_photo_windows_root: str = r"X:\Common\Объектив"
+    """Windows folder on operator PCs with Объектив photos (not mounted on the server)."""
     letter_cache_dir: str = "./data/letter_cache"
     """Short-lived DOCX cache for browser download (GET after POST)."""
     auth_secret_key: str = "change-me-in-production-use-32-chars-min"

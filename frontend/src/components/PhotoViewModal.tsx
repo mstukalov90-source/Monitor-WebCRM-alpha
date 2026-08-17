@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { aiPhotoImageUrl, fetchAiPhotoMeta } from '../api/client'
+import { parsePhotoBboxes } from '../lib/photoBboxes'
+import { PhotoBboxOverlay } from './PhotoBboxOverlay'
 import { PhotoLightboxImage } from './PhotoLightboxImage'
 import { formatTaskTableCell, type AiPhotoMeta } from '../types'
 
@@ -23,6 +25,8 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
   const [imageError, setImageError] = useState(false)
   const [pendingClear, setPendingClear] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
+  const [showBboxes, setShowBboxes] = useState(true)
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
     if (!uuid) {
@@ -31,6 +35,8 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
       setImageError(false)
       setPendingClear(false)
       setActionBusy(false)
+      setShowBboxes(true)
+      setImageSize(null)
       return
     }
 
@@ -41,6 +47,8 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
     setMeta(null)
     setPendingClear(false)
     setActionBusy(false)
+    setShowBboxes(true)
+    setImageSize(null)
 
     fetchAiPhotoMeta(uuid)
       .then((data) => {
@@ -70,12 +78,24 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [uuid, onClose])
 
+  const boxes = useMemo(() => parsePhotoBboxes(meta?.bboxes), [meta?.bboxes])
+  const hasBboxes = boxes.length > 0
+
   if (!uuid) return null
 
   const titleParts = [
     meta?.date ? `Дата: ${formatTaskTableCell(meta.date, 'date')}` : null,
     meta?.image_name ?? null,
   ].filter(Boolean)
+
+  const bboxOverlay =
+    showBboxes && hasBboxes && imageSize ? (
+      <PhotoBboxOverlay
+        boxes={boxes}
+        naturalWidth={imageSize.width}
+        naturalHeight={imageSize.height}
+      />
+    ) : null
 
   const showTaskActions = Boolean(taskActions?.canMarkDisruptionAbsent)
 
@@ -95,9 +115,21 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
       <div className="modal photo-modal" onClick={(e) => e.stopPropagation()}>
         <div className="photo-modal-header">
           <h2>Просмотр фотографии</h2>
-          <button type="button" className="btn ghost small" onClick={onClose}>
-            Закрыть
-          </button>
+          <div className="photo-modal-header-actions">
+            {hasBboxes && (
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={showBboxes}
+                  onChange={(e) => setShowBboxes(e.target.checked)}
+                />
+                Разметка ИИ
+              </label>
+            )}
+            <button type="button" className="btn ghost small" onClick={onClose}>
+              Закрыть
+            </button>
+          </div>
         </div>
 
         {loading && <p className="muted">Загрузка…</p>}
@@ -117,7 +149,26 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
                   src={aiPhotoImageUrl(meta.uuid)}
                   alt={meta.image_name}
                   className="photo-modal-image"
+                  overlay={bboxOverlay}
+                  toolbarExtra={
+                    hasBboxes ? (
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={showBboxes}
+                          onChange={(e) => setShowBboxes(e.target.checked)}
+                        />
+                        Разметка ИИ
+                      </label>
+                    ) : null
+                  }
                   onError={() => setImageError(true)}
+                  onLoad={(e) => {
+                    const img = e.currentTarget
+                    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                      setImageSize({ width: img.naturalWidth, height: img.naturalHeight })
+                    }
+                  }}
                 />
               )}
             </div>

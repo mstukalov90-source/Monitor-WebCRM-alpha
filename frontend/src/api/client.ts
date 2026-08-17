@@ -12,6 +12,7 @@ import type {
   CollectProgress,
   AiPhotoMeta,
   FieldPhotosResult,
+  LensPhotosResult,
   FieldReportFeature,
   AssignableTask,
   AuthUser,
@@ -408,6 +409,10 @@ export function aiPhotoImageUrl(uuid: string): string {
   return `/api/photos/ai/${encodeURIComponent(uuid)}/image`
 }
 
+export function fetchLensPhotos(externalReportId: string): Promise<LensPhotosResult> {
+  return request(`/api/photos/lens/${encodeURIComponent(externalReportId)}`)
+}
+
 export function fetchFieldPhotos(
   taskKey: string,
   options?: { reportId?: number | null; reportTask?: string | null },
@@ -722,12 +727,16 @@ export function fetchOrderStatusFeed(params: {
   dateFrom: string
   dateTo: string
   limit?: number
+  actions?: string[]
 }): Promise<OrderStatusFeed> {
   const qs = new URLSearchParams({
     date_from: params.dateFrom,
     date_to: params.dateTo,
   })
   if (params.limit != null) qs.set('limit', String(params.limit))
+  for (const action of params.actions ?? []) {
+    qs.append('actions', action)
+  }
   return request(`/api/personnel/order-status?${qs}`)
 }
 

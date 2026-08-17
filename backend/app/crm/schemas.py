@@ -332,6 +332,7 @@ class OrderClosuresStatisticsOut(BaseModel):
 
 class OrderStatusFeedOut(BaseModel):
     events: list[StatisticsActionDetailOut] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
     date_from: str
     date_to: str
 

@@ -19,6 +19,7 @@ from app.photos.ai_photo import (
     resolve_ai_photo,
 )
 from app.photos.field_photo import read_field_photo
+from app.photos.lens_photo import resolve_lens_photos
 from app.photos.sftp_fetch import (
     SftpPhotoError,
     ensure_photo_cached,
@@ -109,6 +110,22 @@ def get_ai_photo_image(uuid: str) -> Response:
         media_type=media_type,
         headers={"Cache-Control": "private, max-age=3600"},
     )
+
+
+@router.get("/lens/{external_report_id}")
+def get_lens_photos(external_report_id: str) -> dict:
+    report_id = external_report_id.strip()
+    if not report_id:
+        raise HTTPException(status_code=400, detail="external_report_id is required")
+
+    settings = get_settings()
+    with get_connection() as conn:
+        result = resolve_lens_photos(
+            conn,
+            report_id,
+            windows_root=settings.lens_photo_windows_root,
+        )
+    return result.to_dict()
 
 
 @router.get("/field/{file_name}/image")

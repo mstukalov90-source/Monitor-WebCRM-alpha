@@ -19,7 +19,7 @@ from app.layers.registry import get_registry
 ETL_SYNC_SOURCE = "etl_sync"
 
 AI_PHOTO_SUBGROUP = "Фото после обработки ИИ"
-LENS_PHOTO_SUBGROUP = "Фото разрывий и строек"
+LENS_PHOTO_SUBGROUP = "Фото разрытий и строек"
 
 
 def is_etl_sync_subgroup(subgroup_name: str, cfg: dict[str, Any] | None = None) -> bool:

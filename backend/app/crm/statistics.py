@@ -377,16 +377,54 @@ def fetch_employee_action_details(
     return [_normalize_detail_row(dict(row)) for row in rows]
 
 
+def _resolve_order_status_actions(actions: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
+    allowed = set(ORDER_STATUS_FEED_ACTIONS)
+    if not actions:
+        return ORDER_STATUS_FEED_ACTIONS
+    resolved = tuple(action for action in actions if action in allowed)
+    return resolved or ORDER_STATUS_FEED_ACTIONS
+
+
+def fetch_order_status_counts(
+    conn: PgConnection,
+    *,
+    date_from: date,
+    date_to: date,
+) -> dict[str, int]:
+    """Per-action event counts for the manager feed period (no LIMIT)."""
+    start, end = _period_bounds(date_from, date_to)
+    action_placeholders = ", ".join(["%s"] * len(ORDER_STATUS_FEED_ACTIONS))
+    params: list[Any] = [start, end, *ORDER_STATUS_FEED_ACTIONS]
+    query = f"""
+        SELECT s.action, COUNT(*)::int AS event_count
+        FROM "{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}" s
+        WHERE s.created_at >= %s
+          AND s.created_at <= %s
+          AND s.action IN ({action_placeholders})
+        GROUP BY s.action
+    """
+    counts = {action: 0 for action in ORDER_STATUS_FEED_ACTIONS}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        for row in cur.fetchall():
+            action = str(row["action"])
+            if action in counts:
+                counts[action] = int(row["event_count"])
+    return counts
+
+
 def fetch_order_status_feed(
     conn: PgConnection,
     *,
     date_from: date,
     date_to: date,
-    limit: int = 100,
+    limit: int = 500,
+    actions: list[str] | tuple[str, ...] | None = None,
 ) -> list[dict[str, Any]]:
     """Recent order/task status events for manager notifications, newest first."""
     start, end = _period_bounds(date_from, date_to)
     capped_limit = max(1, min(int(limit), 500))
+    feed_actions = _resolve_order_status_actions(actions)
 
     from app.config import crm_task_store_config
     from app.crm.store import _snapshot_table_ref
@@ -399,8 +437,8 @@ def fetch_order_status_feed(
         store_cfg, "done_illegal_table", "tasks_done_illegal"
     )
 
-    action_placeholders = ", ".join(["%s"] * len(ORDER_STATUS_FEED_ACTIONS))
-    params: list[Any] = [start, end, *ORDER_STATUS_FEED_ACTIONS, capped_limit]
+    action_placeholders = ", ".join(["%s"] * len(feed_actions))
+    params: list[Any] = [start, end, *feed_actions, capped_limit]
 
     query = f"""
         SELECT

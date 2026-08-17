@@ -48,10 +48,12 @@ from app.crm.schemas import (
     TaskNumberUpdate,
 )
 from app.crm.statistics import (
+    ORDER_STATUS_FEED_ACTIONS,
     fetch_employee_action_details,
     fetch_field_statistics_summary,
     fetch_geo_statistics,
     fetch_office_statistics_breakdown,
+    fetch_order_status_counts,
     fetch_order_status_feed,
     fetch_recent_order_closures,
 )
@@ -231,7 +233,11 @@ def get_personnel_order_closures(
 def get_order_status_feed(
     date_from: date = Query(..., description="Start date (inclusive)"),
     date_to: date = Query(..., description="End date (inclusive)"),
-    limit: int = Query(100, ge=1, le=500, description="Max events to return"),
+    limit: int = Query(500, ge=1, le=500, description="Max events to return"),
+    actions: list[str] | None = Query(
+        None,
+        description="Optional subset of feed actions for the active tab",
+    ),
     _user: UserSession = Depends(require_manager_or_admin),
 ) -> OrderStatusFeedOut:
     if date_from > date_to:
@@ -239,6 +245,16 @@ def get_order_status_feed(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="date_from must be on or before date_to",
         )
+    allowed = set(ORDER_STATUS_FEED_ACTIONS)
+    feed_actions: list[str] | None = None
+    if actions:
+        unknown = [action for action in actions if action not in allowed]
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown actions: {', '.join(unknown)}",
+            )
+        feed_actions = [action for action in actions if action in allowed]
 
     with get_connection() as conn:
         rows = fetch_order_status_feed(
@@ -246,10 +262,17 @@ def get_order_status_feed(
             date_from=date_from,
             date_to=date_to,
             limit=limit,
+            actions=feed_actions,
+        )
+        counts = fetch_order_status_counts(
+            conn,
+            date_from=date_from,
+            date_to=date_to,
         )
 
     return OrderStatusFeedOut(
         events=[StatisticsActionDetailOut(**row) for row in rows],
+        counts=counts,
         date_from=date_from.isoformat(),
         date_to=date_to.isoformat(),
     )

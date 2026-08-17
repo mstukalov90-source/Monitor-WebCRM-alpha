@@ -47,6 +47,74 @@ function formatHa(value: number): string {
   return value.toLocaleString('ru-RU', { maximumFractionDigits: 2 })
 }
 
+function sumBy<T>(rows: T[], pick: (row: T) => number): number {
+  return rows.reduce((acc, row) => acc + (pick(row) || 0), 0)
+}
+
+function geoProgressPct(
+  closedHa: number,
+  openHa: number,
+  closedN: number,
+  openN: number,
+): number | null {
+  const totalHa = closedHa + openHa
+  if (totalHa > 0) return Math.round((1000 * closedHa) / totalHa) / 10
+  const totalN = closedN + openN
+  if (totalN > 0) return Math.round((1000 * closedN) / totalN) / 10
+  return null
+}
+
+function fieldTotals(rows: FieldStatisticsSummary[]): FieldStatisticsSummary | null {
+  if (rows.length === 0) return null
+  return {
+    user_login: 'Итого',
+    user_role: '',
+    camera_surveys: sumBy(rows, (r) => r.camera_surveys),
+    disruption_absent: sumBy(rows, (r) => r.disruption_absent),
+    disruption_found: sumBy(rows, (r) => r.disruption_found),
+    orders_closed: sumBy(rows, (r) => r.orders_closed),
+    orders_closed_ha: sumBy(rows, (r) => r.orders_closed_ha),
+    period_from: null,
+    period_to: null,
+  }
+}
+
+function geoMetricTotals(rows: GeoStatisticsRow[]): GeoStatisticsRow | null {
+  if (rows.length === 0) return null
+  const orders_closed = sumBy(rows, (r) => r.orders_closed)
+  const orders_closed_ha = sumBy(rows, (r) => r.orders_closed_ha)
+  const orders_open = sumBy(rows, (r) => r.orders_open)
+  const orders_open_ha = sumBy(rows, (r) => r.orders_open_ha)
+  return {
+    okrug: null,
+    rayon: null,
+    orders_closed,
+    orders_closed_ha,
+    orders_open,
+    orders_open_ha,
+    pre_analise_completed: sumBy(rows, (r) => r.pre_analise_completed),
+    analise_completed: sumBy(rows, (r) => r.analise_completed),
+    progress_pct: geoProgressPct(orders_closed_ha, orders_open_ha, orders_closed, orders_open),
+  }
+}
+
+function durationTotalMinutes(rows: StatisticsActionDetail[]): number | null {
+  let sum = 0
+  let any = false
+  for (const row of rows) {
+    if (row.duration_minutes == null || Number.isNaN(row.duration_minutes)) continue
+    sum += row.duration_minutes
+    any = true
+  }
+  return any ? sum : null
+}
+
+function orderAreaTotal(rows: StatisticsActionDetail[]): number {
+  return sumBy(rows, (row) =>
+    row.object_type === 'order' ? row.area_hectares || 0 : 0,
+  )
+}
+
 function geoPlaceLabel(value: string | null | undefined, emptyLabel: string): string {
   const text = (value || '').trim()
   return text || emptyLabel
@@ -242,10 +310,12 @@ export function StatisticsScreen({
   const fieldRows = data?.field_summary ?? []
   const officeRows = data?.office_breakdown ?? []
   const detailRows = data?.action_details ?? []
+  const fieldSummary = useMemo(() => fieldTotals(fieldRows), [fieldRows])
   const selfFieldRow = fieldRows.find((r) => r.user_login === userLogin) ?? fieldRows[0]
   const showDetails = Boolean(userLoginFilter) || !canViewAll
 
   const okrugRows = geoData?.okrugs ?? []
+  const okrugSummary = useMemo(() => geoMetricTotals(okrugRows), [okrugRows])
   const rayonRows = useMemo(() => {
     const all = geoData?.rayons ?? []
     if (selectedOkrug === null) return []
@@ -254,6 +324,7 @@ export function StatisticsScreen({
     }
     return all.filter((row) => (row.okrug || '') === selectedOkrug)
   }, [geoData?.rayons, selectedOkrug])
+  const rayonSummary = useMemo(() => geoMetricTotals(rayonRows), [rayonRows])
 
   const maxOrdersClosed = useMemo(
     () => Math.max(0, ...okrugRows.map((row) => row.orders_closed)),
@@ -274,6 +345,27 @@ export function StatisticsScreen({
     (showDetails && detailRows.length > 0)
   const hasGeoData = okrugRows.length > 0
   const orderClosureRows = ordersData?.closures ?? []
+  const orderClosureAreaHa = useMemo(
+    () => sumBy(orderClosureRows, (row) => row.area_hectares || 0),
+    [orderClosureRows],
+  )
+  const orderClosureDuration = useMemo(
+    () => durationTotalMinutes(orderClosureRows),
+    [orderClosureRows],
+  )
+  const officeCountTotal = useMemo(
+    () => sumBy(officeRows, (row) => row.action_count),
+    [officeRows],
+  )
+  const officeAreaTotal = useMemo(
+    () =>
+      sumBy(officeRows, (row) =>
+        row.object_type === 'task' ? 0 : row.area_hectares || 0,
+      ),
+    [officeRows],
+  )
+  const detailAreaHa = useMemo(() => orderAreaTotal(detailRows), [detailRows])
+  const detailDuration = useMemo(() => durationTotalMinutes(detailRows), [detailRows])
   const hasOrdersData = orderClosureRows.length > 0
   const orderUserRows = useMemo(
     () => aggregateClosuresByUser(orderClosureRows),
@@ -485,6 +577,18 @@ export function StatisticsScreen({
                             ))
                           )}
                         </tbody>
+                        {fieldSummary && (
+                          <tfoot>
+                            <tr>
+                              <th scope="row">{fieldSummary.user_login}</th>
+                              <td>{fieldSummary.camera_surveys}</td>
+                              <td>{fieldSummary.disruption_absent}</td>
+                              <td>{fieldSummary.disruption_found}</td>
+                              <td>{fieldSummary.orders_closed}</td>
+                              <td>{formatHa(fieldSummary.orders_closed_ha)}</td>
+                            </tr>
+                          </tfoot>
+                        )}
                       </table>
                     </div>
                   )}
@@ -522,6 +626,17 @@ export function StatisticsScreen({
                           ))
                         )}
                       </tbody>
+                      {officeRows.length > 0 && (
+                        <tfoot>
+                          <tr>
+                            <th scope="row" colSpan={canViewAll ? 3 : 2}>
+                              Итого
+                            </th>
+                            <td>{officeCountTotal}</td>
+                            <td>{officeAreaTotal > 0 ? formatHa(officeAreaTotal) : '—'}</td>
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
                 </section>
@@ -558,6 +673,17 @@ export function StatisticsScreen({
                           ))
                         )}
                       </tbody>
+                      {detailRows.length > 0 && (
+                        <tfoot>
+                          <tr>
+                            <th scope="row">Итого</th>
+                            <td colSpan={2}>{detailRows.length}</td>
+                            <td />
+                            <td>{detailAreaHa > 0 ? formatHa(detailAreaHa) : '—'}</td>
+                            <td>{formatDurationMinutes(detailDuration)}</td>
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
                 </section>
@@ -656,6 +782,14 @@ export function StatisticsScreen({
                         )
                       })}
                     </tbody>
+                    {okrugSummary && (
+                      <tfoot>
+                        <tr>
+                          <th scope="row">Итого</th>
+                          <GeoMetricCells row={okrugSummary} />
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
               </section>
@@ -697,7 +831,7 @@ export function StatisticsScreen({
                       <tbody>
                         {rayonRows.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="muted">
+                            <td colSpan={8} className="muted">
                               Нет данных по районам
                             </td>
                           </tr>
@@ -710,6 +844,14 @@ export function StatisticsScreen({
                           ))
                         )}
                       </tbody>
+                      {rayonSummary && (
+                        <tfoot>
+                          <tr>
+                            <th scope="row">Итого</th>
+                            <GeoMetricCells row={rayonSummary} />
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
                 )}
@@ -805,6 +947,17 @@ export function StatisticsScreen({
                         />
                       ))}
                     </tbody>
+                    {orderClosureRows.length > 0 && (
+                      <tfoot>
+                        <tr>
+                          <th scope="row">Итого</th>
+                          <td>{orderClosureRows.length}</td>
+                          <td colSpan={2} />
+                          <td>{orderClosureAreaHa > 0 ? formatHa(orderClosureAreaHa) : '—'}</td>
+                          <td>{formatDurationMinutes(orderClosureDuration)}</td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
               </section>

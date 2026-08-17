@@ -52,8 +52,12 @@ export function defaultStatisticsDateRange(): { dateFrom: string; dateTo: string
 }
 
 export function defaultOrderStatusDateRange(): { dateFrom: string; dateTo: string } {
+  return orderStatusDateRange(7)
+}
+
+export function orderStatusDateRange(days: number): { dateFrom: string; dateTo: string } {
   const to = new Date()
   const from = new Date()
-  from.setDate(from.getDate() - 7)
+  from.setDate(from.getDate() - days)
   return { dateFrom: formatIsoDateLocal(from), dateTo: formatIsoDateLocal(to) }
 }

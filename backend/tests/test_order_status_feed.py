@@ -6,7 +6,11 @@ import unittest
 from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from app.crm.statistics import ORDER_STATUS_FEED_ACTIONS, fetch_order_status_feed
+from app.crm.statistics import (
+    ORDER_STATUS_FEED_ACTIONS,
+    fetch_order_status_counts,
+    fetch_order_status_feed,
+)
 
 
 def _cursor_cm(cursor: MagicMock) -> MagicMock:
@@ -94,6 +98,54 @@ class FetchOrderStatusFeedTests(unittest.TestCase):
 
         params = cursor.execute.call_args.args[1]
         self.assertEqual(params[-1], 500)
+
+    def test_actions_filter_is_applied(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+
+        with patch("app.config.crm_task_store_config", return_value={}):
+            fetch_order_status_feed(
+                conn,
+                date_from=date(2026, 8, 1),
+                date_to=date(2026, 8, 7),
+                actions=["office_pre_analise_completed"],
+                limit=120,
+            )
+
+        sql = cursor.execute.call_args.args[0]
+        params = cursor.execute.call_args.args[1]
+        self.assertIn("s.action IN", sql)
+        self.assertIn("office_pre_analise_completed", params)
+        self.assertNotIn("field_order_closed", params[2:-1])
+        self.assertEqual(params[-1], 120)
+
+
+class FetchOrderStatusCountsTests(unittest.TestCase):
+    def test_counts_returned_for_all_feed_actions(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"action": "field_order_closed", "event_count": 7},
+            {"action": "office_pre_analise_completed", "event_count": 78},
+        ]
+        conn = MagicMock()
+        conn.cursor.return_value = _cursor_cm(cursor)
+
+        counts = fetch_order_status_counts(
+            conn,
+            date_from=date(2026, 8, 1),
+            date_to=date(2026, 8, 7),
+        )
+
+        self.assertEqual(counts["field_order_closed"], 7)
+        self.assertEqual(counts["office_pre_analise_completed"], 78)
+        self.assertEqual(counts["office_closed_legal"], 0)
+        self.assertEqual(counts["office_closed_illegal"], 0)
+        self.assertEqual(set(counts), set(ORDER_STATUS_FEED_ACTIONS))
+
+        sql = cursor.execute.call_args.args[0]
+        self.assertIn("GROUP BY s.action", sql)
 
 
 class OrderStatusRouteAuthTests(unittest.TestCase):

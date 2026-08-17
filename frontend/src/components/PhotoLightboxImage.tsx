@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 const MIN_SCALE = 1
@@ -11,9 +11,20 @@ interface PhotoLightboxImageProps {
   alt: string
   className?: string
   onError?: () => void
+  onLoad?: (event: React.SyntheticEvent<HTMLImageElement>) => void
+  overlay?: ReactNode
+  toolbarExtra?: ReactNode
 }
 
-export function PhotoLightboxImage({ src, alt, className, onError }: PhotoLightboxImageProps) {
+export function PhotoLightboxImage({
+  src,
+  alt,
+  className,
+  onError,
+  onLoad,
+  overlay,
+  toolbarExtra,
+}: PhotoLightboxImageProps) {
   const [open, setOpen] = useState(false)
   const [scale, setScale] = useState(MIN_SCALE)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -103,7 +114,7 @@ export function PhotoLightboxImage({ src, alt, className, onError }: PhotoLightb
     if (scale <= MIN_SCALE) close()
   }
 
-  const overlay = open
+  const lightbox = open
     ? createPortal(
         <div
           className="photo-lightbox-backdrop"
@@ -134,6 +145,7 @@ export function PhotoLightboxImage({ src, alt, className, onError }: PhotoLightb
               <button type="button" className="btn small" onClick={resetView}>
                 Сброс
               </button>
+              {toolbarExtra}
             </div>
             <button type="button" className="btn ghost small" onClick={close}>
               Закрыть
@@ -159,15 +171,21 @@ export function PhotoLightboxImage({ src, alt, className, onError }: PhotoLightb
             >
               ×
             </button>
-            <img
-              src={src}
-              alt={alt}
-              className="photo-lightbox-image"
+            <div
+              className="photo-lightbox-frame"
               style={{
                 transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
               }}
-              draggable={false}
-            />
+            >
+              <img
+                src={src}
+                alt={alt}
+                className="photo-lightbox-image"
+                draggable={false}
+                onLoad={onLoad}
+              />
+              {overlay}
+            </div>
           </div>
         </div>,
         document.body,
@@ -176,24 +194,28 @@ export function PhotoLightboxImage({ src, alt, className, onError }: PhotoLightb
 
   return (
     <>
-      <img
-        src={src}
-        alt={alt}
-        className={className}
-        onError={onError}
-        onClick={() => setOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            setOpen(true)
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        title="Открыть на весь экран"
-        aria-label={`${alt}. Открыть на весь экран`}
-      />
-      {overlay}
+      <div className="photo-bbox-stage">
+        <img
+          src={src}
+          alt={alt}
+          className={className}
+          onError={onError}
+          onLoad={onLoad}
+          onClick={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setOpen(true)
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          title="Открыть на весь экран"
+          aria-label={`${alt}. Открыть на весь экран`}
+        />
+        {overlay}
+      </div>
+      {lightbox}
     </>
   )
 }

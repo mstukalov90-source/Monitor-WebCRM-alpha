@@ -7,6 +7,7 @@ import { fetchTasksAreaGeoJson } from '../api/client'
 import { findHoodLayerKey } from '../lib/hoodLayer'
 import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapStyle'
 import { pointRadius, styleForGeometryType, MIN_LINE_WEIGHT } from '../lib/symbology'
+import { parsePhotoAzimuth, pointLayerWithAzimuth } from '../lib/photoAzimuth'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
 import { geometryKindLabel } from '../lib/notificationSiblings'
@@ -383,11 +384,16 @@ function TaskFeaturesLayer({
         } as GeoJSON.Feature,
         {
           interactive: !isAreaLayer || areaInteractive,
-          pointToLayer: (_feature, latlng) =>
-            L.circleMarker(latlng, {
+          pointToLayer: (_feature, latlng) => {
+            const circle = L.circleMarker(latlng, {
               radius: pointRadius(symbology),
               ...styleForGeometryType(geomType, symbology),
-            }),
+            })
+            const azimuth = parsePhotoAzimuth(taskFeat.attributes.azimuth_deg)
+            const color =
+              symbology.color ?? symbology.center_color ?? symbology.outer_color ?? '#3388ff'
+            return pointLayerWithAzimuth(latlng, circle, azimuth, color)
+          },
           style: () => styleForGeometryType(geomType, symbology),
           onEachFeature: (_feature, layer) => {
             if (isAreaLayer && !showAreaPopups) return
@@ -613,21 +619,24 @@ function addHighlightFeature(
     onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
     onViewArea?: (feature: TaskFeature) => void
     onClick?: () => void
+    azimuthDeg?: number | null
   },
 ): L.GeoJSON | null {
   let primaryLayer: L.GeoJSON | null = null
   const layer = L.geoJSON(
     { type: 'Feature', geometry, properties: {} } as GeoJSON.Feature,
     {
-      pointToLayer: (_f, latlng) =>
-        L.circleMarker(latlng, {
+      pointToLayer: (_f, latlng) => {
+        const circle = L.circleMarker(latlng, {
           radius: palette === HIGHLIGHT_PRIMARY ? 12 : 10,
           color: palette.color,
           weight: palette === HIGHLIGHT_PRIMARY ? 3 : 2,
           dashArray: palette === HIGHLIGHT_LINKED ? '4 4' : undefined,
           fillColor: palette.color,
           fillOpacity: palette === HIGHLIGHT_PRIMARY ? 0.3 : palette.fillOpacity,
-        }),
+        })
+        return pointLayerWithAzimuth(latlng, circle, options?.azimuthDeg ?? null, palette.color)
+      },
       style: (feature) => {
         if (!feature?.geometry || isPointGeometry(feature.geometry)) {
           return {}
@@ -736,6 +745,7 @@ function TaskHighlightLayer({
         popupCtx,
         onExecuteTask,
         onViewArea,
+        azimuthDeg: parsePhotoAzimuth(popup?.feature.attributes.azimuth_deg),
       })
     }
 

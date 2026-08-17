@@ -626,6 +626,26 @@ body,
   gap: 4px;
 }
 
+.task-panel-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.task-panel-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.task-panel-order-search {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  padding: 2px 8px;
+}
+
 .muted {
   color: #666;
 }
@@ -651,16 +671,6 @@ body,
   font-weight: 600;
   font-size: 0.85em;
   margin-top: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.task-tree-group-search {
-  flex-shrink: 0;
-  font-size: 0.78em;
-  padding: 2px 8px;
 }
 
 .task-tree-item {
@@ -893,6 +903,13 @@ body,
   font-size: 0.85rem;
 }
 
+a.btn {
+  display: inline-block;
+  text-decoration: none;
+  color: inherit;
+  box-sizing: border-box;
+}
+
 .btn:hover:not(:disabled) {
   background: #f5f5f5;
 }
@@ -999,6 +1016,9 @@ body,
 
 .modal.order-status-modal {
   width: min(860px, 96vw);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
 }
 
 .modal.task-edit-modal--with-map {
@@ -1063,16 +1083,10 @@ body,
   height: 100%;
 }
 
-.order-status-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin: 12px 0 8px;
-}
-
-.order-status-section-title {
-  margin: 0 0 8px;
-  font-size: 0.95rem;
+.order-status-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 8px 0;
 }
 
 .order-status-list {
@@ -1082,6 +1096,8 @@ body,
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: min(52vh, 480px);
+  overflow: auto;
 }
 
 .order-status-item-row {
@@ -1499,6 +1515,12 @@ body,
   margin-bottom: 8px;
 }
 
+.photo-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .photo-modal-header h2 {
   margin: 0;
 }
@@ -1526,6 +1548,54 @@ body,
   object-fit: contain;
   display: block;
   cursor: zoom-in;
+}
+
+.photo-bbox-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0;
+}
+
+.photo-bbox-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.photo-bbox-rect {
+  fill: rgba(50, 205, 50, 0.12);
+  stroke: #32cd32;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.photo-bbox-label {
+  fill: #d4ff00;
+  stroke: #111;
+  stroke-width: 3px;
+  paint-order: stroke fill;
+  font-family: sans-serif;
+  font-weight: 600;
+}
+
+.photo-azimuth-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.photo-azimuth-arrow {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center center;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px #fff) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.65));
 }
 
 .photo-lightbox-backdrop {
@@ -1618,11 +1688,25 @@ body,
   border-color: #fff;
 }
 
+.photo-lightbox-toolbar .checkbox-label {
+  color: #fff;
+  margin-left: 8px;
+}
+
+.photo-lightbox-frame {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  max-height: 100%;
+  transform-origin: center center;
+  line-height: 0;
+}
+
 .photo-lightbox-image {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  transform-origin: center center;
+  display: block;
   user-select: none;
   pointer-events: none;
 }
@@ -1631,6 +1715,42 @@ body,
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
+}
+
+.lens-photo-fallback {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+}
+
+.lens-photo-path {
+  display: block;
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  color: #1d4ed8;
+  text-decoration: underline;
+}
+
+.lens-photo-path:hover {
+  background: #eff6ff;
+}
+
+.lens-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lens-photo-actions-below {
+  margin-top: 10px;
 }
 
 .photo-modal-footer .modal-action-buttons {
@@ -2051,10 +2171,19 @@ body,
   text-align: left;
 }
 
-.personnel-table th {
-  background: #f8fafc;
+.personnel-table tfoot th,
+.personnel-table tfoot td {
   position: sticky;
-  top: 0;
+  top: auto;
+  bottom: 0;
+  background: #eef2f7;
+  font-weight: 600;
+  border-top: 1px solid #cbd5e1;
+  border-bottom: none;
+}
+
+.statistics-geo-table-selectable tfoot tr {
+  cursor: default;
 }
 
 .personnel-key {

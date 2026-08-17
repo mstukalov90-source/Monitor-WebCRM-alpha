@@ -132,6 +132,7 @@ export interface OrderClosuresStatistics {
 
 export interface OrderStatusFeed {
   events: StatisticsActionDetail[]
+  counts?: Record<string, number>
   date_from: string
   date_to: string
 }
@@ -606,6 +607,7 @@ export interface AiPhotoMeta {
   azimuth_deg: number | null
   order_id: string | null
   url: string
+  bboxes?: unknown
 }
 
 export interface FieldPhoto {
@@ -623,9 +625,23 @@ export interface FieldPhotosResult {
   comment?: string | null
 }
 
+export interface LensPhoto {
+  id: number
+  file_path: string
+  relative_path: string
+  windows_path: string
+  file_name: string
+}
+
+export interface LensPhotosResult {
+  external_report_id: string
+  photos: LensPhoto[]
+}
+
 export const AI_PHOTO_SUBGROUP = 'Фото после обработки ИИ'
 export const AI_PHOTO_LAYER_KEY = 'фотографии_после_обработки_ии'
 export const LENS_PHOTO_SUBGROUP = 'Фото разрытий и строек'
+export const LENS_PHOTO_LAYER_KEY = 'фото_разрытий_и_строек'
 export const OGH_DISRUPTION_SUBGROUP = 'Разрытия из полигонов ОГХ'
 export const FIELD_DATA_SUBGROUP = 'Полевые данные'
 export const FIELD_DATA_LAYER_KEY = 'field_data'
@@ -986,11 +1002,22 @@ export function isAiPhotoContext(subgroupName: string, layerKey?: string): boole
   return subgroupName === AI_PHOTO_SUBGROUP || layerKey === AI_PHOTO_LAYER_KEY
 }
 
+export function isLensPhotoContext(subgroupName: string, layerKey?: string): boolean {
+  return subgroupName === LENS_PHOTO_SUBGROUP || layerKey === LENS_PHOTO_LAYER_KEY
+}
+
 export function aiPhotoUuidFromAttributes(attributes: Record<string, unknown>): string | null {
   const value = attributes.uuid
   if (value == null) return null
   const uuid = String(value).trim()
   return uuid || null
+}
+
+export function lensExternalIdFromAttributes(attributes: Record<string, unknown>): string | null {
+  const value = attributes.external_report_id
+  if (value == null) return null
+  const id = String(value).trim()
+  return id || null
 }
 
 export interface TaskRecord {
