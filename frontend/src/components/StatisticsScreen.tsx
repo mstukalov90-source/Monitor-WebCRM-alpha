@@ -23,9 +23,11 @@ import type {
   StatisticsActionDetail,
   UserRole,
 } from '../types'
+import { displayUserNameByLogin, personnelUserLabel } from '../types'
 
 interface StatisticsScreenProps {
   userLogin: string
+  userName: string
   userRole: UserRole
   canViewAll: boolean
   onBack: () => void
@@ -147,7 +149,10 @@ function eachDayInclusive(dateFrom: string, dateTo: string): string[] {
   return days
 }
 
-function aggregateClosuresByUser(rows: StatisticsActionDetail[]): ClosureAggregateRow[] {
+function aggregateClosuresByUser(
+  rows: StatisticsActionDetail[],
+  formatLogin: (login: string) => string,
+): ClosureAggregateRow[] {
   const byUser = new Map<string, ClosureAggregateRow>()
   for (const row of rows) {
     const key = row.user_login
@@ -158,7 +163,7 @@ function aggregateClosuresByUser(rows: StatisticsActionDetail[]): ClosureAggrega
     } else {
       byUser.set(key, {
         key,
-        label: key,
+        label: formatLogin(key),
         orders_closed: 1,
         orders_closed_ha: row.area_hectares || 0,
       })
@@ -203,6 +208,7 @@ function aggregateClosuresByDay(
 
 export function StatisticsScreen({
   userLogin,
+  userName,
   userRole,
   canViewAll,
   onBack,
@@ -226,12 +232,22 @@ export function StatisticsScreen({
   const effectiveViewMode: ViewMode = canViewAll ? viewMode : 'people'
 
   const employeeUsers = useMemo(() => {
-    const employees = users.filter((u) => u.role === 'field' || u.role === 'office')
+    const employees = users.filter(
+      (u) => u.role === 'field' || u.role === 'office' || u.role === 'manager' || u.role === 'admin',
+    )
     if (effectiveViewMode === 'orders') {
       return employees.filter((u) => u.role === 'field')
     }
     return employees
   }, [users, effectiveViewMode])
+
+  const formatEmployee = useCallback(
+    (login: string) => {
+      if (login === userLogin) return userName
+      return displayUserNameByLogin(login, users)
+    },
+    [userLogin, userName, users],
+  )
 
   const showFieldSection =
     canViewAll ? roleFilter !== 'office' : userRole === 'field'
@@ -368,8 +384,8 @@ export function StatisticsScreen({
   const detailDuration = useMemo(() => durationTotalMinutes(detailRows), [detailRows])
   const hasOrdersData = orderClosureRows.length > 0
   const orderUserRows = useMemo(
-    () => aggregateClosuresByUser(orderClosureRows),
-    [orderClosureRows],
+    () => aggregateClosuresByUser(orderClosureRows, formatEmployee),
+    [orderClosureRows, formatEmployee],
   )
   const orderDayRows = useMemo(
     () =>
@@ -411,7 +427,7 @@ export function StatisticsScreen({
         <div className="district-card statistics-card">
           <div className="workspace-meta district-user-meta">
             <span className="muted">
-              {userLogin}
+              {userName}
               {canViewAll ? ' (статистика персонала)' : ' (моя статистика)'}
             </span>
             <button type="button" className="btn" onClick={onBack}>
@@ -502,7 +518,7 @@ export function StatisticsScreen({
                     <option value="">Все</option>
                     {employeeUsers.map((u) => (
                       <option key={u.uuid} value={u.login}>
-                        {u.login} ({u.role})
+                        {personnelUserLabel(u)}
                       </option>
                     ))}
                   </select>
@@ -567,7 +583,7 @@ export function StatisticsScreen({
                           ) : (
                             fieldRows.map((row) => (
                               <tr key={row.user_login}>
-                                <td>{row.user_login}</td>
+                                <td>{formatEmployee(row.user_login)}</td>
                                 <td>{row.camera_surveys}</td>
                                 <td>{row.disruption_absent}</td>
                                 <td>{row.disruption_found}</td>
@@ -622,6 +638,7 @@ export function StatisticsScreen({
                               key={`${row.user_login}-${row.object_type}-${row.action}`}
                               row={row}
                               showLogin={canViewAll}
+                              formatLogin={formatEmployee}
                             />
                           ))
                         )}
@@ -944,6 +961,7 @@ export function StatisticsScreen({
                         <OrderClosureRow
                           key={`${row.object_key}-${row.created_at}-${row.user_login}`}
                           row={row}
+                          formatLogin={formatEmployee}
                         />
                       ))}
                     </tbody>
@@ -1065,13 +1083,15 @@ function formatOfficeAreaHa(row: OfficeStatisticsBreakdown): string {
 function OfficeBreakdownRow({
   row,
   showLogin,
+  formatLogin,
 }: {
   row: OfficeStatisticsBreakdown
   showLogin: boolean
+  formatLogin: (login: string) => string
 }) {
   return (
     <tr>
-      {showLogin && <td>{row.user_login}</td>}
+      {showLogin && <td>{formatLogin(row.user_login)}</td>}
       <td>{formatStatisticsObjectType(row.object_type)}</td>
       <td>{formatStatisticsAction(row.action)}</td>
       <td>{row.action_count}</td>
@@ -1108,7 +1128,13 @@ function ActionDetailRow({ row }: { row: StatisticsActionDetail }) {
   )
 }
 
-function OrderClosureRow({ row }: { row: StatisticsActionDetail }) {
+function OrderClosureRow({
+  row,
+  formatLogin,
+}: {
+  row: StatisticsActionDetail
+  formatLogin: (login: string) => string
+}) {
   const taskNumber = row.task_number?.trim() || row.object_key.slice(0, 8)
   const areaLabel = row.area_hectares > 0 ? formatHa(row.area_hectares) : '—'
   return (
@@ -1116,7 +1142,7 @@ function OrderClosureRow({ row }: { row: StatisticsActionDetail }) {
       <td>{formatDetailDate(row.created_at)}</td>
       <td title={row.object_key}>{taskNumber}</td>
       <td>{row.rayon?.trim() || '—'}</td>
-      <td>{row.user_login}</td>
+      <td>{formatLogin(row.user_login)}</td>
       <td>{areaLabel}</td>
       <td>{formatDurationMinutes(row.duration_minutes)}</td>
     </tr>

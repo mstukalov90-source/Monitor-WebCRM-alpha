@@ -2,6 +2,7 @@ export type UserRole = 'admin' | 'field' | 'office' | 'manager'
 
 export interface AuthUser {
   login: string
+  name?: string
   role: UserRole
   work_zones: number[]
   allowed_task_sources: TaskSource[]
@@ -12,12 +13,14 @@ export interface AuthUser {
   can_manage_field_task_status: boolean
   can_postpone_tasks: boolean
   can_create_users: boolean
+  can_view_server_monitor: boolean
   /** Present on login for API/QGIS clients; browser uses cookie and may ignore. */
   token?: string
 }
 
 export interface PersonnelUserCreate {
   login: string
+  name: string
   password: string
   role: UserRole
   work_zones: number[]
@@ -26,6 +29,7 @@ export interface PersonnelUserCreate {
 export interface PersonnelUser {
   uuid: string
   login: string
+  name?: string
   role: UserRole
   work_zones: number[]
   district_names: string[]
@@ -186,6 +190,8 @@ export type AppView =
   | 'order_tracks'
   | 'employee_locations'
   | 'field_score'
+  | 'server_monitor'
+  | 'ozn_match'
 
 export type FieldScoreValue = 'unsatisfactory' | 'satisfactory' | 'good'
 
@@ -255,6 +261,34 @@ export interface TrackFeature {
 export interface OrderTracksResult {
   district_name: string
   tracks: TrackFeature[]
+  errors: string[]
+}
+
+export interface OznMatchOrder {
+  order_key: string
+  task_number: string | null
+  rayon: string | null
+  area: number | null
+  status: string | null
+  executor: string | null
+  match_count: number
+  geometry: GeoJSON.Geometry
+}
+
+export interface OznMatchObject {
+  id: string
+  label: string
+  order_name?: string | null
+  ozn_date?: string | null
+  executor?: string | null
+  geometry: GeoJSON.Geometry
+}
+
+export interface OznMatchResult {
+  district_name: string
+  orders: OznMatchOrder[]
+  ozn_objects: OznMatchObject[]
+  matches: Record<string, string[]>
   errors: string[]
 }
 
@@ -1076,6 +1110,29 @@ export function isAreaSource(source: TaskSource): boolean {
   return source === 'area'
 }
 
+export function displayUserName(name: string | null | undefined, login: string): string {
+  const trimmed = (name ?? '').trim()
+  return trimmed || login
+}
+
+export function personnelUserLabel(user: {
+  name?: string | null
+  login: string
+  role: string
+}): string {
+  return `${displayUserName(user.name, user.login)} (${user.role})`
+}
+
+export function displayUserNameByLogin(
+  login: string | null | undefined,
+  users: { login: string; name?: string | null }[],
+): string {
+  const key = (login ?? '').trim()
+  if (!key) return '—'
+  const match = users.find((user) => user.login === key)
+  return displayUserName(match?.name, key)
+}
+
 export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaStatus {
   const key = String(attrs.status ?? '').trim().toLowerCase()
   if (
@@ -1088,4 +1145,79 @@ export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaSt
     return key
   }
   return 'free'
+}
+
+export type MonitorLevel = 'ok' | 'warn' | 'error'
+
+export interface MonitorDisk {
+  path: string
+  label: string
+  used_bytes: number
+  total_bytes: number
+  percent: number
+}
+
+export interface MonitorHost {
+  cpu_percent: number
+  loadavg: number[] | null
+  memory_used_bytes: number
+  memory_total_bytes: number
+  memory_percent: number
+  disks: MonitorDisk[]
+}
+
+export interface MonitorSlowQuery {
+  pid: number
+  duration_seconds: number
+  query: string
+}
+
+export interface MonitorDatabase {
+  connections: number
+  max_connections: number | null
+  active_queries: number
+  cache_hit_percent: number | null
+  size_bytes: number
+  slow_queries: MonitorSlowQuery[]
+}
+
+export interface MonitorApp {
+  status: string
+  rss_bytes: number | null
+  cpu_percent: number | null
+  pool_in_use: number
+  pool_max: number
+  requests_per_minute: number
+  p95_ms: number | null
+}
+
+export interface MonitorUnit {
+  name: string
+  kind: 'docker' | 'systemd'
+  state: string
+  health: string | null
+  cpu_percent: number | null
+  memory_bytes: number | null
+  started_at: string | null
+  uptime_seconds: number | null
+  restart_count: number
+  level: MonitorLevel
+}
+
+export interface MonitorOperation {
+  ts: string
+  name: string
+  status: MonitorLevel
+  detail: string
+}
+
+export interface MonitorStatus {
+  collected_at: string
+  overall: MonitorLevel
+  warnings: string[]
+  host: MonitorHost | null
+  database: MonitorDatabase | null
+  app: MonitorApp | null
+  units: MonitorUnit[]
+  operations: MonitorOperation[]
 }

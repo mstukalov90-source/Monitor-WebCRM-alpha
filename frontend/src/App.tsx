@@ -22,10 +22,12 @@ import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
 import { EmployeeLocationsScreen } from './components/EmployeeLocationsScreen'
 import { OrderTracksScreen } from './components/OrderTracksScreen'
+import { OznMatchScreen } from './components/OznMatchScreen'
 import { OfficeWorkModeModal } from './components/OfficeWorkModeModal'
 import { FieldScoreScreen } from './components/FieldScoreScreen'
 import { OrderStatusModal } from './components/OrderStatusModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
+import { ServerMonitorScreen } from './components/ServerMonitorScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
 import { flattenLayers } from './components/LayerControl'
 import { TaskEditModal } from './components/TaskEditModal'
@@ -63,7 +65,7 @@ import type {
   TaskResult,
   TaskSource,
 } from './types'
-import { isAreaSource, normalizeRayonName, TASK_FILTER_NONE } from './types'
+import { displayUserName, isAreaSource, normalizeRayonName, TASK_FILTER_NONE } from './types'
 import './App.css'
 
 function App() {
@@ -715,10 +717,12 @@ function App() {
     return <LoginScreen />
   }
 
+  const userDisplayName = displayUserName(user.name, user.login)
+
   if (appView === 'personnel' && user.can_manage_personnel) {
     return (
       <PersonnelScreen
-        userLogin={user.login}
+        userLogin={userDisplayName}
         canCreateUsers={user.can_create_users}
         onBack={() => setAppView('workspace')}
         onLogout={logout}
@@ -730,8 +734,19 @@ function App() {
     return (
       <StatisticsScreen
         userLogin={user.login}
+        userName={userDisplayName}
         userRole={user.role}
         canViewAll={user.can_manage_personnel}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
+  if (appView === 'server_monitor' && user.can_view_server_monitor) {
+    return (
+      <ServerMonitorScreen
+        userLogin={userDisplayName}
         onBack={() => setAppView('workspace')}
         onLogout={logout}
       />
@@ -742,7 +757,7 @@ function App() {
     return (
       <FieldScoreScreen
         orderKey={fieldScoreOrderKey}
-        userLogin={user.login}
+        userLogin={userDisplayName}
         canGenerateLetters={user.can_generate_letters}
         onBack={() => {
           setFieldScoreOrderKey(null)
@@ -757,7 +772,18 @@ function App() {
   if (appView === 'order_tracks' && user.can_manage_personnel) {
     return (
       <OrderTracksScreen
-        userLogin={user.login}
+        userLogin={userDisplayName}
+        initialRayon={collection.rayon || taskResult?.district_name || ''}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
+  if (appView === 'ozn_match' && user.can_manage_personnel) {
+    return (
+      <OznMatchScreen
+        userLogin={userDisplayName}
         initialRayon={collection.rayon || taskResult?.district_name || ''}
         onBack={() => setAppView('workspace')}
         onLogout={logout}
@@ -768,7 +794,7 @@ function App() {
   if (appView === 'employee_locations' && user.can_manage_personnel) {
     return (
       <EmployeeLocationsScreen
-        userLogin={user.login}
+        userLogin={userDisplayName}
         onBack={() => setAppView('workspace')}
         onLogout={logout}
       />
@@ -785,8 +811,9 @@ function App() {
           progress={collection.progress}
           canCollect={user.can_collect}
           canManagePersonnel={user.can_manage_personnel}
+          canViewServerMonitor={user.can_view_server_monitor}
           showAreaOrders={user.allowed_task_sources.includes('area')}
-          userLogin={user.login}
+          userLogin={userDisplayName}
           onRayonChange={collection.setRayon}
           onCollect={handleCollect}
           onLoadFieldTasks={handleLoadFieldTasks}
@@ -794,6 +821,10 @@ function App() {
           onOpenEmployeeLocations={() => setAppView('employee_locations')}
           onOpenOrderTracks={() => setAppView('order_tracks')}
           onOpenStatistics={() => setAppView('statistics')}
+          onOpenServerMonitor={() => setAppView('server_monitor')}
+          onOpenOznMatch={
+            user.can_manage_personnel ? () => setAppView('ozn_match') : undefined
+          }
           onOpenOrderStatus={
             user.can_manage_personnel ? () => setOrderStatusOpen(true) : undefined
           }
@@ -888,7 +919,7 @@ function App() {
             <span>
               Район: <strong>{taskResult.district_name}</strong>
             </span>
-            <span className="muted">{user.login}</span>
+            <span className="muted">{userDisplayName}</span>
             <span className="muted">На карте: {taskFeatures.length}</span>
             <button type="button" className="btn" onClick={handleChangeDistrict}>
               Сменить район
@@ -916,6 +947,11 @@ function App() {
             <button type="button" className="btn" onClick={() => setAppView('statistics')}>
               Статистика
             </button>
+            {user.can_view_server_monitor && (
+              <button type="button" className="btn" onClick={() => setAppView('server_monitor')}>
+                Мониторинг
+              </button>
+            )}
             <button type="button" className="btn" onClick={() => void logout()}>
               Выйти
             </button>

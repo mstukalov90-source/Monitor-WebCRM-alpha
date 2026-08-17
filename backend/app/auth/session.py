@@ -48,6 +48,7 @@ class UserSession:
     login: str
     role: str
     work_zones: list[int]
+    name: str = ""
 
 
 def districts_unrestricted(session: UserSession) -> bool:
@@ -87,6 +88,10 @@ def can_postpone_tasks(role: str) -> bool:
 
 
 def can_create_users(role: str) -> bool:
+    return role == "admin"
+
+
+def can_view_server_monitor(role: str) -> bool:
     return role == "admin"
 
 

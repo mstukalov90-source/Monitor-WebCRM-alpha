@@ -20,6 +20,7 @@ def create_token(session: UserSession) -> str:
         "login": session.login,
         "role": session.role,
         "work_zones": session.work_zones,
+        "name": session.name,
         "iat": now,
         "exp": now + timedelta(hours=settings.auth_token_ttl_hours),
     }
@@ -43,9 +44,11 @@ def decode_token(token: str) -> UserSession | None:
         return None
     work_zones_raw = payload.get("work_zones") or []
     work_zones = [int(g) for g in work_zones_raw]
+    name = str(payload.get("name") or login).strip()
     return UserSession(
         uuid=str(uuid),
         login=str(login),
         role=str(role),
         work_zones=work_zones,
+        name=name,
     )

@@ -436,6 +436,50 @@ def collect_tasks(
     filter_sent: bool = True,
     login: str = "",
 ) -> tuple[TaskResult, Any]:
+    try:
+        result, extra = _collect_tasks_impl(
+            conn,
+            rayon,
+            apply_date_filter,
+            persist=persist,
+            filter_sent=filter_sent,
+            login=login,
+        )
+    except Exception as exc:
+        from app.monitor.operations import record_operation
+
+        record_operation(f"collect «{rayon}»", "error", str(exc)[:240])
+        raise
+    _record_collect_result(rayon, result)
+    return result, extra
+
+
+def _record_collect_result(rayon: str, result: TaskResult) -> None:
+    from app.monitor.operations import record_operation
+
+    n_err = len(result.errors)
+    if n_err and result.total_count == 0:
+        status = "error"
+    elif n_err:
+        status = "warn"
+    else:
+        status = "ok"
+    record_operation(
+        f"collect «{rayon}»",
+        status,
+        f"{result.total_count} задач, {n_err} ошибок",
+    )
+
+
+def _collect_tasks_impl(
+    conn: PgConnection,
+    rayon: str,
+    apply_date_filter: bool,
+    *,
+    persist: bool = True,
+    filter_sent: bool = True,
+    login: str = "",
+) -> tuple[TaskResult, Any]:
     if persist and login:
         persist_district_tasks(conn, rayon, apply_date_filter, login)
 

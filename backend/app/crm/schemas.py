@@ -151,6 +151,7 @@ class PostponeTaskRequest(BaseModel):
 class PersonnelUserOut(BaseModel):
     uuid: str
     login: str
+    name: str
     role: str
     work_zones: list[int]
     district_names: list[str]
@@ -162,6 +163,7 @@ class PersonnelUserUpdate(BaseModel):
 
 class PersonnelUserCreate(BaseModel):
     login: str
+    name: str
     password: str
     role: str
     work_zones: list[int] = Field(default_factory=list)
@@ -456,6 +458,34 @@ class FieldScoreContextOut(BaseModel):
 class FieldScoreUpsertRequest(BaseModel):
     task_scores: dict[str, FieldScoreValue] = Field(default_factory=dict)
     order_score: FieldScoreValue | None = None
+
+
+class OznMatchOrderOut(BaseModel):
+    order_key: str
+    task_number: str | None = None
+    rayon: str | None = None
+    area: float | None = None
+    status: str | None = None
+    executor: str | None = None
+    match_count: int
+    geometry: dict[str, Any]
+
+
+class OznMatchObjectOut(BaseModel):
+    id: str
+    label: str
+    order_name: str | None = None
+    ozn_date: str | None = None
+    executor: str | None = None
+    geometry: dict[str, Any]
+
+
+class OznMatchResultOut(BaseModel):
+    district_name: str
+    orders: list[OznMatchOrderOut] = Field(default_factory=list)
+    ozn_objects: list[OznMatchObjectOut] = Field(default_factory=list)
+    matches: dict[str, list[str]] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
 
 
 class EmployeeLocationOut(BaseModel):

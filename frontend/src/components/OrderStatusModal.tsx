@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchOrderStatusFeed } from '../api/client'
+import { fetchOrderStatusFeed, fetchPersonnelUsers } from '../api/client'
 import { formatStatisticsAction, orderStatusDateRange } from '../lib/statisticsLabels'
-import type { FieldScoreValue, StatisticsActionDetail } from '../types'
-import { FIELD_SCORE_LABELS } from '../types'
+import type { FieldScoreValue, PersonnelUser, StatisticsActionDetail } from '../types'
+import { displayUserNameByLogin, FIELD_SCORE_LABELS } from '../types'
 
 interface OrderStatusModalProps {
   onClose: () => void
@@ -51,11 +51,13 @@ function tabCount(counts: Record<string, number>, tab: OrderStatusTab): number {
 
 function EventList({
   events,
+  users,
   busy,
   onSelect,
   onQualityAssessment,
 }: {
   events: StatisticsActionDetail[]
+  users: PersonnelUser[]
   busy: boolean
   onSelect: (event: StatisticsActionDetail) => void
   onQualityAssessment?: (event: StatisticsActionDetail) => void
@@ -79,7 +81,8 @@ function EventList({
               >
                 <span className="order-status-item-main">{eventLabel(event)}</span>
                 <span className="order-status-item-meta muted small">
-                  {formatEventDate(event.created_at)} · {event.user_login} ·{' '}
+                  {formatEventDate(event.created_at)} ·{' '}
+                  {displayUserNameByLogin(event.user_login, users)} ·{' '}
                   {formatStatisticsAction(event.action)}
                 </span>
               </button>
@@ -119,12 +122,19 @@ export function OrderStatusModal({
   const [periodDays, setPeriodDays] = useState<PeriodDays>(7)
   const [activeTab, setActiveTab] = useState<OrderStatusTab>('surveyed')
   const [events, setEvents] = useState<StatisticsActionDetail[]>([])
+  const [users, setUsers] = useState<PersonnelUser[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const dateRange = useMemo(() => orderStatusDateRange(periodDays), [periodDays])
+
+  useEffect(() => {
+    fetchPersonnelUsers()
+      .then(setUsers)
+      .catch(() => setUsers([]))
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -208,6 +218,7 @@ export function OrderStatusModal({
           <section className="order-status-section">
             <EventList
               events={events}
+              users={users}
               busy={busy}
               onSelect={(e) => void handleSelect(e)}
               onQualityAssessment={

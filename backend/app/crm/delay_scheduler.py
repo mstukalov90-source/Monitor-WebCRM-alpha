@@ -67,7 +67,17 @@ async def delayed_tasks_restore_loop(stop: asyncio.Event) -> None:
         try:
             restored = await asyncio.to_thread(run_restore_due_delayed_tasks)
             logger.info("Delayed-tasks restore finished: %s task(s)", restored)
-        except Exception:
+            from app.monitor.operations import record_operation
+
+            record_operation(
+                "restore delayed tasks",
+                "ok",
+                f"{restored} задач",
+            )
+        except Exception as exc:
+            from app.monitor.operations import record_operation
+
+            record_operation("restore delayed tasks", "error", str(exc)[:240])
             logger.exception("Delayed-tasks restore failed")
 
 
@@ -88,5 +98,15 @@ async def analise_reset_loop(stop: asyncio.Event) -> None:
         try:
             cleared = await asyncio.to_thread(run_clear_stale_analise_locks)
             logger.info("Analise/pre_analise reset finished: %s order(s)", cleared)
-        except Exception:
+            from app.monitor.operations import record_operation
+
+            record_operation(
+                "analise/pre_analise reset",
+                "ok",
+                f"сброшено {cleared} заказов",
+            )
+        except Exception as exc:
+            from app.monitor.operations import record_operation
+
+            record_operation("analise/pre_analise reset", "error", str(exc)[:240])
             logger.exception("Analise/pre_analise reset failed")

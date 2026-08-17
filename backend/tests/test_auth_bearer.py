@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import jwt
 from fastapi import HTTPException
 
 from app.auth.deps import _extract_bearer_token, get_current_user
 from app.auth.session import UserSession
-from app.auth.tokens import create_token, decode_token
+from app.auth.tokens import ALGORITHM, create_token, decode_token
 from app.routes.auth import AuthLoginOut, LoginRequest, login
 
 
@@ -136,14 +138,63 @@ class LoginTokenTests(unittest.TestCase):
 
         self.assertIsInstance(result, AuthLoginOut)
         self.assertEqual(result.login, "gena")
+        self.assertEqual(result.name, "gena")
         self.assertTrue(result.can_generate_letters)
         self.assertTrue(result.token)
         self.assertIsNotNone(decoded)
         assert decoded is not None
         self.assertEqual(decoded.login, "gena")
+        self.assertEqual(decoded.name, "gena")
         response.set_cookie.assert_called_once()
         cookie_kwargs = response.set_cookie.call_args.kwargs
         self.assertEqual(cookie_kwargs["value"], result.token)
+
+
+class DecodeTokenNameTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.settings = MagicMock()
+        self.settings.auth_secret_key = "test-secret-key-for-jwt-32bytes!!"
+        self.settings.auth_token_ttl_hours = 12
+
+    @patch("app.auth.tokens.get_settings")
+    def test_old_token_without_name_falls_back_to_login(
+        self,
+        get_settings_mock: MagicMock,
+    ) -> None:
+        get_settings_mock.return_value = self.settings
+        now = datetime.now(timezone.utc)
+        token = jwt.encode(
+            {
+                "sub": "11111111-2222-3333-4444-555555555555",
+                "login": "gena",
+                "role": "office",
+                "work_zones": [1, 2],
+                "iat": now,
+                "exp": now + timedelta(hours=12),
+            },
+            self.settings.auth_secret_key,
+            algorithm=ALGORITHM,
+        )
+        decoded = decode_token(token)
+        self.assertIsNotNone(decoded)
+        assert decoded is not None
+        self.assertEqual(decoded.login, "gena")
+        self.assertEqual(decoded.name, "gena")
+
+    @patch("app.auth.tokens.get_settings")
+    def test_token_keeps_display_name(self, get_settings_mock: MagicMock) -> None:
+        get_settings_mock.return_value = self.settings
+        session = UserSession(
+            uuid="11111111-2222-3333-4444-555555555555",
+            login="gena",
+            role="office",
+            work_zones=[1, 2],
+            name="Иванов И. И.",
+        )
+        decoded = decode_token(create_token(session))
+        self.assertIsNotNone(decoded)
+        assert decoded is not None
+        self.assertEqual(decoded.name, "Иванов И. И.")
 
 
 if __name__ == "__main__":

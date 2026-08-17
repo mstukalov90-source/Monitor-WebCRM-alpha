@@ -22,7 +22,7 @@ from app.crm.store import (
 from app.layers.geojson import list_districts_with_gid
 
 MANAGEABLE_ROLES = ("field", "office")
-PERSONNEL_LIST_ROLES = ("field", "office", "manager")
+PERSONNEL_LIST_ROLES = ("field", "office", "manager", "admin")
 CREATABLE_ROLES = ("field", "office", "manager")
 WorkflowTarget = Literal["active", "field", "clear"]
 TaskTable = Literal["field", "area"]
@@ -273,11 +273,23 @@ def _validate_work_zone_gids(conn: PgConnection, gids: list[int]) -> None:
         raise PersonnelError(f"Неизвестные gid районов: {invalid}")
 
 
+def _personnel_user_out(conn: PgConnection, row: dict[str, Any]) -> dict[str, Any]:
+    work_zones = [int(g) for g in (row["work_zones"] or [])]
+    return {
+        "uuid": row["uuid"],
+        "login": row["login"],
+        "name": str(row.get("name") or "").strip(),
+        "role": row["role"],
+        "work_zones": work_zones,
+        "district_names": _district_names_for_gids(conn, work_zones),
+    }
+
+
 def list_personnel_users(conn: PgConnection) -> list[dict[str, Any]]:
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT uuid::text, login, role, work_zones
+            SELECT uuid::text, login, name, role, work_zones
             FROM crm.users
             WHERE role = ANY(%s)
             ORDER BY login
@@ -286,19 +298,7 @@ def list_personnel_users(conn: PgConnection) -> list[dict[str, Any]]:
         )
         rows = cur.fetchall()
 
-    result: list[dict[str, Any]] = []
-    for row in rows:
-        work_zones = [int(g) for g in (row["work_zones"] or [])]
-        result.append(
-            {
-                "uuid": row["uuid"],
-                "login": row["login"],
-                "role": row["role"],
-                "work_zones": work_zones,
-                "district_names": _district_names_for_gids(conn, work_zones),
-            }
-        )
-    return result
+    return [_personnel_user_out(conn, row) for row in rows]
 
 
 def update_user_work_zones(
@@ -313,7 +313,7 @@ def update_user_work_zones(
             UPDATE crm.users
             SET work_zones = %s
             WHERE uuid = %s::uuid AND role = ANY(%s)
-            RETURNING uuid::text, login, role, work_zones
+            RETURNING uuid::text, login, name, role, work_zones
             """,
             (work_zones, user_uuid, list(PERSONNEL_LIST_ROLES)),
         )
@@ -321,14 +321,7 @@ def update_user_work_zones(
     if not row:
         return None
     conn.commit()
-    zones = [int(g) for g in (row["work_zones"] or [])]
-    return {
-        "uuid": row["uuid"],
-        "login": row["login"],
-        "role": row["role"],
-        "work_zones": zones,
-        "district_names": _district_names_for_gids(conn, zones),
-    }
+    return _personnel_user_out(conn, row)
 
 
 def create_personnel_user(
@@ -337,13 +330,17 @@ def create_personnel_user(
     password: str,
     role: str,
     work_zones: list[int],
+    name: str,
 ) -> dict[str, Any]:
     login = login.strip()
     password = password.strip()
     role = role.strip()
+    name = name.strip()
 
     if not login:
         raise PersonnelError("Логин не может быть пустым")
+    if not name:
+        raise PersonnelError("ФИО не может быть пустым")
     if not password:
         raise PersonnelError("Пароль не может быть пустым")
     if role not in CREATABLE_ROLES:
@@ -358,11 +355,11 @@ def create_personnel_user(
 
         cur.execute(
             """
-            INSERT INTO crm.users (login, password, role, work_zones)
-            VALUES (%s, crypt(%s, gen_salt('bf')), %s, %s)
-            RETURNING uuid::text, login, role, work_zones
+            INSERT INTO crm.users (login, name, password, role, work_zones)
+            VALUES (%s, %s, crypt(%s, gen_salt('bf')), %s, %s)
+            RETURNING uuid::text, login, name, role, work_zones
             """,
-            (login, password, role, work_zones),
+            (login, name, password, role, work_zones),
         )
         row = cur.fetchone()
     conn.commit()
@@ -370,14 +367,7 @@ def create_personnel_user(
     if not row:
         raise PersonnelError("Не удалось создать пользователя")
 
-    zones = [int(g) for g in (row["work_zones"] or [])]
-    return {
-        "uuid": row["uuid"],
-        "login": row["login"],
-        "role": row["role"],
-        "work_zones": zones,
-        "district_names": _district_names_for_gids(conn, zones),
-    }
+    return _personnel_user_out(conn, row)
 
 
 def _validate_executor(conn: PgConnection, executor: str | None) -> None:

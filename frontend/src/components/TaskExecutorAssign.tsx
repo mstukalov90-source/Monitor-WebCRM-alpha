@@ -5,6 +5,7 @@ import {
   fetchPersonnelUsers,
 } from '../api/client'
 import type { PersonnelUser } from '../types'
+import { displayUserNameByLogin, personnelUserLabel } from '../types'
 
 interface TaskExecutorAssignProps {
   table: 'field' | 'area'
@@ -56,7 +57,7 @@ export function TaskExecutorAssign({
     }
   }
 
-  const displayExecutor = initialExecutor?.trim() || '—'
+  const displayExecutor = displayUserNameByLogin(initialExecutor, users)
 
   return (
     <div className="form-section">
@@ -73,7 +74,7 @@ export function TaskExecutorAssign({
               <option value="">— не назначен —</option>
               {users.map((u) => (
                 <option key={u.uuid} value={u.login}>
-                  {u.login} ({u.role})
+                  {personnelUserLabel(u)}
                 </option>
               ))}
             </select>

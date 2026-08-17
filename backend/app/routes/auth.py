@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 
 from app.auth.deps import get_current_user
-from app.auth.service import authenticate
+from app.auth.service import authenticate, session_with_db_name
 from app.auth.session import (
     UserSession,
     allowed_task_sources,
@@ -16,6 +16,7 @@ from app.auth.session import (
     can_manage_field_task_status,
     can_manage_personnel,
     can_postpone_tasks,
+    can_view_server_monitor,
     default_task_source,
 )
 from app.auth.tokens import create_token
@@ -32,6 +33,7 @@ class LoginRequest(BaseModel):
 
 class AuthUserOut(BaseModel):
     login: str
+    name: str
     role: str
     work_zones: list[int]
     allowed_task_sources: list[str]
@@ -42,6 +44,7 @@ class AuthUserOut(BaseModel):
     can_manage_field_task_status: bool
     can_postpone_tasks: bool
     can_create_users: bool
+    can_view_server_monitor: bool
 
 
 class AuthLoginOut(AuthUserOut):
@@ -83,12 +86,15 @@ def logout(response: Response) -> dict[str, str]:
 
 @router.get("/me", response_model=AuthUserOut)
 def me(user: UserSession = Depends(get_current_user)) -> AuthUserOut:
+    with get_connection() as conn:
+        user = session_with_db_name(conn, user)
     return _user_out(user)
 
 
 def _user_out(session: UserSession) -> AuthUserOut:
     return AuthUserOut(
         login=session.login,
+        name=session.name or session.login,
         role=session.role,
         work_zones=session.work_zones,
         allowed_task_sources=allowed_task_sources(session.role),
@@ -99,4 +105,5 @@ def _user_out(session: UserSession) -> AuthUserOut:
         can_manage_field_task_status=can_manage_field_task_status(session.role),
         can_postpone_tasks=can_postpone_tasks(session.role),
         can_create_users=can_create_users(session.role),
+        can_view_server_monitor=can_view_server_monitor(session.role),
     )

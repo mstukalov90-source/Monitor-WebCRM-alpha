@@ -19,7 +19,7 @@ import type {
   UserRole,
   WorkflowTargetStatus,
 } from '../types'
-import { normalizeRayonName } from '../types'
+import { displayUserNameByLogin, normalizeRayonName, personnelUserLabel } from '../types'
 
 type TaskTab = 'active' | 'field' | 'clear' | 'area'
 type CreatableRole = 'field' | 'office' | 'manager'
@@ -79,6 +79,7 @@ export function PersonnelScreen({
 
   const [showAddUser, setShowAddUser] = useState(false)
   const [newLogin, setNewLogin] = useState('')
+  const [newName, setNewName] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<CreatableRole>('field')
   const [newZones, setNewZones] = useState<number[]>([])
@@ -175,6 +176,7 @@ export function PersonnelScreen({
 
   const resetAddForm = () => {
     setNewLogin('')
+    setNewName('')
     setNewPassword('')
     setNewRole('field')
     setNewZones([])
@@ -192,6 +194,7 @@ export function PersonnelScreen({
     try {
       const created = await createPersonnelUser({
         login: newLogin.trim(),
+        name: newName.trim(),
         password: newPassword,
         role: newRole as UserRole,
         work_zones: newZones,
@@ -336,7 +339,7 @@ export function PersonnelScreen({
             >
               {users.map((u) => (
                 <option key={u.uuid} value={u.uuid}>
-                  {u.login} ({u.role})
+                  {personnelUserLabel(u)}
                 </option>
               ))}
             </select>
@@ -477,7 +480,7 @@ export function PersonnelScreen({
                       <option value="">— выберите —</option>
                       {executorUsers.map((u) => (
                         <option key={u.uuid} value={u.login}>
-                          {u.login} ({u.role})
+                          {personnelUserLabel(u)}
                         </option>
                       ))}
                     </select>
@@ -557,7 +560,9 @@ export function PersonnelScreen({
                       </td>
                       <td>{t.type || '—'}</td>
                       <td>{t.rayon ? normalizeRayonName(t.rayon) : '—'}</td>
-                      {taskTab === 'field' && <td>{t.executor || '—'}</td>}
+                      {taskTab === 'field' && (
+                        <td>{displayUserNameByLogin(t.executor, users)}</td>
+                      )}
                       {taskTab === 'area' && <td>{t.status || '—'}</td>}
                       {taskTab === 'area' && (
                         <td>
@@ -573,7 +578,9 @@ export function PersonnelScreen({
                           )}
                         </td>
                       )}
-                      {taskTab === 'area' && <td>{t.executor || '—'}</td>}
+                      {taskTab === 'area' && (
+                        <td>{displayUserNameByLogin(t.executor, users)}</td>
+                      )}
                       {(taskTab === 'field' || taskTab === 'clear') && (
                         <td>{t.sent_at ? t.sent_at.slice(0, 10) : '—'}</td>
                       )}
@@ -599,6 +606,18 @@ export function PersonnelScreen({
                 onChange={(e) => setNewLogin(e.target.value)}
                 disabled={addSaving}
                 autoComplete="off"
+              />
+            </label>
+
+            <label className="district-field">
+              <span>ФИО</span>
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                disabled={addSaving}
+                autoComplete="off"
+                placeholder="Фамилия И. О."
               />
             </label>
 
@@ -649,7 +668,7 @@ export function PersonnelScreen({
               <button
                 type="button"
                 className="btn primary"
-                disabled={!newLogin.trim() || !newPassword || addSaving}
+                disabled={!newLogin.trim() || !newName.trim() || !newPassword || addSaving}
                 onClick={() => void handleCreateUser()}
               >
                 {addSaving ? 'Создание…' : 'Создать'}

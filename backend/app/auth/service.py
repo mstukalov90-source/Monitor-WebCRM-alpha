@@ -21,7 +21,7 @@ def authenticate(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT uuid::text, login, role, work_zones
+                SELECT uuid::text, login, role, work_zones, name
                 FROM crm.users
                 WHERE login = %s AND password = crypt(%s, password)
                 """,
@@ -37,11 +37,40 @@ def authenticate(
     if not row:
         return None
     work_zones = [int(g) for g in (row[3] or [])]
+    name = str(row[4] or "").strip()
     return UserSession(
         uuid=str(row[0]),
         login=str(row[1]),
         role=str(row[2]),
         work_zones=work_zones,
+        name=name,
+    )
+
+
+def session_with_db_name(conn: PgConnection, session: UserSession) -> UserSession:
+    """Fill display name from crm.users so old JWTs without name still show ФИО."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT name FROM crm.users WHERE uuid = %s::uuid",
+                (session.uuid,),
+            )
+            row = cur.fetchone()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return session
+    name = str(row[0] or "").strip() if row else ""
+    if not name or name == session.name:
+        return session
+    return UserSession(
+        uuid=session.uuid,
+        login=session.login,
+        role=session.role,
+        work_zones=session.work_zones,
+        name=name,
     )
 
 

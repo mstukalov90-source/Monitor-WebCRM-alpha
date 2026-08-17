@@ -11,13 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.crm.delay_scheduler import analise_reset_loop, delayed_tasks_restore_loop
 from app.db import close_pool, init_pool
+from app.monitor.app_metrics import RequestMetricsMiddleware
 from app.routes import (
     auth,
     employee_locations,
     field_score,
     layers,
     letters,
+    monitor,
     order_tracks,
+    ozn_match,
     personnel,
     photos,
     tasks,
@@ -54,6 +57,7 @@ app = FastAPI(
 )
 
 settings = get_settings()
+app.add_middleware(RequestMetricsMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -67,10 +71,12 @@ app.include_router(layers.router)
 app.include_router(tasks.router)
 app.include_router(letters.router)
 app.include_router(order_tracks.router)
+app.include_router(ozn_match.router)
 app.include_router(employee_locations.router)
 app.include_router(field_score.router)
 app.include_router(photos.router)
 app.include_router(personnel.router)
+app.include_router(monitor.router)
 
 
 @app.get("/health")

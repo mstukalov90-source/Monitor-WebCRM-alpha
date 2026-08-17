@@ -26,6 +26,7 @@ interface DistrictStartScreenProps {
   progress: CollectProgress | null
   canCollect: boolean
   canManagePersonnel?: boolean
+  canViewServerMonitor?: boolean
   showAreaOrders?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
@@ -36,6 +37,8 @@ interface DistrictStartScreenProps {
   onOpenOrderTracks?: () => void
   onOpenStatistics?: () => void
   onOpenOrderStatus?: () => void
+  onOpenOznMatch?: () => void
+  onOpenServerMonitor?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -46,6 +49,7 @@ export function DistrictStartScreen({
   progress,
   canCollect,
   canManagePersonnel,
+  canViewServerMonitor,
   showAreaOrders = false,
   userLogin,
   onRayonChange,
@@ -56,6 +60,8 @@ export function DistrictStartScreen({
   onOpenOrderTracks,
   onOpenStatistics,
   onOpenOrderStatus,
+  onOpenOznMatch,
+  onOpenServerMonitor,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -194,9 +200,19 @@ export function DistrictStartScreen({
                 Состояние заказов
               </button>
             )}
+            {canManagePersonnel && onOpenOznMatch && (
+              <button type="button" className="btn" onClick={onOpenOznMatch}>
+                Сопоставление заказов ОЗН и Мониторинг
+              </button>
+            )}
             {onOpenStatistics && (
               <button type="button" className="btn" onClick={onOpenStatistics}>
                 Статистика
+              </button>
+            )}
+            {canViewServerMonitor && onOpenServerMonitor && (
+              <button type="button" className="btn" onClick={onOpenServerMonitor}>
+                Мониторинг
               </button>
             )}
             <button type="button" className="btn" onClick={() => void onLogout()}>

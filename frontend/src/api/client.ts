@@ -33,9 +33,11 @@ import type {
   FieldScoreContext,
   FieldScoreSaved,
   FieldScoreValue,
+  OznMatchResult,
   OatiLetterDraft,
   OatiLetterGeneratePayload,
   OatiLetterGenerateResult,
+  MonitorStatus,
 } from '../types'
 
 const API_BASE = ''
@@ -758,6 +760,11 @@ export function fetchOrderTracks(rayon: string): Promise<OrderTracksResult> {
   return request(`/api/order-tracks?${qs}`)
 }
 
+export function fetchOznMatch(rayon?: string): Promise<OznMatchResult> {
+  const qs = rayon ? new URLSearchParams({ rayon }) : ''
+  return request(`/api/ozn-match${qs ? `?${qs}` : ''}`, undefined, 90_000)
+}
+
 export function fetchFieldScoreContext(orderKey: string): Promise<FieldScoreContext> {
   return request(`/api/field-score/${encodeURIComponent(orderKey)}`)
 }
@@ -778,4 +785,8 @@ export function saveFieldScore(
 export function fetchEmployeeLocations(rayon?: string): Promise<EmployeeLocationsResult> {
   const qs = rayon ? new URLSearchParams({ rayon }) : ''
   return request(`/api/employee-locations${qs ? `?${qs}` : ''}`)
+}
+
+export function fetchMonitorStatus(): Promise<MonitorStatus> {
+  return request('/api/monitor/status')
 }
