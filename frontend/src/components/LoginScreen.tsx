@@ -59,6 +59,10 @@ export function LoginScreen() {
         </form>
 
         {error && <div className="error-banner">{error}</div>}
+
+        <a href="/upload" className="login-extra-link">
+          Загрузить Excel
+        </a>
       </div>
     </div>
   )

@@ -11,6 +11,7 @@ RSYNC_EXCLUDES=(
   --exclude backend/venv
   --exclude backend/.env
   --exclude backend/data/photo_cache
+  --exclude backend/data/excel_inbox
   --exclude frontend/node_modules
   --exclude frontend/dist
   --exclude .git

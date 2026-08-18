@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     """Windows folder on operator PCs with Объектив photos (not mounted on the server)."""
     letter_cache_dir: str = "./data/letter_cache"
     """Short-lived DOCX cache for browser download (GET after POST)."""
+    excel_upload_dir: str = "./data/excel_inbox"
+    """Shared directory for public Excel uploads consumed by another server app."""
+    excel_upload_max_bytes: int = 10 * 1024 * 1024
+    """Max upload size (matches nginx client_max_body_size 10m)."""
     auth_secret_key: str = "change-me-in-production-use-32-chars-min"
     auth_cookie_name: str = "monitor_session"
     auth_token_ttl_hours: int = 12

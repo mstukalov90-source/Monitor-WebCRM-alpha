@@ -55,6 +55,8 @@ sed -e "s|__SERVER_IP__|$SERVER_IP|g" \
     "$DEPLOY/.env.production.template" > "$ROOT/backend/.env"
 chmod 600 "$ROOT/backend/.env"
 
+mkdir -p /opt/monitor/downloaded_photo /opt/monitor/mggtfield_photo /opt/monitor/excel_inbox
+
 echo "=== SQL migrations ==="
 export PGPASSWORD="$DB_PASSWORD"
 for f in "$ROOT"/sql/0*.sql; do

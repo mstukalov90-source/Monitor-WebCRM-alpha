@@ -206,11 +206,12 @@ SELECT filename FROM webcrm.schema_migrations ORDER BY filename;
 
 1. `systemctl is-active monitor-webcrm nginx` → `active`
 2. `curl http://127.0.0.1:8080/health` → `{"status":"ok"}`
-3. В `.env` есть `AUTH_SECRET_KEY`, `PHOTO_STORAGE_DIR`, `PHOTO_SFTP_ENABLED=false`
+3. В `.env` есть `AUTH_SECRET_KEY`, `PHOTO_STORAGE_DIR`, `PHOTO_SFTP_ENABLED=false`, `EXCEL_UPLOAD_DIR=/opt/monitor/excel_inbox`
 4. Миграции: `SELECT filename FROM webcrm.schema_migrations ORDER BY filename;`
 5. Фото: каталоги `/opt/monitor/downloaded_photo` и `/opt/monitor/mggtfield_photo`
-6. SPA открывается с LAN: `http://172.21.198.219/`
-7. Nginx conf для внешнего API **не** менялся
+6. Excel для второго приложения: каталог `/opt/monitor/excel_inbox`, страница `http://172.21.198.219/upload`
+7. SPA открывается с LAN: `http://172.21.198.219/`
+8. Nginx conf для внешнего API **не** менялся
 
 **Прод + тест с локальной машины** (VPN для 172.21.198.219):
 

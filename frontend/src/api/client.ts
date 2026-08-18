@@ -106,6 +106,58 @@ export function logout(): Promise<void> {
   return request('/api/auth/logout', { method: 'POST' })
 }
 
+export type ExcelUploadResult = {
+  filename: string
+  size: number
+  saved_at: string
+}
+
+function errorFromApiBody(text: string, fallback: string): Error {
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown }
+    const detail = parsed.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return new Error(detail)
+    }
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0] as { msg?: string }
+      if (typeof first?.msg === 'string' && first.msg.trim()) {
+        return new Error(first.msg)
+      }
+    }
+  } catch {
+    /* use fallback */
+  }
+  return new Error(text || fallback)
+}
+
+export async function uploadExcelFile(file: File): Promise<ExcelUploadResult> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 60_000)
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch(`${API_BASE}/api/excel-uploads`, {
+      method: 'POST',
+      credentials: 'include',
+      body,
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw errorFromApiBody(text, res.statusText)
+    }
+    return res.json() as Promise<ExcelUploadResult>
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера')
+    }
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export function fetchLayersConfig(): Promise<{ groups: LayerGroupConfig[] }> {
   return request('/api/config/layers')
 }

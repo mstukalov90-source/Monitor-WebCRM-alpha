@@ -28,6 +28,9 @@ merge_env_key GEOCODE_USER_AGENT '"MONITOR-WebCRM/1.0 (oati-letters)"'
 merge_env_key GEOCODE_TIMEOUT_SECONDS 8.0
 merge_env_key AUTH_COOKIE_NAME monitor_session
 merge_env_key AUTH_TOKEN_TTL_HOURS 12
+merge_env_key EXCEL_UPLOAD_DIR /opt/monitor/excel_inbox
+
+mkdir -p /opt/monitor/excel_inbox
 
 if [[ -f "$ENV_FILE" ]] && ! grep -q "^AUTH_SECRET_KEY=" "$ENV_FILE"; then
   _auth_secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"

@@ -24,3 +24,5 @@ backend/data/photo_cache/*
 !backend/data/photo_cache/.gitkeep
 backend/data/letter_cache/*
 !backend/data/letter_cache/.gitkeep
+backend/data/excel_inbox/*
+!backend/data/excel_inbox/.gitkeep

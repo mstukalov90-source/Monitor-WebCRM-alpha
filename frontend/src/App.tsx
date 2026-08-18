@@ -18,6 +18,7 @@ import { AreaOrderPickerModal } from './components/AreaOrderPickerModal'
 import { AreaTaskViewModal } from './components/AreaTaskViewModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
+import { ExcelUploadScreen } from './components/ExcelUploadScreen'
 import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
 import { EmployeeLocationsScreen } from './components/EmployeeLocationsScreen'
@@ -701,6 +702,10 @@ function App() {
     if (officeStage && taskResult) {
       void loadStageOrdersForRayon(taskResult.district_name, officeStage, taskResult)
     }
+  }
+
+  if (window.location.pathname.replace(/\/+$/, '') === '/upload') {
+    return <ExcelUploadScreen />
   }
 
   if (authLoading) {

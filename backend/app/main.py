@@ -15,6 +15,7 @@ from app.monitor.app_metrics import RequestMetricsMiddleware
 from app.routes import (
     auth,
     employee_locations,
+    excel_uploads,
     field_score,
     layers,
     letters,
@@ -67,6 +68,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(excel_uploads.router)
 app.include_router(layers.router)
 app.include_router(tasks.router)
 app.include_router(letters.router)
