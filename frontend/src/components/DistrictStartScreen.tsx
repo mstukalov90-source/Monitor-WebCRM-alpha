@@ -27,6 +27,7 @@ interface DistrictStartScreenProps {
   canCollect: boolean
   canManagePersonnel?: boolean
   canViewServerMonitor?: boolean
+  canCloseViaZip?: boolean
   showAreaOrders?: boolean
   userLogin: string
   onRayonChange: (v: string) => void
@@ -39,6 +40,7 @@ interface DistrictStartScreenProps {
   onOpenOrderStatus?: () => void
   onOpenOznMatch?: () => void
   onOpenServerMonitor?: () => void
+  onOpenZipClose?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -50,6 +52,7 @@ export function DistrictStartScreen({
   canCollect,
   canManagePersonnel,
   canViewServerMonitor,
+  canCloseViaZip,
   showAreaOrders = false,
   userLogin,
   onRayonChange,
@@ -62,6 +65,7 @@ export function DistrictStartScreen({
   onOpenOrderStatus,
   onOpenOznMatch,
   onOpenServerMonitor,
+  onOpenZipClose,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -213,6 +217,11 @@ export function DistrictStartScreen({
             {canViewServerMonitor && onOpenServerMonitor && (
               <button type="button" className="btn" onClick={onOpenServerMonitor}>
                 Мониторинг
+              </button>
+            )}
+            {canCloseViaZip && onOpenZipClose && (
+              <button type="button" className="btn" onClick={onOpenZipClose}>
+                Закрытие через ZIP
               </button>
             )}
             <button type="button" className="btn" onClick={() => void onLogout()}>

@@ -26,3 +26,5 @@ backend/data/letter_cache/*
 !backend/data/letter_cache/.gitkeep
 backend/data/excel_inbox/*
 !backend/data/excel_inbox/.gitkeep
+backend/data/zip_close_staging/*
+!backend/data/zip_close_staging/.gitkeep

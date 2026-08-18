@@ -35,6 +35,42 @@ export interface PersonnelUser {
   district_names: string[]
 }
 
+export type ZipCloseOutcome = 'ok' | 'skip' | 'mismatch' | 'error'
+export type ZipCloseKind = 'field_order' | 'area' | 'unknown'
+export type ZipCloseAction = 'clear' | 'observed' | 'area_done' | 'track_only'
+
+export interface ZipCloseItem {
+  filename: string
+  kind: ZipCloseKind
+  order_number: string | null
+  order_uuid: string | null
+  rayon: string | null
+  outcome: ZipCloseOutcome
+  will_write: boolean
+  close_kind: ZipCloseAction | null
+  photo_count: number
+  db_status: string | null
+  actions: string[]
+  warnings: string[]
+  skip_reason: string | null
+  error: string | null
+  applied?: boolean
+  apply_error?: string | null
+}
+
+export interface ZipClosePreview {
+  preview_id: string
+  username: string
+  can_apply: boolean
+  items: ZipCloseItem[]
+}
+
+export interface ZipCloseApplyResult {
+  username: string
+  applied_count: number
+  items: ZipCloseItem[]
+}
+
 export interface DistrictOption {
   gid: number
   rayon: string
@@ -690,7 +726,7 @@ export const CRM_GROUP_ORDERS = 'Новые ордера ОАТИ, АВР и з�
 export interface TaskTableColumn {
   field: string
   label: string
-  format?: 'date' | 'field_observed' | 'area_status' | 'area_hectares'
+  format?: 'date' | 'field_observed' | 'area_status' | 'area_hectares' | 'user_login'
 }
 
 export const FIELD_OBSERVED_COLUMN: TaskTableColumn = {
@@ -719,7 +755,7 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
     { field: 'customer_construction', label: 'Заказчик' },
   ],
   [EARTHWORK_SUBGROUP]: [
-    { field: 'executor', label: 'Исполнитель' },
+    { field: 'executor', label: 'Исполнитель', format: 'user_login' },
     { field: 'registration_number_notifications', label: 'Номер уведомления' },
     { field: 'work_start_date', label: 'Дата начала работ', format: 'date' },
     { field: 'work_end_date', label: 'Дата окончания работ', format: 'date' },
@@ -774,11 +810,11 @@ export const ORDER_GROUP_SEARCH_FIELDS: Record<
 }
 
 export const AREA_TASK_TABLE_COLUMNS: TaskTableColumn[] = [
+  { field: 'executor_name', label: 'Исполнитель', format: 'user_login' },
   { field: 'status', label: 'Статус', format: 'area_status' },
-  { field: 'task_number', label: 'Номер задачи' },
+  { field: 'task_number', label: 'Заказ' },
   { field: 'area', label: 'Площадь', format: 'area_hectares' },
   { field: 'date_survey', label: 'Дата обследования', format: 'date' },
-  { field: 'executor', label: 'Исполнитель' },
   { field: 'analise', label: 'Анализ', format: 'field_observed' },
 ]
 
@@ -932,6 +968,35 @@ export function isFieldObserved(value: unknown): boolean {
   return ['true', 't', '1', 'yes', 'да'].includes(text)
 }
 
+export function formatTaskTableUserCell(
+  attrs: Record<string, unknown>,
+  col: TaskTableColumn,
+  users: { login: string; name?: string | null }[] = [],
+): string {
+  if (
+    col.field === 'task_name' ||
+    col.field === 'task_number' ||
+    col.field === 'key'
+  ) {
+    const title = String(attrs.task_name ?? attrs.task_number ?? '').trim()
+    if (title) return title
+    const raw = String(attrs[col.field] ?? '').trim()
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
+      ? ''
+      : raw
+  }
+  if (
+    col.format === 'user_login' ||
+    col.field === 'executor' ||
+    col.field === 'executor_name'
+  ) {
+    const login = String(attrs.executor ?? attrs[col.field] ?? '').trim()
+    const apiName = String(attrs.executor_name ?? '').trim()
+    return displayUserName(apiName, displayUserNameByLogin(login, users))
+  }
+  return formatTaskTableCell(attrs[col.field], col.format)
+}
+
 export function formatTaskTableCell(value: unknown, format?: TaskTableColumn['format']): string {
   if (format === 'field_observed') return formatFieldObserved(value)
   if (format === 'area_status') return formatAreaStatus(value)
@@ -1015,7 +1080,7 @@ export function buildTaskPopupHtml(
     )
   }
   for (const col of columns) {
-    const value = formatTaskTableCell(feature.attributes[col.field], col.format)
+    const value = formatTaskTableUserCell(feature.attributes, col)
     lines.push(`<b>${escapePopupHtml(col.label)}</b>: ${escapePopupHtml(value)}`)
   }
   if (!isArea) {

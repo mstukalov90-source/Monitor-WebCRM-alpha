@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { fetchFieldReports, fetchLinkedFeatures, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
+import { fetchFieldReports, fetchLinkedFeatures, fetchPersonnelUsers, lookupTaskByFeature, sendAreaToSurvey, releaseAreaFromSurvey, completeAreaSurvey } from '../api/client'
 import { OrderGroupSearchModal, OrderMapPreviewModal } from './OrderGroupSearchModal'
 import {
   buildGroupedTableRows,
@@ -18,9 +18,10 @@ import type {
   TaskResult,
   TaskSource,
   TaskTableColumn,
+  PersonnelUser,
 } from '../types'
 import {
-  formatTaskTableCell,
+  formatTaskTableUserCell,
   isAreaSource,
   isFieldObserved,
   resolveTaskTableColumns,
@@ -31,6 +32,14 @@ import {
   CRM_GROUP_ORDERS,
   ORDER_GROUP_SEARCH_FIELDS,
 } from '../types'
+
+function frontendBuildLabel(): string {
+  const src =
+    document.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/"]')
+      ?.src ?? ''
+  const file = src.split('/').pop()?.split('?')[0] ?? ''
+  return file.replace(/^index-/, '').replace(/\.js$/, '') || 'dev'
+}
 
 function attrMatch(a: unknown, b: unknown): boolean {
   const left = String(a ?? '').trim().toLowerCase()
@@ -119,8 +128,15 @@ export function TaskPanel({
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
   const [searchOpen, setSearchOpen] = useState(false)
   const [mapPreviewHit, setMapPreviewHit] = useState<OrderSearchHit | null>(null)
+  const [personnelUsers, setPersonnelUsers] = useState<PersonnelUser[]>([])
   const selectFromMapRef = useRef(selectFromMap)
   selectFromMapRef.current = selectFromMap
+
+  useEffect(() => {
+    fetchPersonnelUsers()
+      .then(setPersonnelUsers)
+      .catch(() => setPersonnelUsers([]))
+  }, [])
 
   useEffect(() => {
     setSelectedGroup(0)
@@ -511,6 +527,8 @@ export function TaskPanel({
             <strong>{taskResult.district_name}</strong>
             <span className="muted">
               {TASK_SOURCE_LABELS[taskSource]}: {totalCount}
+              {' · '}
+              сборка {frontendBuildLabel()}
             </span>
           </div>
           {!isArea && (
@@ -562,7 +580,7 @@ export function TaskPanel({
         <table className="task-table">
           <thead>
             <tr>
-              <th>{isArea ? 'Заказ' : 'Слой'}</th>
+              {!isArea && <th>Слой</th>}
               {showSentAt && <th>Отправлено</th>}
               {tableColumns.map((col) => (
                 <th key={col.field}>{col.label}</th>
@@ -583,7 +601,7 @@ export function TaskPanel({
                       }))
                     }
                   >
-                    <td colSpan={tableColumns.length + (showSentAt ? 2 : 1)}>
+                    <td colSpan={tableColumns.length + (showSentAt ? 1 : 0) + (isArea ? 0 : 1)}>
                       <span className="task-table-group-toggle">{row.collapsed ? '▸' : '▾'}</span>
                       {row.label} ({row.count})
                     </td>
@@ -605,13 +623,13 @@ export function TaskPanel({
                   style={rowStyle}
                   onClick={() => handleRowClick(featureIndex)}
                 >
-                  <td>{feat.layer_name}</td>
+                  {!isArea && <td>{feat.layer_name}</td>}
                   {showSentAt && (
                     <td>{feat.sent_at ? new Date(feat.sent_at).toLocaleString('ru-RU') : ''}</td>
                   )}
                   {tableColumns.map((col) => (
                     <td key={col.field}>
-                      {formatTaskTableCell(feat.attributes[col.field], col.format)}
+                      {formatTaskTableUserCell(feat.attributes, col, personnelUsers)}
                     </td>
                   ))}
                 </tr>

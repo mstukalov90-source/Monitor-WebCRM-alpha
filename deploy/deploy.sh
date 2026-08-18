@@ -120,6 +120,17 @@ npm run build
 mkdir -p /var/www/monitor-webcrm
 rm -rf /var/www/monitor-webcrm/*
 cp -r dist/* /var/www/monitor-webcrm/
+# Bust HTML cache: browsers otherwise keep the previous index.html and old hashed JS.
+BUILD_ID="$(date +%Y%m%d%H%M)"
+printf '\n<!-- deploy %s build %s -->\n' "$(date -Iseconds)" "$BUILD_ID" >> /var/www/monitor-webcrm/index.html
+printf '%s\n' "$BUILD_ID" > /var/www/monitor-webcrm/build-id.txt
+
+if python3 "$ROOT/deploy/patch_nginx_cachebust.py" "$BUILD_ID"; then
+  nginx -t
+  systemctl reload nginx
+else
+  echo "WARNING: nginx cache-bust patch skipped" >&2
+fi
 
 systemctl restart monitor-webcrm
 echo "Deploy complete. Check backend: curl http://127.0.0.1:8080/health"

@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     """Shared directory for public Excel uploads consumed by another server app."""
     excel_upload_max_bytes: int = 10 * 1024 * 1024
     """Max upload size (matches nginx client_max_body_size 10m)."""
+    zip_close_max_bytes: int = 500 * 1024 * 1024
+    """Max total size of ZIP-close upload (matches nginx 500m for this path)."""
+    zip_close_max_files: int = 20
+    """Max number of ZIP archives in one preview request."""
+    zip_close_staging_dir: str = "./data/zip_close_staging"
+    """Temporary directory for ZIP-close preview tokens."""
     auth_secret_key: str = "change-me-in-production-use-32-chars-min"
     auth_cookie_name: str = "monitor_session"
     auth_token_ttl_hours: int = 12

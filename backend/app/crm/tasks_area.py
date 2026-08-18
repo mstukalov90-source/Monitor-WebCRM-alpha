@@ -99,9 +99,9 @@ def fetch_tasks_area_geojson(
 
     from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
 
-    filters = ['"geom" IS NOT NULL']
+    filters = ['t.geom IS NOT NULL']
     params: list[Any] = []
-    rayon_norm_sql = sql_normalize_rayon_expr('"rayon"')
+    rayon_norm_sql = sql_normalize_rayon_expr('t.rayon')
 
     if rayon:
         filters.append(f"{rayon_norm_sql} = %s")
@@ -111,15 +111,15 @@ def fetch_tasks_area_geojson(
         filters.append(f"{rayon_norm_sql} = ANY(%s)")
         params.append(normalized)
     if status:
-        filters.append('"status" = %s')
+        filters.append('t.status = %s')
         params.append(status)
     elif statuses:
         placeholders = ", ".join("%s" for _ in statuses)
-        filters.append(f'"status" IN ({placeholders})')
+        filters.append(f't.status IN ({placeholders})')
         params.extend(statuses)
     if field_executor_login is not None:
         ensure_executor_column(conn, TASKS_AREA_SCHEMA, TASKS_AREA_TABLE)
-        filters.append('(executor IS NULL OR executor = %s)')
+        filters.append('(t.executor IS NULL OR t.executor = %s)')
         params.append(field_executor_login)
 
     where = " AND ".join(filters)
@@ -133,13 +133,17 @@ def fetch_tasks_area_geojson(
         FROM (
             SELECT json_build_object(
                 'type', 'Feature',
-                'id', key::text,
-                'geometry', ST_AsGeoJSON(geom)::json,
-                'properties', to_jsonb(t) - 'geom'
+                'id', t.key::text,
+                'geometry', ST_AsGeoJSON(t.geom)::json,
+                'properties', (to_jsonb(t) - 'geom') || jsonb_build_object(
+                    'executor_name', u.name,
+                    'task_name', t.task_number
+                )
             ) AS feature
             FROM crm.tasks_area t
+            LEFT JOIN crm.users u ON u.login = t.executor
             WHERE {where}
-            ORDER BY loaded_at DESC NULLS LAST
+            ORDER BY t.loaded_at DESC NULLS LAST
             LIMIT %s
         ) sub
     """

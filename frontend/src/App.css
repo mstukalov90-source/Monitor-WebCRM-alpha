@@ -1041,6 +1041,61 @@ a.btn {
   max-height: 90vh;
 }
 
+.modal.zip-close-modal {
+  width: min(1100px, 96vw);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+
+.zip-close-table-wrap {
+  overflow: auto;
+  max-height: 46vh;
+  margin: 8px 0;
+}
+
+.zip-close-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.zip-close-table th,
+.zip-close-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 6px 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.zip-close-notes {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.zip-close-outcome {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.zip-close-outcome-ok {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.zip-close-outcome-skip {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.zip-close-outcome-bad {
+  background: #ffebee;
+  color: #c62828;
+}
+
 .modal.task-edit-modal--with-map {
   width: min(720px, 96vw);
 }

@@ -79,7 +79,7 @@ class FetchOrderStatusFeedTests(unittest.TestCase):
         self.assertIn("fs.order_score", sql)
         for action in ORDER_STATUS_FEED_ACTIONS:
             self.assertIn(action, params)
-        self.assertNotIn("office_analise_completed", params)
+        self.assertIn("office_analise_completed", params)
         self.assertEqual(params[-1], 50)
 
     def test_limit_is_capped(self) -> None:
@@ -140,6 +140,7 @@ class FetchOrderStatusCountsTests(unittest.TestCase):
 
         self.assertEqual(counts["field_order_closed"], 7)
         self.assertEqual(counts["office_pre_analise_completed"], 78)
+        self.assertEqual(counts["office_analise_completed"], 0)
         self.assertEqual(counts["office_closed_legal"], 0)
         self.assertEqual(counts["office_closed_illegal"], 0)
         self.assertEqual(set(counts), set(ORDER_STATUS_FEED_ACTIONS))

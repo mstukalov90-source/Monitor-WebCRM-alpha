@@ -27,6 +27,7 @@ import { OznMatchScreen } from './components/OznMatchScreen'
 import { OfficeWorkModeModal } from './components/OfficeWorkModeModal'
 import { FieldScoreScreen } from './components/FieldScoreScreen'
 import { OrderStatusModal } from './components/OrderStatusModal'
+import { ZipCloseModal } from './components/ZipCloseModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { ServerMonitorScreen } from './components/ServerMonitorScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
@@ -89,6 +90,7 @@ function App() {
   const [appView, setAppView] = useState<AppView>('workspace')
   const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
   const [orderStatusOpen, setOrderStatusOpen] = useState(false)
+  const [zipCloseOpen, setZipCloseOpen] = useState(false)
   const [fieldScoreOrderKey, setFieldScoreOrderKey] = useState<string | null>(null)
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
   const [lastTaskSource, setLastTaskSource] = useState<TaskSource>('active')
@@ -817,6 +819,7 @@ function App() {
           canCollect={user.can_collect}
           canManagePersonnel={user.can_manage_personnel}
           canViewServerMonitor={user.can_view_server_monitor}
+          canCloseViaZip={user.role === 'admin'}
           showAreaOrders={user.allowed_task_sources.includes('area')}
           userLogin={userDisplayName}
           onRayonChange={collection.setRayon}
@@ -827,6 +830,7 @@ function App() {
           onOpenOrderTracks={() => setAppView('order_tracks')}
           onOpenStatistics={() => setAppView('statistics')}
           onOpenServerMonitor={() => setAppView('server_monitor')}
+          onOpenZipClose={user.role === 'admin' ? () => setZipCloseOpen(true) : undefined}
           onOpenOznMatch={
             user.can_manage_personnel ? () => setAppView('ozn_match') : undefined
           }
@@ -845,6 +849,9 @@ function App() {
               setAppView('field_score')
             }}
           />
+        )}
+        {zipCloseOpen && user.role === 'admin' && (
+          <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
         )}
         <TaskEditModal
           context={editContext}
@@ -955,6 +962,11 @@ function App() {
             {user.can_view_server_monitor && (
               <button type="button" className="btn" onClick={() => setAppView('server_monitor')}>
                 Мониторинг
+              </button>
+            )}
+            {user.role === 'admin' && (
+              <button type="button" className="btn" onClick={() => setZipCloseOpen(true)}>
+                Закрытие через ZIP
               </button>
             )}
             <button type="button" className="btn" onClick={() => void logout()}>
@@ -1133,6 +1145,10 @@ function App() {
           onRefresh={handleRefreshAreaOrders}
           onChangeMode={handleChangeOfficeMode}
         />
+      )}
+
+      {zipCloseOpen && user.role === 'admin' && (
+        <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
       )}
 
     </div>

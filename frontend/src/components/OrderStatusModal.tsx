@@ -10,7 +10,7 @@ interface OrderStatusModalProps {
   onQualityAssessment?: (event: StatisticsActionDetail) => void
 }
 
-type OrderStatusTab = 'surveyed' | 'prepared' | 'closed'
+type OrderStatusTab = 'surveyed' | 'prepared' | 'analysed' | 'closed'
 type PeriodDays = 3 | 7 | 14 | 30
 
 const PERIOD_OPTIONS: PeriodDays[] = [3, 7, 14, 30]
@@ -18,12 +18,14 @@ const PERIOD_OPTIONS: PeriodDays[] = [3, 7, 14, 30]
 const TAB_ACTIONS: Record<OrderStatusTab, string[]> = {
   surveyed: ['field_order_closed'],
   prepared: ['office_pre_analise_completed'],
+  analysed: ['office_analise_completed'],
   closed: ['office_closed_legal', 'office_closed_illegal'],
 }
 
 const TAB_LABELS: Record<OrderStatusTab, string> = {
   surveyed: 'Обследованы в поле',
   prepared: 'Подготовлены в поле',
+  analysed: 'Обработаны',
   closed: 'Закрыты легально / нелегально',
 }
 

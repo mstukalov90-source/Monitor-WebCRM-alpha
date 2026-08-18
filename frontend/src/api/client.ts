@@ -38,6 +38,8 @@ import type {
   OatiLetterGeneratePayload,
   OatiLetterGenerateResult,
   MonitorStatus,
+  ZipCloseApplyResult,
+  ZipClosePreview,
 } from '../types'
 
 const API_BASE = ''
@@ -156,6 +158,50 @@ export async function uploadExcelFile(file: File): Promise<ExcelUploadResult> {
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+export async function previewZipClose(username: string, files: File[]): Promise<ZipClosePreview> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 300_000)
+  try {
+    const body = new FormData()
+    body.append('username', username)
+    for (const file of files) {
+      body.append('files', file)
+    }
+    const res = await fetch(`${API_BASE}/api/admin/zip-close/preview`, {
+      method: 'POST',
+      credentials: 'include',
+      body,
+      signal: controller.signal,
+    })
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      throw errorFromApiBody(text, res.statusText)
+    }
+    return res.json() as Promise<ZipClosePreview>
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера')
+    }
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+export function applyZipClose(previewId: string, username: string): Promise<ZipCloseApplyResult> {
+  return request(
+    '/api/admin/zip-close/apply',
+    {
+      method: 'POST',
+      body: JSON.stringify({ preview_id: previewId, username }),
+    },
+    300_000,
+  )
 }
 
 export function fetchLayersConfig(): Promise<{ groups: LayerGroupConfig[] }> {

@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import Response
 
 from app.config import get_settings
 from app.crm.delay_scheduler import analise_reset_loop, delayed_tasks_restore_loop
@@ -25,6 +26,7 @@ from app.routes import (
     personnel,
     photos,
     tasks,
+    zip_close,
 )
 
 
@@ -79,6 +81,16 @@ app.include_router(field_score.router)
 app.include_router(photos.router)
 app.include_router(personnel.router)
 app.include_router(monitor.router)
+app.include_router(zip_close.router)
+
+
+@app.middleware("http")
+async def no_store_api_cache(request: Request, call_next) -> Response:
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/health")

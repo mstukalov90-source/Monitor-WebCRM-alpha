@@ -19,7 +19,21 @@ server {
         proxy_pass http://127.0.0.1:8080;
     }
 
+    location = / {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        if ($arg_v != "__BUILD_ID__") {
+            return 302 /?v=__BUILD_ID__;
+        }
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+    }
+
     location / {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         try_files $uri $uri/ /index.html;
     }
 }

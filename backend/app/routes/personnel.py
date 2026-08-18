@@ -280,7 +280,7 @@ def get_order_status_feed(
 
 @router.get("/users", response_model=list[PersonnelUserOut])
 def get_personnel_users(
-    _user: UserSession = Depends(require_manager_or_admin),
+    _user: UserSession = Depends(get_current_user),
 ) -> list[PersonnelUserOut]:
     with get_connection() as conn:
         users = list_personnel_users(conn)

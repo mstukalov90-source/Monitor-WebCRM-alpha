@@ -41,6 +41,7 @@ DETAIL_STATISTICS_ACTIONS = (
 ORDER_STATUS_FEED_ACTIONS = (
     "field_order_closed",
     "office_pre_analise_completed",
+    "office_analise_completed",
     "office_closed_illegal",
     "office_closed_legal",
 )
