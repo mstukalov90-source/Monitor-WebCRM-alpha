@@ -1,5 +1,7 @@
-import type { TrackFeature } from '../types'
-import { formatTrackTableCell, TRACK_TABLE_COLUMNS } from '../types'
+import { useEffect, useState } from 'react'
+import { fetchPersonnelUsers } from '../api/client'
+import type { PersonnelUser, TrackFeature } from '../types'
+import { displayUserNameByLogin, formatTrackTableCell, TRACK_TABLE_COLUMNS } from '../types'
 
 interface TracksPanelProps {
   districtName: string
@@ -16,6 +18,14 @@ export function TracksPanel({
   loading,
   onSelect,
 }: TracksPanelProps) {
+  const [users, setUsers] = useState<PersonnelUser[]>([])
+
+  useEffect(() => {
+    fetchPersonnelUsers()
+      .then(setUsers)
+      .catch(() => setUsers([]))
+  }, [])
+
   return (
     <div className="task-panel">
       <div className="task-panel-header">
@@ -51,7 +61,9 @@ export function TracksPanel({
                   <td>{track.id}</td>
                   {TRACK_TABLE_COLUMNS.map((col) => (
                     <td key={col.field}>
-                      {formatTrackTableCell(track.attributes[col.field], col.format)}
+                      {col.field === 'username'
+                        ? displayUserNameByLogin(String(track.attributes.username ?? ''), users)
+                        : formatTrackTableCell(track.attributes[col.field], col.format)}
                     </td>
                   ))}
                 </tr>

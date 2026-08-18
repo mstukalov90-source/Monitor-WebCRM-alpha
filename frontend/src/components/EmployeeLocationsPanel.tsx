@@ -1,6 +1,10 @@
-import type { EmployeeLocationFeature } from '../types'
+import { useEffect, useState } from 'react'
+import { fetchPersonnelUsers } from '../api/client'
+import type { EmployeeLocationFeature, PersonnelUser } from '../types'
 import {
   EMPLOYEE_LOCATION_TABLE_COLUMNS,
+  displayAreaOrderTitle,
+  displayUserNameByLogin,
   formatEmployeeLocationTableCell,
 } from '../types'
 
@@ -11,12 +15,35 @@ interface EmployeeLocationsPanelProps {
   onSelect: (locationId: string) => void
 }
 
+function locationCell(
+  attrs: Record<string, unknown>,
+  field: string,
+  format: 'datetime_short' | undefined,
+  users: PersonnelUser[],
+): string {
+  if (field === 'user') {
+    return displayUserNameByLogin(String(attrs.user ?? ''), users)
+  }
+  if (field === 'number') {
+    return displayAreaOrderTitle(attrs)
+  }
+  return formatEmployeeLocationTableCell(attrs[field], format)
+}
+
 export function EmployeeLocationsPanel({
   locations,
   selectedLocationId,
   loading,
   onSelect,
 }: EmployeeLocationsPanelProps) {
+  const [users, setUsers] = useState<PersonnelUser[]>([])
+
+  useEffect(() => {
+    fetchPersonnelUsers()
+      .then(setUsers)
+      .catch(() => setUsers([]))
+  }, [])
+
   return (
     <div className="task-panel">
       <div className="task-panel-header">
@@ -50,7 +77,7 @@ export function EmployeeLocationsPanel({
                 >
                   {EMPLOYEE_LOCATION_TABLE_COLUMNS.map((col) => (
                     <td key={col.field}>
-                      {formatEmployeeLocationTableCell(location.attributes[col.field], col.format)}
+                      {locationCell(location.attributes, col.field, col.format, users)}
                     </td>
                   ))}
                 </tr>

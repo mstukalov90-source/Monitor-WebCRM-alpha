@@ -32,6 +32,7 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
                 "location_id": "IvanovII",
                 "geometry": geometry,
                 "row_json": row_json,
+                "task_number": "М/САО-26-1/Сокол-1",
             }
         ]
         cursor_cm = MagicMock()
@@ -52,9 +53,13 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
                 "user": "IvanovII",
                 "time": "2026-07-13T10:00:00+00:00",
                 "number": "uuid-123",
+                "task_number": "М/САО-26-1/Сокол-1",
             },
         )
         self.assertEqual(locations[0]["geometry"], geometry)
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("crm.tasks_area", sql)
+        self.assertIn("ta.task_number", sql)
 
     def test_fetch_all_returns_all_locations_without_district_filter(self) -> None:
         geometry = {"type": "Point", "coordinates": [37.62, 55.75]}
@@ -83,6 +88,9 @@ class EmployeeLocationsLoaderTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(locations), 2)
         self.assertEqual({loc["id"] for loc in locations}, {"IvanovII", "PetrovPP"})
+        sql = cursor.execute.call_args[0][0]
+        self.assertIn("crm.tasks_area", sql)
+        self.assertIn("ta.task_number", sql)
 
     @patch("app.crm.employee_locations_loader.fetch_district_wkt", return_value="POLYGON((0 0,1 0,1 1,0 1,0 0))")
     def test_parses_geometry_json_string(self, _wkt: MagicMock) -> None:

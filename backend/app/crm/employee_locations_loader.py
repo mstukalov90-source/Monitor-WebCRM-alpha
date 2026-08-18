@@ -11,6 +11,11 @@ from psycopg2.extras import RealDictCursor
 from app.config import crm_tasks_config, employee_locations_config
 from app.layers.geojson import fetch_district_wkt
 
+_TASK_NUMBER_JOIN = """
+        LEFT JOIN crm.tasks_area ta
+          ON ta.key::text = NULLIF(TRIM(t."number"::text), '')
+"""
+
 
 def _table_config() -> tuple[str, str, str, str, list[str]]:
     cfg = employee_locations_config()
@@ -43,6 +48,12 @@ def _rows_to_locations(
         for col in display_columns:
             if col in row_dict and row_dict[col] is not None:
                 attrs[col] = row_dict[col]
+
+        task_number = row.get("task_number")
+        if task_number is not None:
+            title = str(task_number).strip()
+            if title:
+                attrs["task_number"] = title
 
         locations.append(
             {
@@ -86,8 +97,10 @@ def fetch_all_employee_locations(
         SELECT DISTINCT ON (t."{id_col}")
                t."{id_col}"::text AS location_id,
                {geojson} AS geometry,
-               row_to_json(t)::json AS row_json
+               row_to_json(t)::json AS row_json,
+               ta.task_number AS task_number
         FROM "{schema}"."{table}" t
+        {_TASK_NUMBER_JOIN}
         WHERE t."{geom_col}" IS NOT NULL
         ORDER BY t."{id_col}", t.time DESC NULLS LAST
         LIMIT 5000
@@ -125,9 +138,11 @@ def fetch_employee_locations(
         SELECT DISTINCT ON (t."{id_col}")
                t."{id_col}"::text AS location_id,
                {geojson} AS geometry,
-               row_to_json(t)::json AS row_json
+               row_to_json(t)::json AS row_json,
+               ta.task_number AS task_number
         FROM "{schema}"."{table}" t
         CROSS JOIN district
+        {_TASK_NUMBER_JOIN}
         WHERE t."{geom_col}" IS NOT NULL
           AND ST_Intersects({point_geom}, district.geom)
         ORDER BY t."{id_col}", t.time DESC NULLS LAST

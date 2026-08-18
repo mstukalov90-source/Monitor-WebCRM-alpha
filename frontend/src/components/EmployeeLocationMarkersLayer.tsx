@@ -1,8 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMap } from 'react-leaflet'
 import L from 'leaflet'
+import { fetchPersonnelUsers } from '../api/client'
 import { employeeLocationMarkerStyle } from '../lib/employeeLocationStyle'
-import type { EmployeeLocationFeature } from '../types'
+import type { EmployeeLocationFeature, PersonnelUser } from '../types'
+import { displayUserNameByLogin } from '../types'
 
 interface EmployeeLocationMarkersLayerProps {
   locations: EmployeeLocationFeature[]
@@ -11,6 +13,13 @@ interface EmployeeLocationMarkersLayerProps {
 export function EmployeeLocationMarkersLayer({ locations }: EmployeeLocationMarkersLayerProps) {
   const map = useMap()
   const layerRef = useRef<L.GeoJSON | null>(null)
+  const [users, setUsers] = useState<PersonnelUser[]>([])
+
+  useEffect(() => {
+    fetchPersonnelUsers()
+      .then(setUsers)
+      .catch(() => setUsers([]))
+  }, [])
 
   useEffect(() => {
     if (layerRef.current) {
@@ -23,7 +32,7 @@ export function EmployeeLocationMarkersLayer({ locations }: EmployeeLocationMark
       .map((loc) => ({
         type: 'Feature' as const,
         properties: {
-          label: String(loc.attributes.user ?? loc.id),
+          label: displayUserNameByLogin(String(loc.attributes.user ?? loc.id), users),
           updatedAt: loc.attributes.time ?? null,
         },
         geometry: loc.geometry,
@@ -62,7 +71,7 @@ export function EmployeeLocationMarkersLayer({ locations }: EmployeeLocationMark
         layerRef.current = null
       }
     }
-  }, [map, locations])
+  }, [map, locations, users])
 
   return null
 }

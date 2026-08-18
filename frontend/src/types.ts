@@ -1198,6 +1198,14 @@ export function displayUserNameByLogin(
   return displayUserName(match?.name, key)
 }
 
+export function displayAreaOrderTitle(attrs: Record<string, unknown>): string {
+  const title = String(attrs.task_number ?? '').trim()
+  if (title) return title
+  const key = String(attrs.number ?? attrs.key ?? '').trim()
+  if (!key) return '—'
+  return key.slice(0, 8)
+}
+
 export function areaStatusFromAttributes(attrs: Record<string, unknown>): AreaStatus {
   const key = String(attrs.status ?? '').trim().toLowerCase()
   if (
