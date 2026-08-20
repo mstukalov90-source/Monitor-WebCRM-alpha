@@ -159,6 +159,11 @@ class RealZipParseTests(unittest.TestCase):
 
 
 class PlanBuilderTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not LOST.is_dir():
+            raise unittest.SkipTest("tmp/lost_tasks is missing")
+
     def test_field_clear_sql(self) -> None:
         archive = restore.parse_zip(LOST / "У0219455.zip")
         state = {
@@ -228,6 +233,96 @@ class PlanBuilderTests(unittest.TestCase):
         plan = restore.build_area_plan(archive, "ZhuchenkoAA", state)
         self.assertFalse(plan.will_write)
         self.assertIsNotNone(plan.skip_reason)
+
+
+class FieldCreatedPlanTests(unittest.TestCase):
+    def _archive(self, *, event: str = "DISRUPTION") -> restore.FieldZipArchive:
+        key = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        sid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        return restore.FieldZipArchive(
+            path=Path("/tmp/field-created.zip"),
+            kind="field_order",
+            raw_task_key=key,
+            order_uuid=key,
+            order_number=None,
+            rayon="Беговой",
+            exported_at=None,
+            submissions=(
+                restore.DrawSubmission(
+                    id=sid,
+                    kind="EVENT_POINT",
+                    event_type=event,
+                    created_at_ms=1,
+                    lat=55.0,
+                    lon=37.0,
+                    comment=None,
+                    photos=(),
+                ),
+            ),
+            features=(),
+            track=None,
+        )
+
+    def test_inserts_field_data_task_when_no_tasks_field(self) -> None:
+        archive = self._archive()
+        state = {
+            "field": None,
+            "task": None,
+            "in_clear": False,
+            "report_tasks": [],
+            "report_links": [],
+        }
+        plan = restore.build_field_plan(archive, "ZhuchenkoAA", state)
+        joined = "\n".join(plan.sql_statements)
+        self.assertTrue(plan.will_write)
+        self.assertEqual(plan.outcome, "ok")
+        self.assertEqual(plan.close_kind, "field_data")
+        self.assertEqual(plan.tasks_key, archive.order_uuid)
+        self.assertIn("INSERT INTO crm.tasks", joined)
+        self.assertIn("is_field_data", joined)
+        self.assertIn("field_disruption_found", joined)
+        self.assertIn("INSERT INTO mggt_field.reports", joined)
+        self.assertIn(archive.order_uuid, joined)
+        self.assertNotIn("INSERT INTO crm.tasks_clear", joined)
+        self.assertNotIn("DELETE FROM crm.tasks_field", joined)
+
+        from app.field_zip_restore.service import plan_to_item
+
+        item = plan_to_item(plan)
+        self.assertEqual(item["close_kind"], "field_data")
+        self.assertEqual(item["db_status"], "field_data")
+
+    def test_skips_when_draw_reports_already_present(self) -> None:
+        archive = self._archive()
+        sid = archive.submissions[0].id
+        assigned_key = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        state = {
+            "field": None,
+            "task": None,
+            "in_clear": False,
+            "report_tasks": [sid],
+            "report_links": [{"task": sid, "tasks_key": assigned_key}],
+        }
+        plan = restore.build_field_plan(archive, "ZhuchenkoAA", state)
+        joined = "\n".join(plan.sql_statements)
+        self.assertFalse(plan.will_write)
+        self.assertNotIn("INSERT INTO crm.tasks", joined)
+        self.assertIn("already restored", plan.skip_reason or "")
+
+    def test_skips_field_data_when_own_reports_present(self) -> None:
+        archive = self._archive()
+        sid = archive.submissions[0].id
+        state = {
+            "field": None,
+            "task": {"key": archive.order_uuid, "is_field_data": True},
+            "in_clear": False,
+            "report_tasks": [sid],
+            "report_links": [{"task": sid, "tasks_key": archive.order_uuid}],
+        }
+        plan = restore.build_field_plan(archive, "ZhuchenkoAA", state)
+        self.assertFalse(plan.will_write)
+        self.assertEqual(plan.skip_reason, "already restored (field data)")
+        self.assertNotIn("INSERT INTO crm.tasks", "\n".join(plan.sql_statements))
 
 
 class SyntheticZipTests(unittest.TestCase):

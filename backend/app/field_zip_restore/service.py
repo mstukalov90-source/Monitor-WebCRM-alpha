@@ -79,6 +79,8 @@ def plan_to_item(plan: RestorePlan, *, applied: bool | None = None, apply_error:
     if archive.kind == "field_order":
         if plan.field_key:
             db_status = "tasks_field"
+        elif plan.close_kind == "field_data":
+            db_status = "field_data"
         elif plan.skip_reason and "already restored" in (plan.skip_reason or ""):
             db_status = "already_closed"
     item: dict[str, Any] = {

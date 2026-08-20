@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, Sequence
 
+from app.crm.store import CRM_GROUP_DISRUPTIONS
 from app.field_zip_restore.parse import (
     MOSCOW,
     DrawSubmission,
@@ -85,6 +86,7 @@ class RestorePlan:
     tasks_key: str | None = None
     area_status: str | None = None
     original_name: str | None = None
+    is_field_data_close: bool = False
 
     @property
     def will_write(self) -> bool:
@@ -109,6 +111,8 @@ class RestorePlan:
             return None
         if not self.archive.submissions:
             return None
+        if self.is_field_data_close:
+            return "field_data"
         return "clear" if self.archive.as_clear else "observed"
 
 
@@ -214,6 +218,49 @@ SELECT crm.statistics_emit_field_event(
 """.strip()
 
 
+def field_disruption_found_sql(tasks_key: str, username: str, created_at: datetime | None) -> str:
+    """Insert-trigger 5-min window misses historical report timestamps; emit the field event explicitly."""
+    return f"""
+SELECT crm.statistics_emit_field_event(
+    'field_disruption_found',
+    {sql_str(tasks_key)}::uuid,
+    {sql_str(username)},
+    {sql_ts(created_at)},
+    jsonb_build_object('source', 'restore_field_zips', 'via', 'field_data_insert')
+)
+""".strip()
+
+
+def _user_audit_array_sql(username: str) -> str:
+    user_sql = sql_str(username)
+    return (
+        f"ARRAY[{user_sql}, to_char(NOW() AT TIME ZONE 'UTC', "
+        f"'YYYY-MM-DD\"T\"HH24:MI:SS.US') || '+00:00']"
+    )
+
+
+def insert_field_data_task_sql(tasks_key: str, username: str) -> str:
+    audit = _user_audit_array_sql(username)
+    return f"""
+INSERT INTO crm.tasks (
+    key, type, field_observed, is_field_data, is_office_task,
+    user_created, user_last_edit
+) VALUES (
+    {sql_str(tasks_key)}::uuid,
+    {sql_str(CRM_GROUP_DISRUPTIONS)},
+    TRUE,
+    TRUE,
+    FALSE,
+    {audit},
+    {audit}
+)
+ON CONFLICT (key) DO UPDATE SET
+    is_field_data = TRUE,
+    field_observed = TRUE,
+    user_last_edit = EXCLUDED.user_last_edit
+""".strip()
+
+
 def complete_as_clear_sql(
     field_key: str,
     tasks_key: str,
@@ -291,7 +338,24 @@ WHERE lower(key::text) = lower({sql_str(area_key)})
 """.strip()
 
 
-def fetch_field_state(client: RestoreClient, order_uuid: str) -> dict[str, Any]:
+def fetch_field_state(
+    client: RestoreClient,
+    order_uuid: str,
+    submission_ids: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    draw_ids = [item for item in (submission_ids or []) if item]
+    if draw_ids:
+        draw_sql = ", ".join(sql_str(item) for item in draw_ids)
+        draw_clause = f" OR r.task IN ({draw_sql})"
+        links_sql = f"""
+  'report_links', COALESCE((
+    SELECT json_agg(json_build_object('task', r.task, 'tasks_key', r.tasks_key::text))
+    FROM mggt_field.reports r
+    WHERE r.task IN ({draw_sql})
+  ), '[]'::json)"""
+    else:
+        draw_clause = ""
+        links_sql = "  'report_links', '[]'::json"
     sql = f"""
 SELECT json_build_object(
   'field', (
@@ -312,6 +376,7 @@ SELECT json_build_object(
     SELECT json_build_object(
       'key', t.key::text,
       'field_observed', t.field_observed,
+      'is_field_data', t.is_field_data,
       'type', t.type
     )
     FROM crm.tasks t
@@ -338,7 +403,9 @@ SELECT json_build_object(
                 WHERE tf.key = {sql_str(order_uuid)}::uuid LIMIT 1), {sql_str(order_uuid)}::uuid)
     )
        OR r.task = {sql_str(order_uuid)}
-  ), '[]'::json)
+       {draw_clause}
+  ), '[]'::json),
+{links_sql}
 )
 """.strip()
     return client.psql_json(sql) or {}
@@ -376,6 +443,68 @@ def report_exists(state: dict[str, Any], submission_id: str) -> bool:
     return submission_id in tasks
 
 
+def _linked_task_key(archive: FieldZipArchive) -> str | None:
+    for item in archive.features:
+        key = (item.linked_task_key or "").strip()
+        if key:
+            return key
+    return None
+
+
+def _tasks_key_from_report_links(state: dict[str, Any], submissions: Sequence[DrawSubmission]) -> str | None:
+    links = state.get("report_links") or []
+    by_draw = {
+        str(item.get("task")): item.get("tasks_key")
+        for item in links
+        if isinstance(item, dict)
+    }
+    for submission in submissions:
+        key = by_draw.get(submission.id)
+        if key:
+            return str(key)
+    return None
+
+
+def _append_report_writes(
+    plan: RestorePlan,
+    archive: FieldZipArchive,
+    username: str,
+    tasks_key: str,
+    state: dict[str, Any],
+) -> bool:
+    company = company_from_features(archive.features)
+    any_write = False
+    for submission in archive.submissions:
+        photos = planned_photos_for_submission(archive, submission)
+        if report_exists(state, submission.id):
+            plan.actions.append(f"skip report {submission.id} (already in mggt_field.reports)")
+            continue
+        plan.photos.extend(photos)
+        for photo in photos:
+            plan.sql_statements.append(photo_insert_sql(photo, username))
+        primary = primary_photo(submission.photos)
+        primary_uuid = None
+        if primary is not None:
+            primary_uuid = next((p.uuid for p in photos if p.zip_path == primary.zip_path), None)
+        created_at = ms_to_datetime(submission.created_at_ms) or archive.exported_at
+        plan.sql_statements.append(
+            report_insert_sql(
+                submission=submission,
+                tasks_key=tasks_key,
+                username=username,
+                company=company,
+                photo_uuid=primary_uuid,
+                created_at=created_at,
+                banner=any(p.banner for p in photos),
+            )
+        )
+        plan.actions.append(
+            f"insert report {submission.id} event={submission.event_type} photos={len(photos)}"
+        )
+        any_write = True
+    return any_write
+
+
 def build_field_plan(
     archive: FieldZipArchive,
     username: str,
@@ -393,51 +522,52 @@ def build_field_plan(
         plan.skip_reason = "field ZIP has no draw submissions"
         return plan
 
-    if not field_key or not tasks_key:
-        if all(report_exists(state, item.id) for item in archive.submissions) and state.get("in_clear"):
+    all_reports_present = all(report_exists(state, item.id) for item in archive.submissions)
+
+    if not field_key:
+        if all_reports_present and state.get("in_clear"):
             plan.skip_reason = "already restored (no tasks_field, reports present)"
             return plan
-        if not field_key:
-            plan.skip_reason = "crm.tasks_field row not found"
-            plan.warnings.append("cannot finish CRM close without tasks_field")
+
+        leftover_key = _linked_task_key(archive) or _tasks_key_from_report_links(state, archive.submissions)
+        if leftover_key and leftover_key.lower() != archive.order_uuid.lower():
+            plan.tasks_key = leftover_key
+            wrote = _append_report_writes(plan, archive, username, leftover_key, state)
+            if wrote:
+                plan.sql_statements.append(
+                    f"""
+UPDATE crm.tasks
+SET field_observed = TRUE
+WHERE lower(key::text) = lower({sql_str(leftover_key)})
+""".strip()
+                )
+                plan.actions.append(f"update field_observed on assigned task {leftover_key}")
+            elif all_reports_present:
+                plan.skip_reason = "already restored (assigned order, no tasks_field)"
+            else:
+                plan.skip_reason = "nothing to write"
             return plan
+
+        field_tasks_key = task_row.get("key") or archive.order_uuid
+        plan.tasks_key = field_tasks_key
+        plan.is_field_data_close = True
+        if all_reports_present:
+            plan.skip_reason = "already restored (field data)"
+            return plan
+
+        plan.sql_statements.append(insert_field_data_task_sql(field_tasks_key, username))
+        plan.actions.append(f"insert crm.tasks {field_tasks_key} is_field_data")
+        _append_report_writes(plan, archive, username, field_tasks_key, state)
+        created_at = ms_to_datetime(archive.submissions[0].created_at_ms) or archive.exported_at
+        plan.sql_statements.append(field_disruption_found_sql(field_tasks_key, username, created_at))
+        plan.actions.append(f"emit field_disruption_found {field_tasks_key}")
+        return plan
+
+    if not tasks_key:
         plan.skip_reason = "crm.tasks.task_key not found"
         return plan
 
-    company = company_from_features(archive.features)
-    any_write = False
-    for submission in archive.submissions:
-        photos = planned_photos_for_submission(archive, submission)
-        if report_exists(state, submission.id):
-            plan.actions.append(f"skip report {submission.id} (already in mggt_field.reports)")
-        else:
-            plan.photos.extend(photos)
-            for photo in photos:
-                plan.sql_statements.append(photo_insert_sql(photo, username))
-            primary = primary_photo(submission.photos)
-            primary_uuid = None
-            if primary is not None:
-                primary_uuid = next((p.uuid for p in photos if p.zip_path == primary.zip_path), None)
-            created_at = ms_to_datetime(submission.created_at_ms) or archive.exported_at
-            plan.sql_statements.append(
-                report_insert_sql(
-                    submission=submission,
-                    tasks_key=tasks_key,
-                    username=username,
-                    company=company,
-                    photo_uuid=primary_uuid,
-                    created_at=created_at,
-                    banner=any(p.banner for p in photos),
-                )
-            )
-            plan.actions.append(
-                f"insert report {submission.id} event={submission.event_type} photos={len(photos)}"
-            )
-            any_write = True
-
-    if state.get("in_clear") and not field_key:
-        plan.actions.append("CRM already in tasks_clear")
-        return plan
+    any_write = _append_report_writes(plan, archive, username, tasks_key, state)
 
     if archive.as_clear:
         created_at = ms_to_datetime(archive.submissions[0].created_at_ms) or archive.exported_at
@@ -502,13 +632,18 @@ def build_plan(archive: FieldZipArchive, username: str, client: RestoreClient | 
         return build_area_plan(archive, username, state)
     state = {}
     if client is not None:
-        state = fetch_field_state(client, archive.order_uuid)
+        state = fetch_field_state(
+            client,
+            archive.order_uuid,
+            [item.id for item in archive.submissions],
+        )
     else:
         state = {
             "field": {"key": archive.order_uuid, "task_key": archive.order_uuid},
-            "task": {"key": archive.order_uuid, "field_observed": False},
+            "task": {"key": archive.order_uuid, "field_observed": False, "is_field_data": False},
             "in_clear": False,
             "report_tasks": [],
+            "report_links": [],
         }
     return build_field_plan(archive, username, state)
 

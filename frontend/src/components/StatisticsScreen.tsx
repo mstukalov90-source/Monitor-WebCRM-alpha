@@ -4,6 +4,7 @@ import {
   fetchPersonnelOrderStatistics,
   fetchPersonnelStatistics,
   fetchPersonnelUsers,
+  exportStatisticsReport,
 } from '../api/client'
 import {
   defaultStatisticsDateRange,
@@ -20,10 +21,40 @@ import type {
   OrderClosuresStatistics,
   PersonnelStatistics,
   PersonnelUser,
+  ReportSpec,
   StatisticsActionDetail,
   UserRole,
 } from '../types'
 import { displayUserNameByLogin, personnelUserLabel } from '../types'
+import { ReportConstructorModal } from './ReportConstructorModal'
+
+const SURVEYED_ORDERS_EXPORT_FROM = '2000-01-01'
+
+const SURVEYED_ORDERS_SPEC: ReportSpec = {
+  name: 'Обследованные заказы',
+  sheets: [
+    {
+      id: 'orders',
+      dataset: 'surveyed_order_summary',
+      title: 'Заказы',
+      columns: [
+        'task_number',
+        'rayon',
+        'closed_at',
+        'closed_by',
+        'area_hectares',
+        'pre_analise',
+        'analise',
+        'tasks_surveyed',
+        'tasks_clear',
+        'tasks_done_legal',
+        'tasks_done_illegal',
+        'tasks_open',
+      ],
+      filters: {},
+    },
+  ],
+}
 
 interface StatisticsScreenProps {
   userLogin: string
@@ -228,6 +259,8 @@ export function StatisticsScreen({
   const [ordersData, setOrdersData] = useState<OrderClosuresStatistics | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [constructorOpen, setConstructorOpen] = useState(false)
+  const [surveyExporting, setSurveyExporting] = useState(false)
 
   const effectiveViewMode: ViewMode = canViewAll ? viewMode : 'people'
 
@@ -322,6 +355,22 @@ export function StatisticsScreen({
   useEffect(() => {
     void loadStatistics()
   }, [loadStatistics])
+
+  const exportSurveyedOrders = useCallback(async () => {
+    setSurveyExporting(true)
+    setError(null)
+    try {
+      await exportStatisticsReport({
+        spec: SURVEYED_ORDERS_SPEC,
+        dateFrom: SURVEYED_ORDERS_EXPORT_FROM,
+        dateTo: formatIsoDateLocal(new Date()),
+      })
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSurveyExporting(false)
+    }
+  }, [])
 
   const fieldRows = data?.field_summary ?? []
   const officeRows = data?.office_breakdown ?? []
@@ -538,6 +587,21 @@ export function StatisticsScreen({
                 )}
               </>
             )}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setConstructorOpen(true)}
+            >
+              Выгрузить Excel
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={surveyExporting}
+              onClick={() => void exportSurveyedOrders()}
+            >
+              {surveyExporting ? 'Выгрузка…' : 'Обследованные заказы'}
+            </button>
             <button
               type="button"
               className="btn primary"
@@ -983,6 +1047,18 @@ export function StatisticsScreen({
           )}
         </div>
       </div>
+      {constructorOpen && (
+        <ReportConstructorModal
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          userRole={canViewAll && roleFilter ? roleFilter : undefined}
+          userLogin={canViewAll && userLoginFilter ? userLoginFilter : undefined}
+          objectType={
+            canViewAll && objectTypeFilter ? objectTypeFilter : undefined
+          }
+          onClose={() => setConstructorOpen(false)}
+        />
+      )}
     </div>
   )
 }

@@ -170,6 +170,84 @@ export interface OrderClosuresStatistics {
   date_to: string
 }
 
+export type ReportValueType = 'str' | 'int' | 'float' | 'datetime' | 'bool'
+export type ReportNestMode = 'related_sheet' | 'nested_rows'
+
+export interface ReportColumnDef {
+  id: string
+  label: string
+  value_type: ReportValueType
+  format?: string | null
+}
+
+export interface ReportFilterOption {
+  value: string
+  label: string
+}
+
+export interface ReportFilterDef {
+  id: string
+  label: string
+  type: 'multi'
+  options: ReportFilterOption[]
+}
+
+export interface ReportChildDataset {
+  id: string
+  label: string
+}
+
+export interface ReportDatasetDef {
+  id: string
+  label: string
+  description: string
+  columns: ReportColumnDef[]
+  filters: ReportFilterDef[]
+  parent_datasets: string[]
+  child_datasets: ReportChildDataset[]
+}
+
+export interface ReportSheetSpec {
+  id: string
+  dataset: string
+  title: string
+  columns: string[]
+  filters: Record<string, string[]>
+  parent_sheet?: string | null
+  nest?: ReportNestMode
+}
+
+export interface ReportSpec {
+  name: string
+  sheets: ReportSheetSpec[]
+}
+
+export interface ReportPreset {
+  id: string
+  name: string
+  spec: ReportSpec
+}
+
+export interface ReportNestModeOption {
+  id: ReportNestMode
+  label: string
+}
+
+export interface ReportCatalog {
+  datasets: ReportDatasetDef[]
+  presets: ReportPreset[]
+  nest_modes: ReportNestModeOption[]
+  max_export_rows: number
+}
+
+export interface ReportTemplate {
+  id: string
+  name: string
+  spec: ReportSpec
+  created_at: string
+  updated_at: string
+}
+
 export interface OrderStatusFeed {
   events: StatisticsActionDetail[]
   counts?: Record<string, number>

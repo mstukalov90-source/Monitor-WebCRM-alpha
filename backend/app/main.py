@@ -25,6 +25,7 @@ from app.routes import (
     ozn_match,
     personnel,
     photos,
+    reports,
     tasks,
     zip_close,
 )
@@ -80,6 +81,7 @@ app.include_router(employee_locations.router)
 app.include_router(field_score.router)
 app.include_router(photos.router)
 app.include_router(personnel.router)
+app.include_router(reports.router)
 app.include_router(monitor.router)
 app.include_router(zip_close.router)
 

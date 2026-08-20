@@ -1041,6 +1041,75 @@ a.btn {
   max-height: 90vh;
 }
 
+.modal.report-constructor-modal {
+  width: min(980px, 96vw);
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+
+.report-constructor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+  margin: 0 0 1rem;
+}
+
+.report-constructor-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+  margin-bottom: 1rem;
+}
+
+.report-sheet-chip {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-add-dataset {
+  min-width: 220px;
+}
+
+.report-constructor-editor {
+  border-top: 1px solid #e0e0e0;
+  padding-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.report-constructor-editor-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.report-columns-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+}
+
+.report-columns-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+}
+
+.report-related-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .modal.zip-close-modal {
   width: min(1100px, 96vw);
   display: flex;

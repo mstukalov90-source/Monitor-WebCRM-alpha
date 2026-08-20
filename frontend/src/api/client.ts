@@ -23,6 +23,9 @@ import type {
   GeoStatistics,
   OrderClosuresStatistics,
   OrderStatusFeed,
+  ReportCatalog,
+  ReportSpec,
+  ReportTemplate,
   TaskViewContext,
   TaskGroupMap,
   OrderSearchResult,
@@ -887,4 +890,105 @@ export function fetchEmployeeLocations(rayon?: string): Promise<EmployeeLocation
 
 export function fetchMonitorStatus(): Promise<MonitorStatus> {
   return request('/api/monitor/status')
+}
+
+export function fetchReportCatalog(): Promise<ReportCatalog> {
+  return request('/api/personnel/statistics/reports/catalog')
+}
+
+export function fetchReportTemplates(): Promise<ReportTemplate[]> {
+  return request('/api/personnel/statistics/reports/templates')
+}
+
+export function createReportTemplate(name: string, spec: ReportSpec): Promise<ReportTemplate> {
+  return request('/api/personnel/statistics/reports/templates', {
+    method: 'POST',
+    body: JSON.stringify({ name, spec }),
+  })
+}
+
+export function updateReportTemplate(
+  id: string,
+  body: { name?: string; spec?: ReportSpec },
+): Promise<ReportTemplate> {
+  return request(`/api/personnel/statistics/reports/templates/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteReportTemplate(id: string): Promise<void> {
+  return request(`/api/personnel/statistics/reports/templates/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function exportStatisticsReport(payload: {
+  spec: ReportSpec
+  dateFrom: string
+  dateTo: string
+  userRole?: 'field' | 'office'
+  userLogin?: string
+  objectType?: 'task' | 'order'
+}): Promise<void> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 180_000)
+  try {
+    const res = await fetch(`${API_BASE}/api/personnel/statistics/reports/export`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        spec: payload.spec,
+        date_from: payload.dateFrom,
+        date_to: payload.dateTo,
+        user_role: payload.userRole,
+        user_login: payload.userLogin,
+        object_type: payload.objectType,
+        rayons: [],
+      }),
+      signal: controller.signal,
+    })
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      throw errorFromApiBody(text, res.statusText)
+    }
+    const blob = await res.blob()
+    const filename = filenameFromDisposition(
+      res.headers.get('Content-Disposition'),
+      `statistika_${payload.dateFrom}_${payload.dateTo}.xlsx`,
+    )
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера')
+    }
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
+function filenameFromDisposition(header: string | null, fallback: string): string {
+  if (!header) return fallback
+  const utf = /filename\*=UTF-8''([^;]+)/i.exec(header)
+  if (utf?.[1]) {
+    try {
+      return decodeURIComponent(utf[1])
+    } catch {
+      return fallback
+    }
+  }
+  const ascii = /filename="?([^";]+)"?/i.exec(header)
+  return ascii?.[1]?.trim() || fallback
 }

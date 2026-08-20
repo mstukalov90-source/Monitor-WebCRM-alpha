@@ -10,6 +10,7 @@ interface ZipCloseModalProps {
 const CLOSE_KIND_LABEL: Record<string, string> = {
   clear: 'без разрытия → tasks_clear',
   observed: 'разрытие → field_observed',
+  field_data: 'полевая точка → crm.tasks',
   area_done: 'площадь wip_field → done',
   track_only: 'только трек',
 }
