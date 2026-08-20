@@ -18,6 +18,7 @@ from app.photos.ai_photo import (
     read_local_photo,
     resolve_ai_photo,
 )
+from app.photos.dit_photo import fetch_dit_photo_bytes, resolve_dit_photo
 from app.photos.field_photo import read_field_photo
 from app.photos.lens_photo import resolve_lens_photos
 from app.photos.sftp_fetch import (
@@ -38,6 +39,10 @@ router = APIRouter(
 
 def _image_url(uuid: str) -> str:
     return f"/api/photos/ai/{uuid}/image"
+
+
+def _dit_image_url(result_id: str) -> str:
+    return f"/api/photos/dit/{result_id}/image"
 
 
 def _photo_is_available(settings, image_name: str) -> bool:
@@ -102,6 +107,36 @@ def get_ai_photo_image(uuid: str) -> Response:
             proxy_base_url=settings.photo_proxy_base_url,
             static_base_url=settings.photo_static_base_url,
         )
+    except PhotoFetchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/dit/{result_id}/meta")
+def get_dit_photo_meta(result_id: str) -> dict:
+    with get_connection() as conn:
+        meta = resolve_dit_photo(conn, result_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Photo not found in dit_detect.ai_results")
+    if not meta.image_url.strip():
+        raise HTTPException(status_code=404, detail="Photo file not found on server")
+    return meta.to_dict(_dit_image_url(meta.result_id))
+
+
+@router.get("/dit/{result_id}/image")
+def get_dit_photo_image(result_id: str) -> Response:
+    with get_connection() as conn:
+        meta = resolve_dit_photo(conn, result_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Photo not found in dit_detect.ai_results")
+
+    try:
+        content, media_type = fetch_dit_photo_bytes(meta)
     except PhotoFetchError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

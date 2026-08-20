@@ -1263,6 +1263,22 @@ a.btn {
   padding: 6px 10px;
 }
 
+.order-status-dispatch-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.send-to-analise-modal-backdrop {
+  z-index: 2100;
+}
+
+.send-to-analise-modal {
+  max-width: 420px;
+}
+
 .order-status-quality-btn--scored {
   border-color: #ff9800;
   background: #fff8e1;

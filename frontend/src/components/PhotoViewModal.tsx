@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { aiPhotoImageUrl, fetchAiPhotoMeta } from '../api/client'
+import {
+  aiPhotoImageUrl,
+  ditPhotoImageUrl,
+  fetchAiPhotoMeta,
+  fetchDitPhotoMeta,
+} from '../api/client'
 import { parsePhotoBboxes } from '../lib/photoBboxes'
 import { PhotoBboxOverlay } from './PhotoBboxOverlay'
 import { PhotoLightboxImage } from './PhotoLightboxImage'
-import { formatTaskTableCell, type AiPhotoMeta } from '../types'
+import { formatTaskTableCell, type PhotoViewSource } from '../types'
 
 const CLEAR_CONFIRM_MESSAGE = 'Отметить задачу: разрытие отсутствует?'
 
@@ -12,14 +17,50 @@ export interface PhotoViewModalTaskActions {
   onMarkDisruptionAbsent: () => Promise<void>
 }
 
+interface PhotoViewMeta {
+  id: string
+  imageName: string
+  date: string | null
+  url: string
+  bboxes: unknown
+  idLabel: string
+}
+
 interface PhotoViewModalProps {
-  uuid: string | null
+  photoId: string | null
+  source?: PhotoViewSource
   onClose: () => void
   taskActions?: PhotoViewModalTaskActions
 }
 
-export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalProps) {
-  const [meta, setMeta] = useState<AiPhotoMeta | null>(null)
+function loadPhotoMeta(source: PhotoViewSource, photoId: string): Promise<PhotoViewMeta> {
+  if (source === 'dit') {
+    return fetchDitPhotoMeta(photoId).then((data) => ({
+      id: data.result_id,
+      imageName: data.image_name,
+      date: null,
+      url: ditPhotoImageUrl(data.result_id),
+      bboxes: data.bboxes,
+      idLabel: `ID: ${data.result_id}`,
+    }))
+  }
+  return fetchAiPhotoMeta(photoId).then((data) => ({
+    id: data.uuid,
+    imageName: data.image_name,
+    date: data.date,
+    url: aiPhotoImageUrl(data.uuid),
+    bboxes: data.bboxes,
+    idLabel: `UUID: ${data.uuid}`,
+  }))
+}
+
+export function PhotoViewModal({
+  photoId,
+  source = 'genplan',
+  onClose,
+  taskActions,
+}: PhotoViewModalProps) {
+  const [meta, setMeta] = useState<PhotoViewMeta | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [imageError, setImageError] = useState(false)
@@ -29,7 +70,7 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
-    if (!uuid) {
+    if (!photoId) {
       setMeta(null)
       setError(null)
       setImageError(false)
@@ -50,7 +91,7 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
     setShowBboxes(true)
     setImageSize(null)
 
-    fetchAiPhotoMeta(uuid)
+    loadPhotoMeta(source, photoId)
       .then((data) => {
         if (!cancelled) setMeta(data)
       })
@@ -67,25 +108,25 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
     return () => {
       cancelled = true
     }
-  }, [uuid])
+  }, [photoId, source])
 
   useEffect(() => {
-    if (!uuid) return
+    if (!photoId) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [uuid, onClose])
+  }, [photoId, onClose])
 
   const boxes = useMemo(() => parsePhotoBboxes(meta?.bboxes), [meta?.bboxes])
   const hasBboxes = boxes.length > 0
 
-  if (!uuid) return null
+  if (!photoId) return null
 
   const titleParts = [
     meta?.date ? `Дата: ${formatTaskTableCell(meta.date, 'date')}` : null,
-    meta?.image_name ?? null,
+    meta?.imageName ?? null,
   ].filter(Boolean)
 
   const bboxOverlay =
@@ -140,14 +181,14 @@ export function PhotoViewModal({ uuid, onClose, taskActions }: PhotoViewModalPro
             {titleParts.length > 0 && (
               <p className="muted small photo-modal-meta">{titleParts.join(' · ')}</p>
             )}
-            <p className="muted small">UUID: {meta.uuid}</p>
+            <p className="muted small">{meta.idLabel}</p>
             <div className="photo-modal-body">
               {imageError ? (
                 <p className="error-banner">Не удалось загрузить изображение</p>
               ) : (
                 <PhotoLightboxImage
-                  src={aiPhotoImageUrl(meta.uuid)}
-                  alt={meta.image_name}
+                  src={meta.url}
+                  alt={meta.imageName}
                   className="photo-modal-image"
                   overlay={bboxOverlay}
                   toolbarExtra={

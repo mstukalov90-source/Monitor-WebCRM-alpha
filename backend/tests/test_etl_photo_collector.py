@@ -13,6 +13,7 @@ from app.crm.collector import (
 )
 from app.crm.etl_photo_loader import (
     AI_PHOTO_SUBGROUP,
+    DIT_PHOTO_SUBGROUP,
     LENS_PHOTO_SUBGROUP,
     is_etl_sync_subgroup,
 )
@@ -77,6 +78,8 @@ class EtlPhotoCollectorPlanTests(unittest.TestCase):
         persist_district_tasks(conn, "Сокол", apply_date_filter=True, login="test")
         called_subgroups = {call.args[2] for call in persist_mock.call_args_list}
         self.assertTrue(etl_names.isdisjoint(called_subgroups))
+        self.assertIn(DIT_PHOTO_SUBGROUP, etl_names)
+        self.assertNotIn(DIT_PHOTO_SUBGROUP, called_subgroups)
 
 
 class CollectTasksPersistTests(unittest.TestCase):

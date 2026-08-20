@@ -37,13 +37,16 @@ import type {
   TaskRecord,
   TaskSource,
   UserRole,
+  PhotoViewSource,
 } from '../types'
 import {
   aiPhotoUuidFromAttributes,
   CRM_GROUP_ORDERS,
+  ditResultIdFromAttributes,
   formatFieldObserved,
   formatTaskTableCell,
   isAiPhotoContext,
+  isDitPhotoContext,
   isFieldObserved,
   isLensPhotoContext,
   lensExternalIdFromAttributes,
@@ -242,7 +245,9 @@ export function TaskEditModal({
   const [stationSectionOpen, setStationSectionOpen] = useState(false)
   const [fieldSnapshotKey, setFieldSnapshotKey] = useState<string | null>(null)
   const [fieldExecutor, setFieldExecutor] = useState<string | null>(null)
-  const [photoUuid, setPhotoUuid] = useState<string | null>(null)
+  const [photoTarget, setPhotoTarget] = useState<{ source: PhotoViewSource; id: string } | null>(
+    null,
+  )
   const [lensReportId, setLensReportId] = useState<string | null>(null)
   const [fieldMaterialsKey, setFieldMaterialsKey] = useState<string | null>(null)
   const [fieldSurveyMeta, setFieldSurveyMeta] = useState<FieldSurveyMeta | null>(null)
@@ -284,10 +289,11 @@ export function TaskEditModal({
       ? String(context.feature.attributes.delay_until)
       : null
   const isAiPhoto = context ? isAiPhotoContext(context.subgroupName, context.feature.layer_key) : false
+  const isDitPhoto = context ? isDitPhotoContext(context.subgroupName, context.feature.layer_key) : false
   const isLensPhoto = context
     ? isLensPhotoContext(context.subgroupName, context.feature.layer_key)
     : false
-  const showPhotoButton = (isAiPhoto || isLensPhoto) && Boolean(record)
+  const showPhotoButton = (isAiPhoto || isDitPhoto || isLensPhoto) && Boolean(record)
   const showFieldMaterials =
     isFieldObserved(record?.field_observed) ||
     isFieldObserved(context?.feature.attributes.field_observed)
@@ -324,6 +330,18 @@ export function TaskEditModal({
       setLensReportId(reportId)
       return
     }
+    if (isDitPhoto) {
+      const resultId =
+        record?.dit_result_id?.trim() ||
+        ditResultIdFromAttributes(context.feature.attributes) ||
+        null
+      if (!resultId) {
+        setMessage('ID фотографии ДИТ не найден')
+        return
+      }
+      setPhotoTarget({ source: 'dit', id: resultId })
+      return
+    }
     const uuid =
       record?.photo_uuid?.trim() ||
       aiPhotoUuidFromAttributes(context.feature.attributes) ||
@@ -332,7 +350,7 @@ export function TaskEditModal({
       setMessage('UUID фотографии не найден')
       return
     }
-    setPhotoUuid(uuid)
+    setPhotoTarget({ source: 'genplan', id: uuid })
   }
 
   const handleViewFieldMaterials = () => {
@@ -345,7 +363,7 @@ export function TaskEditModal({
 
   const openPhotoIfAvailable = () => {
     if (!context || autoPhotoOpenedRef.current) return
-    if (!isAiPhoto && !isLensPhoto) return
+    if (!isAiPhoto && !isDitPhoto && !isLensPhoto) return
     if (
       isFieldObserved(record?.field_observed) ||
       isFieldObserved(context.feature.attributes.field_observed)
@@ -362,13 +380,23 @@ export function TaskEditModal({
       setLensReportId(reportId)
       return
     }
+    if (isDitPhoto) {
+      const resultId =
+        record?.dit_result_id?.trim() ||
+        ditResultIdFromAttributes(context.feature.attributes) ||
+        null
+      if (!resultId) return
+      autoPhotoOpenedRef.current = true
+      setPhotoTarget({ source: 'dit', id: resultId })
+      return
+    }
     const uuid =
       record?.photo_uuid?.trim() ||
       aiPhotoUuidFromAttributes(context.feature.attributes) ||
       null
     if (!uuid) return
     autoPhotoOpenedRef.current = true
-    setPhotoUuid(uuid)
+    setPhotoTarget({ source: 'genplan', id: uuid })
   }
 
   async function refreshHighlight(
@@ -435,7 +463,7 @@ export function TaskEditModal({
       setShowLegalRequirements(false)
       setLinkSectionOpen(false)
       setStationSectionOpen(false)
-      setPhotoUuid(null)
+      setPhotoTarget(null)
       setLensReportId(null)
       setFieldMaterialsKey(null)
       setFieldSurveyMeta(null)
@@ -448,7 +476,7 @@ export function TaskEditModal({
     }
 
     autoPhotoOpenedRef.current = false
-    setPhotoUuid(null)
+    setPhotoTarget(null)
     setLensReportId(null)
     setFieldMaterialsKey(null)
     setFieldSurveyMeta(null)
@@ -490,7 +518,7 @@ export function TaskEditModal({
 
   useEffect(() => {
     openPhotoIfAvailable()
-  }, [context, isAiPhoto, isLensPhoto, record?.key, record?.photo_uuid, record?.photo_lens, record?.field_observed])
+  }, [context, isAiPhoto, isDitPhoto, isLensPhoto, record?.key, record?.photo_uuid, record?.dit_result_id, record?.photo_lens, record?.field_observed])
 
   useEffect(() => {
     if (!context || taskSource !== 'field' || !record) {
@@ -619,6 +647,7 @@ export function TaskEditModal({
         earthwork_id: form.earthwork_id || null,
         localwork_id: form.localwork_id || null,
         avr_mos_id: form.avr_mos_id || null,
+        dit_result_id: form.dit_result_id || null,
         sps: form.sps || null,
         kgs: form.kgs || null,
         station_avr: form.station_avr || null,
@@ -1093,12 +1122,13 @@ export function TaskEditModal({
       </div>
       </div>
 
-      {photoUuid && (
+      {photoTarget && (
         <PhotoViewModal
-          uuid={photoUuid}
-          onClose={() => setPhotoUuid(null)}
+          photoId={photoTarget.id}
+          source={photoTarget.source}
+          onClose={() => setPhotoTarget(null)}
           taskActions={
-            isAiPhoto && canMarkDisruptionAbsent
+            (isAiPhoto || isDitPhoto) && canMarkDisruptionAbsent
               ? {
                   canMarkDisruptionAbsent: true,
                   onMarkDisruptionAbsent: () => handleAction('clear'),

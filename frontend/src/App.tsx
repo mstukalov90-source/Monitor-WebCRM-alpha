@@ -848,6 +848,7 @@ function App() {
               setFieldScoreOrderKey(event.object_key)
               setAppView('field_score')
             }}
+            canDispatchAnalise={user.can_manage_personnel}
           />
         )}
         {zipCloseOpen && user.role === 'admin' && (

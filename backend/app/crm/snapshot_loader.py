@@ -113,6 +113,7 @@ def _row_to_snapshot_row(
         earthwork_id=row.get("earthwork_id"),
         localwork_id=row.get("localwork_id"),
         avr_mos_id=row.get("avr_mos_id"),
+        dit_result_id=row.get("dit_result_id"),
         sps=row.get("sps"),
         kgs=row.get("kgs"),
         station_avr=row.get("station_avr"),

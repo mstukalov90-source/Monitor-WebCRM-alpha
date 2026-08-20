@@ -11,6 +11,7 @@ import type {
   CollectLayerChunk,
   CollectProgress,
   AiPhotoMeta,
+  DitPhotoMeta,
   FieldPhotosResult,
   LensPhotosResult,
   FieldReportFeature,
@@ -22,6 +23,8 @@ import type {
   PersonnelStatistics,
   GeoStatistics,
   OrderClosuresStatistics,
+  AnaliseDispatchContext,
+  AnaliseDispatchResult,
   OrderStatusFeed,
   ReportCatalog,
   ReportSpec,
@@ -333,6 +336,20 @@ export function startAreaAnalise(key: string): Promise<{ status: string }> {
   })
 }
 
+export function fetchAnaliseDispatch(key: string): Promise<AnaliseDispatchContext> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/analise-dispatch`)
+}
+
+export function dispatchAreaAnalise(
+  key: string,
+  body: { assignee_login: string; mode: 'start' | 'complete' },
+): Promise<AnaliseDispatchResult> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/dispatch-analise`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export function pauseAreaAnalise(key: string): Promise<{ status: string }> {
   return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/pause-analise`, {
     method: 'POST',
@@ -510,6 +527,14 @@ export function fetchAiPhotoMeta(uuid: string): Promise<AiPhotoMeta> {
 
 export function aiPhotoImageUrl(uuid: string): string {
   return `/api/photos/ai/${encodeURIComponent(uuid)}/image`
+}
+
+export function fetchDitPhotoMeta(resultId: string): Promise<DitPhotoMeta> {
+  return request(`/api/photos/dit/${encodeURIComponent(resultId)}/meta`)
+}
+
+export function ditPhotoImageUrl(resultId: string): string {
+  return `/api/photos/dit/${encodeURIComponent(resultId)}/image`
 }
 
 export function fetchLensPhotos(externalReportId: string): Promise<LensPhotosResult> {

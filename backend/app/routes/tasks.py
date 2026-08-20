@@ -18,6 +18,7 @@ from app.auth.deps import (
     require_can_collect,
     require_can_manage_field_task_status,
     require_can_postpone_tasks,
+    require_manager_or_admin,
     require_office_or_admin,
 )
 from app.auth.session import (
@@ -43,6 +44,9 @@ from app.crm.snapshot_loader import (
     snapshot_result_to_dict,
 )
 from app.crm.schemas import (
+    AnaliseDispatchContextOut,
+    AnaliseDispatchRequest,
+    AnaliseDispatchResultOut,
     CollectLayerRequest,
     CollectTasksRequest,
     CreateOfficeTaskRequest,
@@ -94,8 +98,11 @@ from app.crm.field_data_loader import (
 from app.photos.field_photo import _field_image_url, fetch_field_photos
 from app.crm.tasks_area import (
     AREA_STATUSES,
+    AnaliseDispatchError,
     collect_tasks_area,
     collect_tasks_area_all,
+    dispatch_area_analise,
+    fetch_analise_dispatch_context,
     fetch_tasks_area_geojson,
     send_area_to_survey,
     release_area_from_survey,
@@ -831,6 +838,51 @@ def post_area_complete_analise(
     if result_status == "not_found":
         raise HTTPException(status_code=404, detail="Area order not found")
     return {"status": result_status}
+
+
+@router.get("/crm/tasks-area/{key}/analise-dispatch")
+def get_analise_dispatch(
+    key: str,
+    _user: UserSession = Depends(require_manager_or_admin),
+) -> AnaliseDispatchContextOut:
+    with get_connection() as conn:
+        ctx = fetch_analise_dispatch_context(conn, key)
+    if ctx is None:
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return AnaliseDispatchContextOut(**ctx)
+
+
+@router.post("/crm/tasks-area/{key}/dispatch-analise")
+def post_dispatch_analise(
+    key: str,
+    body: AnaliseDispatchRequest,
+    user: UserSession = Depends(require_manager_or_admin),
+) -> AnaliseDispatchResultOut:
+    assignee = body.assignee_login.strip()
+    with get_connection() as conn:
+        try:
+            result_status = dispatch_area_analise(
+                conn,
+                key,
+                assignee_login=assignee,
+                mode=body.mode,
+                actor_login=user.login,
+            )
+        except AnaliseDispatchError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if result_status == "conflict":
+            holder = analise_lock_holder(conn, key) or "другой пользователь"
+            raise HTTPException(
+                status_code=409,
+                detail=f"Заказ в работе у пользователя {holder}",
+            )
+    if result_status == "not_found":
+        raise HTTPException(status_code=404, detail="Area order not found")
+    return AnaliseDispatchResultOut(
+        status=result_status,
+        mode=body.mode,
+        assignee_login=assignee,
+    )
 
 
 @router.post("/crm/tasks-area/{key}/start-pre-analise")

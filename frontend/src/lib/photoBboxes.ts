@@ -84,12 +84,24 @@ function parseCoordList(raw: unknown[], extra?: { label?: string; score?: number
   return fromXyxy(a, b, c, d, extra)
 }
 
+function withExtra(box: PhotoBbox, extra: { label?: string; score?: number }): PhotoBbox {
+  return {
+    ...box,
+    label: box.label ?? extra.label,
+    score: box.score ?? extra.score,
+  }
+}
+
 function parseRecord(record: Record<string, unknown>): PhotoBbox | null {
   const extra = { label: pickLabel(record), score: pickScore(record) }
   const nested = record.bbox ?? record.box ?? record.xyxy
   if (Array.isArray(nested)) {
     const parsed = parseCoordList(nested, extra)
     if (parsed) return parsed
+  }
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    const parsed = parseRecord(nested as Record<string, unknown>)
+    if (parsed) return withExtra(parsed, extra)
   }
 
   const x1 = pickNumber(record, ['x1', 'xmin', 'left', 'min_x'])

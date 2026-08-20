@@ -1,4 +1,4 @@
-"""Load ETL-synced photo tasks (genplan + lens) from crm.tasks JOIN."""
+"""Load ETL-synced photo tasks (genplan + dit + lens) from crm.tasks JOIN."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from app.layers.registry import get_registry
 
 ETL_SYNC_SOURCE = "etl_sync"
 
-AI_PHOTO_SUBGROUP = "Фото после обработки ИИ"
+AI_PHOTO_SUBGROUP = "Фото после обработки ИИ (ГенПлан)"
+DIT_PHOTO_SUBGROUP = "Фото после обработки ИИ (ДИТ)"
 LENS_PHOTO_SUBGROUP = "Фото разрытий и строек"
 
 

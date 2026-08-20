@@ -48,6 +48,24 @@
           ]
         },
         {
+          "group_name": "Данные ДИТ",
+          "layers": [
+            {
+              "table_name": "ai_results",
+              "display_name": "Фотографии после обработки ИИ (ДИТ)",
+              "geometry_type": "point",
+              "symbology": {
+                "color": "#9C27B0",
+                "size": 4,
+                "marker_type": "circle"
+              },
+              "schema": "dit_detect",
+              "geometry_column": "geom",
+              "primary_key": "result_id"
+            }
+          ]
+        },
+        {
           "group_name": "Данные \"Объектив\"",
           "layers": [
             {
@@ -639,10 +657,17 @@
         "name": "Разрытия",
         "subgroups": [
           {
-            "name": "Фото после обработки ИИ",
+            "name": "Фото после обработки ИИ (ГенПлан)",
             "source": "etl_sync",
             "layers": [
               "Фотографии после обработки ИИ"
+            ]
+          },
+          {
+            "name": "Фото после обработки ИИ (ДИТ)",
+            "source": "etl_sync",
+            "layers": [
+              "Фотографии после обработки ИИ (ДИТ)"
             ]
           },
           {
@@ -717,9 +742,13 @@
       "clear_table": "tasks_clear",
       "delay_table": "tasks_delay",
       "subgroups": {
-        "Фото после обработки ИИ": {
+        "Фото после обработки ИИ (ГенПлан)": {
           "task_column": "photo_uuid",
           "source_field": "uuid"
+        },
+        "Фото после обработки ИИ (ДИТ)": {
+          "task_column": "dit_result_id",
+          "source_field": "result_id"
         },
         "Фото разрытий и строек": {
           "task_column": "photo_lens",
@@ -785,6 +814,7 @@
     "stroymonitoring": "СтройМониторинг",
     "lens": "Данные Объектив",
     "genplan": "Данные ГенПлан (photo_meta, order)",
+    "dit_detect": "Данные ДИТ (ai_results — фото после обработки ИИ)",
     "odh_export": "Границы районов, объекты ДГИ, ООЗТ (oozt), разрытия (ogh-disruption)",
     "mggt_field": "Полевые отчёты МГГТ Field (reports, tracks, track_real_time)"
   }

@@ -255,6 +255,28 @@ export interface OrderStatusFeed {
   date_to: string
 }
 
+export interface AnaliseDispatchOfficeUser {
+  login: string
+  name: string
+}
+
+export interface AnaliseDispatchContext {
+  order_key: string
+  task_number: string | null
+  rayon: string | null
+  workflow: AnaliseWorkflowStatus
+  lock_holder: string | null
+  has_analise_tasks: boolean
+  task_count: number
+  office_users: AnaliseDispatchOfficeUser[]
+}
+
+export interface AnaliseDispatchResult {
+  status: string
+  mode: 'start' | 'complete'
+  assignee_login: string
+}
+
 export interface TaskViewContext {
   task_key: string
   group_name: string
@@ -758,6 +780,16 @@ export interface AiPhotoMeta {
   bboxes?: unknown
 }
 
+export interface DitPhotoMeta {
+  result_id: string
+  image: string
+  image_name: string
+  url: string
+  bboxes?: unknown
+}
+
+export type PhotoViewSource = 'genplan' | 'dit'
+
 export interface FieldPhoto {
   id: number
   file_path: string
@@ -786,8 +818,10 @@ export interface LensPhotosResult {
   photos: LensPhoto[]
 }
 
-export const AI_PHOTO_SUBGROUP = 'Фото после обработки ИИ'
+export const AI_PHOTO_SUBGROUP = 'Фото после обработки ИИ (ГенПлан)'
 export const AI_PHOTO_LAYER_KEY = 'фотографии_после_обработки_ии'
+export const DIT_PHOTO_SUBGROUP = 'Фото после обработки ИИ (ДИТ)'
+export const DIT_PHOTO_LAYER_KEY = 'фотографии_после_обработки_ии_дит'
 export const LENS_PHOTO_SUBGROUP = 'Фото разрытий и строек'
 export const LENS_PHOTO_LAYER_KEY = 'фото_разрытий_и_строек'
 export const OGH_DISRUPTION_SUBGROUP = 'Разрытия из полигонов ОГХ'
@@ -817,6 +851,9 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
   [AI_PHOTO_SUBGROUP]: [
     { field: 'azimuth_deg', label: 'Угол камеры' },
     { field: 'date', label: 'Дата съёмки', format: 'date' },
+  ],
+  [DIT_PHOTO_SUBGROUP]: [
+    { field: 'created_at', label: 'Дата съёмки', format: 'date' },
   ],
   [LENS_PHOTO_SUBGROUP]: [
     { field: 'comment', label: 'Комментарий' },
@@ -1179,6 +1216,10 @@ export function isAiPhotoContext(subgroupName: string, layerKey?: string): boole
   return subgroupName === AI_PHOTO_SUBGROUP || layerKey === AI_PHOTO_LAYER_KEY
 }
 
+export function isDitPhotoContext(subgroupName: string, layerKey?: string): boolean {
+  return subgroupName === DIT_PHOTO_SUBGROUP || layerKey === DIT_PHOTO_LAYER_KEY
+}
+
 export function isLensPhotoContext(subgroupName: string, layerKey?: string): boolean {
   return subgroupName === LENS_PHOTO_SUBGROUP || layerKey === LENS_PHOTO_LAYER_KEY
 }
@@ -1188,6 +1229,13 @@ export function aiPhotoUuidFromAttributes(attributes: Record<string, unknown>): 
   if (value == null) return null
   const uuid = String(value).trim()
   return uuid || null
+}
+
+export function ditResultIdFromAttributes(attributes: Record<string, unknown>): string | null {
+  const value = attributes.result_id
+  if (value == null) return null
+  const id = String(value).trim()
+  return id || null
 }
 
 export function lensExternalIdFromAttributes(attributes: Record<string, unknown>): string | null {
@@ -1207,6 +1255,7 @@ export interface TaskRecord {
   earthwork_id?: string | null
   localwork_id?: string | null
   avr_mos_id?: string | null
+  dit_result_id?: string | null
   sps?: string | null
   kgs?: string | null
   station_avr?: string | null

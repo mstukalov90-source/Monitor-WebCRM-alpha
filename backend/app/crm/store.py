@@ -35,6 +35,7 @@ TASK_ID_COLUMNS = (
     "earthwork_id",
     "localwork_id",
     "avr_mos_id",
+    "dit_result_id",
 )
 
 CRM_GROUP_DISRUPTIONS = "Разрытия"
@@ -76,6 +77,7 @@ TASK_COLUMN_LABELS = {
     "earthwork_id": "Земляные работы",
     "localwork_id": "Локальные ремонты",
     "avr_mos_id": "АВР",
+    "dit_result_id": "Фото ИИ (ДИТ)",
     "sps": "СПС",
     "kgs": "КГС",
     "station_avr": "АВР",
@@ -99,6 +101,7 @@ _DDL_STATEMENTS = (
         earthwork_id TEXT,
         localwork_id TEXT,
         avr_mos_id TEXT,
+        dit_result_id TEXT,
         sps TEXT,
         kgs TEXT,
         station_avr TEXT
@@ -121,11 +124,21 @@ _CREATE_TASK_ID_UNIQUE_INDEXES = (
     "ON crm.tasks (localwork_id) WHERE localwork_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_avr_mos_id "
     "ON crm.tasks (avr_mos_id) WHERE avr_mos_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS tasks_uq_dit_result_id "
+    "ON crm.tasks (dit_result_id) WHERE dit_result_id IS NOT NULL",
 )
 
 
-def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
+def _task_id_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
     return tuple(
+        f'ALTER TABLE "{schema}"."{table}" '
+        f'ADD COLUMN IF NOT EXISTS "{col}" TEXT'
+        for col in TASK_ID_COLUMNS
+    )
+
+
+def _station_migration_statements(schema: str, table: str) -> Tuple[str, ...]:
+    return _task_id_migration_statements(schema, table) + tuple(
         f'ALTER TABLE "{schema}"."{table}" '
         f'ADD COLUMN IF NOT EXISTS "{col}" TEXT'
         for col in STATION_COLUMNS
@@ -247,6 +260,7 @@ def _snapshot_ddl_statements(
             earthwork_id TEXT,
             localwork_id TEXT,
             avr_mos_id TEXT,
+            dit_result_id TEXT,
             sps TEXT,
             kgs TEXT,
             station_avr TEXT,
@@ -281,6 +295,7 @@ class TaskRecord:
     earthwork_id: Optional[str] = None
     localwork_id: Optional[str] = None
     avr_mos_id: Optional[str] = None
+    dit_result_id: Optional[str] = None
     sps: Optional[str] = None
     kgs: Optional[str] = None
     station_avr: Optional[str] = None
@@ -301,6 +316,7 @@ class TaskRecord:
             "earthwork_id": self.earthwork_id,
             "localwork_id": self.localwork_id,
             "avr_mos_id": self.avr_mos_id,
+            "dit_result_id": self.dit_result_id,
             "sps": self.sps,
             "kgs": self.kgs,
             "station_avr": self.station_avr,
@@ -313,36 +329,20 @@ class TaskRecord:
 
     @classmethod
     def from_row(cls, row: Tuple) -> "TaskRecord":
-        field_observed = None
-        if len(row) > 12 and row[12] is not None:
-            field_observed = bool(row[12])
-        is_field_data = None
-        if len(row) > 13 and row[13] is not None:
-            is_field_data = bool(row[13])
-        is_office_task = None
-        if len(row) > 14 and row[14] is not None:
-            is_office_task = bool(row[14])
-        user_created = list(row[15]) if len(row) > 15 and row[15] is not None else None
-        user_last_edit = list(row[16]) if len(row) > 16 and row[16] is not None else None
-        return cls(
-            key=str(row[0]),
-            type=row[1] or "",
-            photo_uuid=_normalize_id_value(row[2]),
-            photo_lens=_normalize_id_value(row[3]),
-            ogh_id=_normalize_id_value(row[4]),
-            oati_id=_normalize_id_value(row[5]),
-            earthwork_id=_normalize_id_value(row[6]),
-            localwork_id=_normalize_id_value(row[7]),
-            avr_mos_id=_normalize_id_value(row[8]),
-            sps=_normalize_id_value(row[9]) if len(row) > 9 else None,
-            kgs=_normalize_id_value(row[10]) if len(row) > 10 else None,
-            station_avr=_normalize_id_value(row[11]) if len(row) > 11 else None,
-            field_observed=field_observed,
-            is_field_data=is_field_data,
-            is_office_task=is_office_task,
-            user_created=user_created,
-            user_last_edit=user_last_edit,
-        )
+        values = dict(zip(_TASK_SELECT_COLUMNS, row))
+        kwargs: Dict[str, Any] = {
+            "key": str(values["key"]),
+            "type": values.get("type") or "",
+        }
+        for col in TASK_ID_COLUMNS + STATION_COLUMNS:
+            kwargs[col] = _normalize_id_value(values.get(col))
+        for col in ("field_observed", "is_field_data", "is_office_task"):
+            raw = values.get(col)
+            kwargs[col] = bool(raw) if raw is not None else None
+        for col in USER_AUDIT_COLUMNS:
+            raw = values.get(col)
+            kwargs[col] = list(raw) if raw is not None else None
+        return cls(**kwargs)
 
 
 def _ensure_task_id_unique_indexes(conn: PgConnection) -> None:
@@ -687,16 +687,7 @@ def task_row_from_feature(
         if business_id is None:
             return None
 
-    row = {
-        "type": group_name,
-        "photo_uuid": None,
-        "photo_lens": None,
-        "ogh_id": None,
-        "oati_id": None,
-        "earthwork_id": None,
-        "localwork_id": None,
-        "avr_mos_id": None,
-    }
+    row: Dict[str, Any] = {"type": group_name, **{col: None for col in TASK_ID_COLUMNS}}
     row[task_column] = business_id
     return row
 
@@ -1873,6 +1864,69 @@ def persist_new_tasks_in_district(
             date_from,
             date_to,
         )
+
+    if commit:
+        conn.commit()
+    return inserted
+
+
+def backfill_source_layer_tasks(
+    conn: PgConnection,
+    group_name: str,
+    subgroup_name: str,
+    layer: Any,
+    store_cfg: Dict[str, Any],
+    login: str,
+    *,
+    commit: bool = True,
+) -> int:
+    """INSERT ... SELECT всех новых задач слоя без фильтра района (одноразовый ETL-backfill)."""
+    mapping = store_cfg.get("subgroups", {}).get(subgroup_name)
+    if not mapping:
+        return 0
+
+    task_column = mapping.get("task_column")
+    source_field = mapping.get("source_field")
+    if task_column not in TASK_ID_COLUMNS or not source_field:
+        return 0
+
+    schema, tasks_table = _table_ref(store_cfg)
+    geom_col = layer.geometry_column
+    pk_col = layer.primary_key or "id"
+    scoped = bool(mapping.get("scoped_geometry_id"))
+    business_id_expr = scoped_business_id_expr(layer, source_field, scoped)
+
+    filters = [
+        f't."{geom_col}" IS NOT NULL',
+        f't."{source_field}" IS NOT NULL',
+        f"{business_id_expr} <> ''",
+    ]
+    if layer.sql_filter:
+        filters.append(f"({layer.sql_filter})")
+
+    audit = make_user_audit(login)
+    id_values = [
+        "src.business_id" if col == task_column else "NULL" for col in TASK_ID_COLUMNS
+    ]
+    insert_columns = ["type"] + list(TASK_ID_COLUMNS) + list(USER_AUDIT_COLUMNS)
+    col_list = ", ".join(f'"{col}"' for col in insert_columns)
+    where_clause = " AND ".join(filters)
+    query = f"""
+        INSERT INTO "{schema}"."{tasks_table}" ({col_list})
+        SELECT %s, {", ".join(id_values)}, %s::text[], %s::text[]
+        FROM (
+            SELECT DISTINCT ON ({business_id_expr})
+                {business_id_expr} AS business_id
+            FROM {layer.qualified_table} t
+            WHERE {where_clause}
+            ORDER BY {business_id_expr}, t."{pk_col}"
+        ) src
+        {_task_id_conflict_clause(task_column)}
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(query, [group_name, audit, audit])
+        inserted = cur.rowcount
 
     if commit:
         conn.commit()

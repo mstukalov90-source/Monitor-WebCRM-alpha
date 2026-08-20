@@ -94,6 +94,7 @@ class TaskRecordOut(BaseModel):
     earthwork_id: str | None = None
     localwork_id: str | None = None
     avr_mos_id: str | None = None
+    dit_result_id: str | None = None
     sps: str | None = None
     kgs: str | None = None
     station_avr: str | None = None
@@ -119,6 +120,7 @@ class TaskRecordUpdate(BaseModel):
     earthwork_id: str | None = None
     localwork_id: str | None = None
     avr_mos_id: str | None = None
+    dit_result_id: str | None = None
     sps: str | None = None
     kgs: str | None = None
     station_avr: str | None = None
@@ -337,6 +339,33 @@ class OrderStatusFeedOut(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
     date_from: str
     date_to: str
+
+
+class AnaliseDispatchOfficeUserOut(BaseModel):
+    login: str
+    name: str
+
+
+class AnaliseDispatchContextOut(BaseModel):
+    order_key: str
+    task_number: str | None = None
+    rayon: str | None = None
+    workflow: Literal["idle", "in_progress", "paused", "done"]
+    lock_holder: str | None = None
+    has_analise_tasks: bool
+    task_count: int
+    office_users: list[AnaliseDispatchOfficeUserOut] = Field(default_factory=list)
+
+
+class AnaliseDispatchRequest(BaseModel):
+    assignee_login: str
+    mode: Literal["start", "complete"]
+
+
+class AnaliseDispatchResultOut(BaseModel):
+    status: str
+    mode: Literal["start", "complete"]
+    assignee_login: str
 
 
 class TaskViewFeatureOut(BaseModel):

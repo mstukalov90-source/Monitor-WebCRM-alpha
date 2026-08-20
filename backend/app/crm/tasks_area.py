@@ -497,7 +497,48 @@ def _fetch_analise_state(conn: PgConnection, key: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
+def _write_analise_lock(
+    conn: PgConnection,
+    key: str,
+    assignee: str,
+    actor_login: str,
+    *,
+    idle_only: bool,
+) -> bool:
+    audit = make_user_audit(actor_login)
+    where = """
+        WHERE key = %s::uuid
+          AND COALESCE(analise, FALSE) = FALSE
+    """
+    if idle_only:
+        where += " AND analise_started_at IS NULL"
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE crm.tasks_area SET
+                analise_started_by = %s,
+                analise_started_at = NOW(),
+                analise_paused_by = NULL,
+                analise_paused_at = NULL,
+                user_last_edit = %s::text[]
+            {where}
+            RETURNING key
+            """,
+            (assignee, audit, key),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row is not None
+
+
+def start_area_analise(
+    conn: PgConnection,
+    key: str,
+    login: str,
+    *,
+    actor_login: str | None = None,
+    force: bool = False,
+) -> str:
     ensure_tasks_area_audit_columns(conn)
     ensure_analise_audit_columns(conn)
     clear_stale_analise_locks(conn)
@@ -511,54 +552,46 @@ def start_area_analise(conn: PgConnection, key: str, login: str) -> str:
     started_by = (state.get("analise_started_by") or "").strip()
     paused_at = state.get("analise_paused_at")
     login = login.strip()
+    actor = (actor_login or login).strip()
 
     if started_at is None:
-        audit = make_user_audit(login)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE crm.tasks_area SET
-                    analise_started_by = %s,
-                    analise_started_at = NOW(),
-                    analise_paused_by = NULL,
-                    analise_paused_at = NULL,
-                    user_last_edit = %s::text[]
-                WHERE key = %s::uuid
-                  AND COALESCE(analise, FALSE) = FALSE
-                  AND analise_started_at IS NULL
-                RETURNING key
-                """,
-                (login, audit, key),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return "updated" if row else "not_found"
+        return "updated" if _write_analise_lock(
+            conn, key, login, actor, idle_only=True
+        ) else "not_found"
 
     if paused_at is not None:
-        if started_by != login:
-            return "conflict"
-        audit = make_user_audit(login)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE crm.tasks_area SET
-                    analise_paused_by = NULL,
-                    analise_paused_at = NULL,
-                    user_last_edit = %s::text[]
-                WHERE key = %s::uuid
-                  AND COALESCE(analise, FALSE) = FALSE
-                  AND analise_paused_at IS NOT NULL
-                  AND analise_started_by = %s
-                RETURNING key
-                """,
-                (audit, key, login),
-            )
-            row = cur.fetchone()
-        conn.commit()
-        return "updated" if row else "not_found"
+        if started_by == login:
+            audit = make_user_audit(actor)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE crm.tasks_area SET
+                        analise_paused_by = NULL,
+                        analise_paused_at = NULL,
+                        user_last_edit = %s::text[]
+                    WHERE key = %s::uuid
+                      AND COALESCE(analise, FALSE) = FALSE
+                      AND analise_paused_at IS NOT NULL
+                      AND analise_started_by = %s
+                    RETURNING key
+                    """,
+                    (audit, key, login),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return "updated" if row else "not_found"
+        if force:
+            return "updated" if _write_analise_lock(
+                conn, key, login, actor, idle_only=False
+            ) else "not_found"
+        return "conflict"
 
     if started_by == login:
         return "skipped"
+    if force:
+        return "updated" if _write_analise_lock(
+            conn, key, login, actor, idle_only=False
+        ) else "not_found"
     return "conflict"
 
 
@@ -647,6 +680,177 @@ def complete_area_analise(conn: PgConnection, key: str, login: str) -> str:
     if state.get("analise") is True:
         return "skipped"
     return "not_found"
+
+
+class AnaliseDispatchError(ValueError):
+    """Validation error for manager analise dispatch."""
+
+
+def _analise_workflow_status(state: dict[str, Any]) -> str:
+    if state.get("analise") is True:
+        return "done"
+    if state.get("analise_paused_at") is not None:
+        return "paused"
+    if state.get("analise_started_at") is not None:
+        return "in_progress"
+    return "idle"
+
+
+def _analise_eligible_tasks_count_sql() -> str:
+    geom_union = _task_geom_union_sql()
+    section_pred = _not_in_snapshots_sql("t")
+    return f"""
+        SELECT COUNT(*)::int
+        FROM crm.tasks t
+        WHERE t.field_observed IS TRUE
+          AND {section_pred}
+          AND EXISTS (
+            SELECT 1
+            FROM ({geom_union}) g
+            WHERE g.task_key = t.key
+              AND g.geom IS NOT NULL
+              AND a.geom IS NOT NULL
+              AND ST_Intersects(ST_Transform(g.geom, 4326), a.geom)
+          )
+    """
+
+
+def count_analise_stage_tasks(conn: PgConnection, key: str) -> int | None:
+    """Count active field-observed tasks inside the order polygon, or None if missing."""
+    query = f"""
+        SELECT ({_analise_eligible_tasks_count_sql()}) AS task_count
+        FROM crm.tasks_area AS a
+        WHERE a.key = %s::uuid
+    """
+    with conn.cursor() as cur:
+        cur.execute(query, (key,))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0] or 0)
+
+
+def fetch_analise_dispatch_context(conn: PgConnection, key: str) -> dict[str, Any] | None:
+    from app.crm.personnel import list_office_users
+
+    ensure_analise_audit_columns(conn)
+    query = f"""
+        SELECT
+            a.key::text AS order_key,
+            a.task_number,
+            a.rayon,
+            a.analise,
+            a.analise_started_by,
+            a.analise_started_at,
+            a.analise_paused_at,
+            ({_analise_eligible_tasks_count_sql()}) AS task_count
+        FROM crm.tasks_area AS a
+        WHERE a.key = %s::uuid
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, (key,))
+        row = cur.fetchone()
+    if not row:
+        return None
+
+    state = dict(row)
+    task_count = int(state.get("task_count") or 0)
+    workflow = _analise_workflow_status(state)
+    holder = analise_lock_holder(conn, key) if workflow != "done" else None
+    office_users = list_office_users(conn)
+    task_number = state.get("task_number")
+    rayon = state.get("rayon")
+    return {
+        "order_key": state["order_key"],
+        "task_number": str(task_number).strip() if task_number else None,
+        "rayon": str(rayon).strip() if rayon else None,
+        "workflow": workflow,
+        "lock_holder": holder,
+        "has_analise_tasks": task_count > 0,
+        "task_count": task_count,
+        "office_users": office_users,
+    }
+
+
+def complete_area_analise_as(
+    conn: PgConnection,
+    key: str,
+    assignee: str,
+    actor_login: str,
+) -> str:
+    ensure_tasks_area_audit_columns(conn)
+    ensure_analise_audit_columns(conn)
+    assignee = assignee.strip()
+    audit = make_user_audit(actor_login.strip())
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE crm.tasks_area SET
+                analise = TRUE,
+                analise_started_by = %s,
+                analise_started_at = COALESCE(analise_started_at, NOW()),
+                analise_finished_by = %s,
+                analise_finished_at = NOW(),
+                analise_paused_by = NULL,
+                analise_paused_at = NULL,
+                user_last_edit = %s::text[]
+            WHERE key = %s::uuid
+              AND COALESCE(analise, FALSE) = FALSE
+            RETURNING key
+            """,
+            (assignee, assignee, audit, key),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    if row:
+        return "updated"
+
+    state = _fetch_analise_state(conn, key)
+    if state is None:
+        return "not_found"
+    if state.get("analise") is True:
+        return "skipped"
+    return "not_found"
+
+
+def dispatch_area_analise(
+    conn: PgConnection,
+    key: str,
+    *,
+    assignee_login: str,
+    mode: str,
+    actor_login: str,
+) -> str:
+    from app.crm.personnel import get_user_role_by_login
+
+    assignee = (assignee_login or "").strip()
+    if not assignee:
+        raise AnaliseDispatchError("Выберите сотрудника")
+    if get_user_role_by_login(conn, assignee) != "office":
+        raise AnaliseDispatchError("Можно назначить только сотрудника с ролью office")
+
+    ctx = fetch_analise_dispatch_context(conn, key)
+    if ctx is None:
+        return "not_found"
+    if ctx["workflow"] == "done":
+        return "skipped"
+
+    has_tasks = bool(ctx["has_analise_tasks"])
+    if mode == "start":
+        if not has_tasks:
+            raise AnaliseDispatchError(
+                "Нет задач для анализа — отметьте заказ обработанным"
+            )
+        return start_area_analise(
+            conn, key, assignee, actor_login=actor_login, force=True
+        )
+    if mode == "complete":
+        if has_tasks:
+            raise AnaliseDispatchError(
+                "В заказе есть задачи для анализа — направьте в обработку"
+            )
+        return complete_area_analise_as(conn, key, assignee, actor_login)
+    raise AnaliseDispatchError("Неизвестный режим")
 
 
 def ensure_pre_analise_audit_columns(conn: PgConnection) -> bool:

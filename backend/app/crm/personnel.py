@@ -301,6 +301,29 @@ def list_personnel_users(conn: PgConnection) -> list[dict[str, Any]]:
     return [_personnel_user_out(conn, row) for row in rows]
 
 
+def list_office_users(conn: PgConnection) -> list[dict[str, Any]]:
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT login, COALESCE(NULLIF(TRIM(name), ''), login) AS name
+            FROM crm.users
+            WHERE role = 'office'
+            ORDER BY name, login
+            """
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_user_role_by_login(conn: PgConnection, login: str) -> str | None:
+    key = (login or "").strip()
+    if not key:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT role FROM crm.users WHERE login = %s LIMIT 1", (key,))
+        row = cur.fetchone()
+    return str(row[0]) if row else None
+
+
 def update_user_work_zones(
     conn: PgConnection,
     user_uuid: str,

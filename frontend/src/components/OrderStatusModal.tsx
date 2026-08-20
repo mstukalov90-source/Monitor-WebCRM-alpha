@@ -3,11 +3,13 @@ import { fetchOrderStatusFeed, fetchPersonnelUsers } from '../api/client'
 import { formatStatisticsAction, orderStatusDateRange } from '../lib/statisticsLabels'
 import type { FieldScoreValue, PersonnelUser, StatisticsActionDetail } from '../types'
 import { displayUserNameByLogin, FIELD_SCORE_LABELS } from '../types'
+import { SendToAnaliseModal } from './SendToAnaliseModal'
 
 interface OrderStatusModalProps {
   onClose: () => void
   onSelectEvent: (event: StatisticsActionDetail) => void | Promise<void>
   onQualityAssessment?: (event: StatisticsActionDetail) => void
+  canDispatchAnalise?: boolean
 }
 
 type OrderStatusTab = 'surveyed' | 'prepared' | 'analysed' | 'closed'
@@ -57,12 +59,14 @@ function EventList({
   busy,
   onSelect,
   onQualityAssessment,
+  onDispatchAnalise,
 }: {
   events: StatisticsActionDetail[]
   users: PersonnelUser[]
   busy: boolean
   onSelect: (event: StatisticsActionDetail) => void
   onQualityAssessment?: (event: StatisticsActionDetail) => void
+  onDispatchAnalise?: (event: StatisticsActionDetail) => void
 }) {
   if (events.length === 0) {
     return <p className="muted small">Нет событий</p>
@@ -108,6 +112,19 @@ function EventList({
                   {qualityButtonLabel(event.order_score)}
                 </button>
               )}
+              {onDispatchAnalise && (
+                <button
+                  type="button"
+                  className="btn order-status-dispatch-btn"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onDispatchAnalise(event)
+                  }}
+                >
+                  Направить в обработку
+                </button>
+              )}
             </div>
           </li>
         )
@@ -120,6 +137,7 @@ export function OrderStatusModal({
   onClose,
   onSelectEvent,
   onQualityAssessment,
+  canDispatchAnalise,
 }: OrderStatusModalProps) {
   const [periodDays, setPeriodDays] = useState<PeriodDays>(7)
   const [activeTab, setActiveTab] = useState<OrderStatusTab>('surveyed')
@@ -129,6 +147,7 @@ export function OrderStatusModal({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dispatchEvent, setDispatchEvent] = useState<StatisticsActionDetail | null>(null)
 
   const dateRange = useMemo(() => orderStatusDateRange(periodDays), [periodDays])
 
@@ -174,6 +193,7 @@ export function OrderStatusModal({
   }
 
   return (
+    <>
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal order-status-modal" onClick={(e) => e.stopPropagation()}>
         <h2>Состояние заказов</h2>
@@ -226,6 +246,11 @@ export function OrderStatusModal({
               onQualityAssessment={
                 activeTab === 'surveyed' ? onQualityAssessment : undefined
               }
+              onDispatchAnalise={
+                activeTab === 'surveyed' && canDispatchAnalise
+                  ? setDispatchEvent
+                  : undefined
+              }
             />
           </section>
         )}
@@ -240,5 +265,18 @@ export function OrderStatusModal({
         </div>
       </div>
     </div>
+    {dispatchEvent && (
+      <SendToAnaliseModal
+        orderKey={dispatchEvent.object_key}
+        taskNumber={dispatchEvent.task_number}
+        rayon={dispatchEvent.rayon}
+        onClose={() => setDispatchEvent(null)}
+        onDone={() => {
+          setDispatchEvent(null)
+          void load()
+        }}
+      />
+    )}
+    </>
   )
 }
