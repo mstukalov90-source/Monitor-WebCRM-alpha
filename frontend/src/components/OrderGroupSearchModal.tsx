@@ -71,7 +71,7 @@ export function OrderGroupSearchModal({ rayon, onClose, onShowOnMap }: OrderGrou
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Номер, исполнитель или заказчик"
+            placeholder="Номер, исполнитель, заказчик или адрес"
             aria-label="Поиск по ордерам"
           />
           <button type="submit" className="btn primary" disabled={loading}>
@@ -92,6 +92,7 @@ export function OrderGroupSearchModal({ rayon, onClose, onShowOnMap }: OrderGrou
                   <th>Номер</th>
                   <th>Исполнитель</th>
                   <th>Заказчик</th>
+                  <th>Адрес</th>
                   <th>Тип</th>
                 </tr>
               </thead>
@@ -115,6 +116,7 @@ export function OrderGroupSearchModal({ rayon, onClose, onShowOnMap }: OrderGrou
                       <td>{attrText(hit.attributes, fields?.id)}</td>
                       <td>{attrText(hit.attributes, fields?.executor)}</td>
                       <td>{attrText(hit.attributes, fields?.customer)}</td>
+                      <td>{attrText(hit.attributes, fields?.address)}</td>
                       <td>{hit.subgroup_name}</td>
                     </tr>
                   )

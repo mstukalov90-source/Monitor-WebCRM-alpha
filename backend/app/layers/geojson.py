@@ -15,9 +15,53 @@ _ITEMS_LINK_TABLE_RE = re.compile(
     r'^"?data_mos"?\."?items_\d+_(?:points|lines|polygons)"?$'
 )
 
+_SPLIT_SUFFIXES = ("_points", "_lines", "_polygons")
+
+_OBJECTIVE_COLUMNS = (
+    "earthwork_objectives",
+    "objectives_of_the_installation_of_temporary_fences",
+    "objectives_of_the_placement_of_temporary_objects",
+)
+
+_PARENT_EXTRA_COLUMNS: dict[str, tuple[str, ...]] = {
+    "items_62501": _OBJECTIVE_COLUMNS,
+    "items_2855": _OBJECTIVE_COLUMNS,
+    "items_62461": ("damage_type",),
+}
+
 
 def _is_data_mos_items_table(qualified_table: str) -> bool:
     return bool(_ITEMS_LINK_TABLE_RE.match(qualified_table))
+
+
+def _parent_table_from_split(qualified_table: str) -> str | None:
+    bare = qualified_table.replace('"', "")
+    if "." not in bare:
+        return None
+    schema, table = bare.split(".", 1)
+    for suffix in _SPLIT_SUFFIXES:
+        if table.endswith(suffix):
+            return f'"{schema}"."{table[: -len(suffix)]}"'
+    return None
+
+
+def _attrs_sql(layer: LayerDef, alias: str = "t") -> tuple[str, str]:
+    """JSON attributes expression and optional LEFT JOIN of parent items_*."""
+    geom_col = layer.geometry_column
+    base = f"to_jsonb({alias}) - '{geom_col}'"
+    if not _is_data_mos_items_table(layer.qualified_table):
+        return base, ""
+    parent_table = _parent_table_from_split(layer.qualified_table)
+    if not parent_table:
+        return base, ""
+    parent_name = parent_table.replace('"', "").rsplit(".", 1)[-1]
+    extra_cols = _PARENT_EXTRA_COLUMNS.get(parent_name)
+    if not extra_cols:
+        return base, ""
+    fields = ", ".join(f"'{col}', p.\"{col}\"" for col in extra_cols)
+    expr = f"({base}) || jsonb_strip_nulls(jsonb_build_object({fields}))"
+    join = f"LEFT JOIN {parent_table} p ON p.id = {alias}.source_id"
+    return expr, join
 
 
 def _parse_bbox(bbox_str: str) -> tuple[float, float, float, float]:
@@ -123,6 +167,7 @@ def fetch_task_attributes_in_district(
 
     geom_col = layer.geometry_column
     table = layer.qualified_table
+    attrs_sql, parent_join = _attrs_sql(layer)
     spatial, params = _district_spatial_filter(layer, district_wkt, metric_srid, table_alias="t")
 
     business_id_expr = scoped_business_id_expr(layer, source_field, scoped_geometry_id)
@@ -141,9 +186,10 @@ def fetch_task_attributes_in_district(
         SELECT DISTINCT ON (ct.key)
                ct.key::text AS task_key,
                ct.field_observed,
-               to_jsonb(t) - '{geom_col}' AS attrs,
+               {attrs_sql} AS attrs,
                ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
         FROM {table} t
+        {parent_join}
         INNER JOIN "{tasks_schema}"."{tasks_table}" ct
             ON ct."{task_column}" = {business_id_expr}
         WHERE {where}
@@ -313,14 +359,16 @@ def lookup_features(
     """All features matching business_id (points, lines, polygons rows)."""
     geom_col = layer.geometry_column
     table = layer.qualified_table
-    filters = [f'"{source_field}"::text = %s', f'"{geom_col}" IS NOT NULL']
+    attrs_sql, parent_join = _attrs_sql(layer)
+    filters = [f't."{source_field}"::text = %s', f't."{geom_col}" IS NOT NULL']
     if layer.sql_filter:
         filters.append(f"({layer.sql_filter})")
     where = " AND ".join(filters)
     query = f"""
-        SELECT to_jsonb(t) - '{geom_col}' AS attrs,
-               ST_AsGeoJSON(ST_Transform("{geom_col}", 4326))::json AS geometry
+        SELECT {attrs_sql} AS attrs,
+               ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
         FROM {table} t
+        {parent_join}
         WHERE {where}
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -429,10 +477,12 @@ def fetch_feature_by_task_key(
         if not _is_data_mos_items_table(layer.qualified_table):
             continue
         geom_col = layer.geometry_column
+        attrs_sql, parent_join = _attrs_sql(layer)
         query = f"""
-            SELECT to_jsonb(t) - '{geom_col}' AS attrs,
+            SELECT {attrs_sql} AS attrs,
                    ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
             FROM {layer.qualified_table} t
+            {parent_join}
             WHERE t.task_key = %s::uuid
             LIMIT 1
         """
@@ -504,10 +554,12 @@ def fetch_feature_by_source_anchor(
         return None
 
     geom_col = layer.geometry_column
+    attrs_sql, parent_join = _attrs_sql(layer)
     query = f"""
-        SELECT to_jsonb(t) - '{geom_col}' AS attrs,
+        SELECT {attrs_sql} AS attrs,
                ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
         FROM {layer.qualified_table} t
+        {parent_join}
         WHERE t.id = %s
         LIMIT 1
     """

@@ -11,6 +11,8 @@ import type {
   CollectLayerChunk,
   CollectProgress,
   AiPhotoMeta,
+  CameraBlockMode,
+  CameraBlockOptions,
   DitPhotoMeta,
   FieldPhotosResult,
   LensPhotosResult,
@@ -423,6 +425,30 @@ export function sendTaskToField(
     body: JSON.stringify({
       rayon,
       office_comment: officeComment?.trim() || null,
+    }),
+  })
+}
+
+export function fetchCameraBlockOptions(key: string): Promise<CameraBlockOptions> {
+  return request(`/api/tasks/${key}/camera-block-options`)
+}
+
+export function postCameraBlock(
+  key: string,
+  mode: CameraBlockMode,
+  untilDate?: string | null,
+): Promise<{
+  status: string
+  cam_id: string
+  mode: CameraBlockMode
+  until_date: string | null
+  task_key: string | null
+}> {
+  return request(`/api/tasks/${key}/camera-block`, {
+    method: 'POST',
+    body: JSON.stringify({
+      mode,
+      until_date: untilDate || null,
     }),
   })
 }

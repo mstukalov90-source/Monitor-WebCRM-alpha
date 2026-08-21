@@ -5,9 +5,16 @@ interface ResizeHandleProps {
   onResize: (delta: number) => void
   onResizeStart?: () => void
   onResizeEnd?: () => void
+  ariaLabel?: string
 }
 
-export function ResizeHandle({ orientation, onResize, onResizeStart, onResizeEnd }: ResizeHandleProps) {
+export function ResizeHandle({
+  orientation,
+  onResize,
+  onResizeStart,
+  onResizeEnd,
+  ariaLabel,
+}: ResizeHandleProps) {
   const { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel } = useDragResize({
     orientation,
     onResize,
@@ -20,7 +27,10 @@ export function ResizeHandle({ orientation, onResize, onResizeStart, onResizeEnd
       className={`resize-handle resize-handle--${orientation}`}
       role="separator"
       aria-orientation={orientation === 'vertical' ? 'vertical' : 'horizontal'}
-      aria-label={orientation === 'vertical' ? 'Изменить ширину панели' : 'Изменить высоту легенды'}
+      aria-label={
+        ariaLabel ??
+        (orientation === 'vertical' ? 'Изменить ширину панели' : 'Изменить высоту легенды')
+      }
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

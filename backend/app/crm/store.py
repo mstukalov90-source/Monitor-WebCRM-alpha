@@ -371,6 +371,9 @@ def ensure_tasks_table(conn: PgConnection) -> bool:
         logger.warning("Failed to ensure crm.tasks: %s", exc)
         return False
     _ensure_task_id_unique_indexes(conn)
+    from app.crm.camera_blocks import ensure_camera_blocks_table
+
+    ensure_camera_blocks_table(conn)
     return True
 
 

@@ -780,6 +780,17 @@ export interface AiPhotoMeta {
   bboxes?: unknown
 }
 
+export type CameraBlockMode =
+  | 'until_field_observed'
+  | 'until_quarter'
+  | 'until_date'
+  | 'until_order_end'
+
+export interface CameraBlockOptions {
+  cam_id: string | null
+  order_end_date: string | null
+}
+
 export interface DitPhotoMeta {
   result_id: string
   image: string
@@ -900,27 +911,50 @@ export const TASK_TABLE_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
   ],
 }
 
+const EARTHWORK_OBJECTIVE_COLUMNS: TaskTableColumn[] = [
+  { field: 'earthwork_objectives', label: 'Назначение работ' },
+  {
+    field: 'objectives_of_the_installation_of_temporary_fences',
+    label: 'Назначение установки временных ограждений',
+  },
+  {
+    field: 'objectives_of_the_placement_of_temporary_objects',
+    label: 'Назначение размещения временных ограждений',
+  },
+]
+
+/** Extra source fields shown only in the execute-task modal, not in the table or popup. */
+export const TASK_MODAL_EXTRA_COLUMNS: Partial<Record<string, TaskTableColumn[]>> = {
+  [OATI_ORDERS_SUBGROUP]: EARTHWORK_OBJECTIVE_COLUMNS,
+  [EARTHWORK_SUBGROUP]: EARTHWORK_OBJECTIVE_COLUMNS,
+  [AVR_SUBGROUP]: [{ field: 'damage_type', label: 'Тип повреждения' }],
+}
+
 export const ORDER_GROUP_SEARCH_FIELDS: Record<
   string,
-  { id: string; executor?: string; customer?: string }
+  { id: string; executor?: string; customer?: string; address?: string }
 > = {
   [OATI_ORDERS_SUBGROUP]: {
     id: 'order_number',
     executor: 'general_contractor',
     customer: 'customer_construction',
+    address: 'work_place_description',
   },
   [EARTHWORK_SUBGROUP]: {
     id: 'registration_number_notifications',
     executor: 'executor',
+    address: 'work_place_description',
   },
   [AVR_SUBGROUP]: {
     id: 'em_call_reg_num',
     executor: 'lead_of_work',
     customer: 'balanceholder',
+    address: 'work_place_description',
   },
   [LOCAL_REPAIR_SUBGROUP]: {
     id: 'global_id',
     customer: 'customer',
+    address: 'work_place_description',
   },
 }
 
@@ -1065,6 +1099,45 @@ export function formatStageWorkflowStatus(
   return stage === 'pre_analise'
     ? formatPreAnaliseWorkflowStatus(attrs)
     : formatAnaliseWorkflowStatus(attrs)
+}
+
+function stageOwnerLogins(
+  attrs: Record<string, unknown>,
+  stage: OfficeAnaliseStage,
+): { startedBy: string; pausedBy: string } {
+  if (stage === 'pre_analise') {
+    return {
+      startedBy: String(attrs.pre_analise_started_by ?? '').trim(),
+      pausedBy: String(attrs.pre_analise_paused_by ?? '').trim(),
+    }
+  }
+  return {
+    startedBy: String(attrs.analise_started_by ?? '').trim(),
+    pausedBy: String(attrs.analise_paused_by ?? '').trim(),
+  }
+}
+
+export function isOwnOpenAnaliseStage(
+  attrs: Record<string, unknown>,
+  currentLogin: string,
+  stage: OfficeAnaliseStage,
+): boolean {
+  const login = currentLogin.trim()
+  if (!login) return false
+  const status = stageWorkflowStatus(attrs, stage)
+  if (status !== 'in_progress' && status !== 'paused') return false
+  const { startedBy, pausedBy } = stageOwnerLogins(attrs, stage)
+  return startedBy === login || pausedBy === login
+}
+
+export function isOwnOpenOfficeOrder(
+  attrs: Record<string, unknown>,
+  currentLogin: string,
+): boolean {
+  return (
+    isOwnOpenAnaliseStage(attrs, currentLogin, 'pre_analise') ||
+    isOwnOpenAnaliseStage(attrs, currentLogin, 'analise')
+  )
 }
 
 export function formatFieldObserved(value: unknown): string {

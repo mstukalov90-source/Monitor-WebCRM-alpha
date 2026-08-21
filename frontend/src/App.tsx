@@ -822,6 +822,8 @@ function App() {
           canCloseViaZip={user.role === 'admin'}
           showAreaOrders={user.allowed_task_sources.includes('area')}
           userLogin={userDisplayName}
+          sessionLogin={user.login}
+          userRole={user.role}
           onRayonChange={collection.setRayon}
           onCollect={handleCollect}
           onLoadFieldTasks={handleLoadFieldTasks}
@@ -1087,28 +1089,41 @@ function App() {
             />
           </div>
         </main>
+        {editContext && (
+          <ResizeHandle
+            orientation="vertical"
+            ariaLabel="Изменить ширину панели задачи"
+            onResize={workspace.handleTaskEditResize}
+            onResizeStart={() => workspace.setResizing(true)}
+            onResizeEnd={() => workspace.setResizing(false)}
+          />
+        )}
+        {editContext && (
+          <aside className="task-edit-aside">
+            <TaskEditModal
+              docked
+              context={editContext}
+              subgroupFeatures={modalSubgroupFeatures}
+              sessionRayon={sessionRayon}
+              taskInCurrentResult={editTaskInCurrentResult}
+              canManagePersonnel={user.can_manage_personnel}
+              canGenerateLetters={user.can_generate_letters}
+              canManageFieldStatus={user.can_manage_field_task_status}
+              canPostponeTasks={user.can_postpone_tasks}
+              userRole={user.role}
+              officeWorking={officeWorking}
+              onStartPlaceOfficePoint={handleStartPlaceOfficePoint}
+              onClose={() => setEditContext(null)}
+              onTaskRemoved={handleTaskRemoved}
+              onTaskAttributesPatched={handleTaskAttributesPatched}
+              onHighlightChange={setModalHighlight}
+              onPickModeChange={handlePickModeChange}
+              pickedValue={pickedValue}
+              onPickedConsumed={() => setPickedValue(null)}
+            />
+          </aside>
+        )}
       </div>
-
-      <TaskEditModal
-        context={editContext}
-        subgroupFeatures={modalSubgroupFeatures}
-        sessionRayon={sessionRayon}
-        taskInCurrentResult={editTaskInCurrentResult}
-        canManagePersonnel={user.can_manage_personnel}
-        canGenerateLetters={user.can_generate_letters}
-        canManageFieldStatus={user.can_manage_field_task_status}
-        canPostponeTasks={user.can_postpone_tasks}
-        userRole={user.role}
-        officeWorking={officeWorking}
-        onStartPlaceOfficePoint={handleStartPlaceOfficePoint}
-        onClose={() => setEditContext(null)}
-        onTaskRemoved={handleTaskRemoved}
-        onTaskAttributesPatched={handleTaskAttributesPatched}
-        onHighlightChange={setModalHighlight}
-        onPickModeChange={handlePickModeChange}
-        pickedValue={pickedValue}
-        onPickedConsumed={() => setPickedValue(null)}
-      />
 
       <AreaTaskViewModal
         feature={areaViewFeature}

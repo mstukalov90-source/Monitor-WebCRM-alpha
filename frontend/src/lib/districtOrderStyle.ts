@@ -1,13 +1,15 @@
 import type { PathOptions } from 'leaflet'
-import type { AreaStatus, TaskFeature } from '../types'
+import type { AnaliseWorkflowStatus, AreaStatus, TaskFeature } from '../types'
 import {
   AREA_STATUS_COLORS,
+  analiseWorkflowStatus,
   areaStatusFromAttributes,
-  isAnaliseComplete,
   normalizeRayonName,
+  preAnaliseWorkflowStatus,
 } from '../types'
 import { AREA_STATUS_BLINK_RED, AREA_STATUS_BLINK_YELLOW } from './areaMapStyle'
 
+export type DistrictMapMode = 'field' | 'pre_analise' | 'analise'
 export type DistrictFillKind = 'done' | 'free' | 'empty' | 'mixed'
 export type DistrictHatchKind = 'green' | 'red' | 'none'
 export type DistrictBlinkKind = 'red' | 'yellow' | 'none'
@@ -17,6 +19,12 @@ export interface DistrictOrderVisual {
   hatch: DistrictHatchKind
   blink: DistrictBlinkKind
 }
+
+export const DISTRICT_MAP_MODES: { id: DistrictMapMode; label: string }[] = [
+  { id: 'field', label: 'Полевое обследование' },
+  { id: 'pre_analise', label: 'Подготовка данных' },
+  { id: 'analise', label: 'Обработка данных' },
+]
 
 /** Fill colors for district polygons aggregated from area orders. */
 export const DISTRICT_FILL_COLORS: Record<
@@ -46,9 +54,21 @@ export const DISTRICT_FILL_COLORS: Record<
   },
 }
 
-function districtBlink(statuses: AreaStatus[]): DistrictBlinkKind {
+function districtFill(allDone: boolean, hasIdle: boolean): DistrictFillKind {
+  if (allDone) return 'done'
+  if (hasIdle) return 'free'
+  return 'mixed'
+}
+
+function districtBlinkFromField(statuses: AreaStatus[]): DistrictBlinkKind {
   if (statuses.some((s) => s === 'in_pause')) return 'red'
   if (statuses.some((s) => s === 'wip_field')) return 'yellow'
+  return 'none'
+}
+
+function districtBlinkFromWorkflow(statuses: AnaliseWorkflowStatus[]): DistrictBlinkKind {
+  if (statuses.some((s) => s === 'paused')) return 'red'
+  if (statuses.some((s) => s === 'in_progress')) return 'yellow'
   return 'none'
 }
 
@@ -58,24 +78,36 @@ export function districtBlinkClassName(blink: DistrictBlinkKind): string | undef
   return undefined
 }
 
-export function districtOrderVisual(orders: TaskFeature[]): DistrictOrderVisual {
+export function districtOrderVisual(
+  orders: TaskFeature[],
+  mode: DistrictMapMode = 'field',
+): DistrictOrderVisual {
   if (!orders.length) {
     return { fill: 'empty', hatch: 'none', blink: 'none' }
   }
 
-  const statuses = orders.map((o) => areaStatusFromAttributes(o.attributes))
-  const hasFree = statuses.some((s) => s === 'free')
-  const allDone = statuses.every((s) => s === 'done')
+  if (mode === 'field') {
+    const statuses = orders.map((o) => areaStatusFromAttributes(o.attributes))
+    return {
+      fill: districtFill(
+        statuses.every((s) => s === 'done'),
+        statuses.some((s) => s === 'free'),
+      ),
+      hatch: 'none',
+      blink: districtBlinkFromField(statuses),
+    }
+  }
 
-  let fill: DistrictFillKind
-  if (allDone) fill = 'done'
-  else if (hasFree) fill = 'free'
-  else fill = 'mixed'
-
-  const allAnalysed = orders.every((o) => isAnaliseComplete(o.attributes.analise))
-  const hatch: DistrictHatchKind = allAnalysed ? 'green' : 'red'
-
-  return { fill, hatch, blink: districtBlink(statuses) }
+  const workflowOf = mode === 'pre_analise' ? preAnaliseWorkflowStatus : analiseWorkflowStatus
+  const statuses = orders.map((o) => workflowOf(o.attributes))
+  return {
+    fill: districtFill(
+      statuses.every((s) => s === 'done'),
+      statuses.some((s) => s === 'idle'),
+    ),
+    hatch: 'none',
+    blink: districtBlinkFromWorkflow(statuses),
+  }
 }
 
 export function districtBasePathStyle(
@@ -95,10 +127,11 @@ export function districtBasePathStyle(
 
 export function buildDistrictStyleByRayon(
   groups: { rayon: string; orders: TaskFeature[] }[],
+  mode: DistrictMapMode = 'field',
 ): Map<string, DistrictOrderVisual> {
   const map = new Map<string, DistrictOrderVisual>()
   for (const group of groups) {
-    map.set(normalizeRayonName(group.rayon), districtOrderVisual(group.orders))
+    map.set(normalizeRayonName(group.rayon), districtOrderVisual(group.orders, mode))
   }
   return map
 }

@@ -7,7 +7,7 @@ import {
   groupAreaOrdersByRayon,
 } from '../lib/areaOrders'
 import type { DistrictHoodMeta } from '../lib/hoodLayer'
-import type { CollectProgress, EmployeeLocationFeature } from '../types'
+import type { CollectProgress, EmployeeLocationFeature, UserRole } from '../types'
 import {
   analiseWorkflowStatus,
   analiseWorkflowStatusClass,
@@ -15,6 +15,7 @@ import {
   formatAnaliseWorkflowStatus,
   formatAreaStatus,
   formatPreAnaliseWorkflowStatus,
+  isOwnOpenOfficeOrder,
   normalizeRayonName,
   preAnaliseWorkflowStatus,
 } from '../types'
@@ -30,6 +31,8 @@ interface DistrictStartScreenProps {
   canCloseViaZip?: boolean
   showAreaOrders?: boolean
   userLogin: string
+  sessionLogin?: string
+  userRole?: UserRole
   onRayonChange: (v: string) => void
   onCollect: () => void
   onLoadFieldTasks: () => void
@@ -55,6 +58,8 @@ export function DistrictStartScreen({
   canCloseViaZip,
   showAreaOrders = false,
   userLogin,
+  sessionLogin,
+  userRole,
   onRayonChange,
   onCollect,
   onLoadFieldTasks,
@@ -75,6 +80,8 @@ export function DistrictStartScreen({
   const [areaOrdersLoading, setAreaOrdersLoading] = useState(false)
   const [areaOrdersError, setAreaOrdersError] = useState<string | null>(null)
   const [areaOrdersByRayon, setAreaOrdersByRayon] = useState<ReturnType<typeof groupAreaOrdersByRayon>>([])
+  const [ownOrdersOnly, setOwnOrdersOnly] = useState(false)
+  const showOwnOrdersFilter = userRole === 'office'
 
   useEffect(() => {
     fetchDistricts()
@@ -165,9 +172,20 @@ export function DistrictStartScreen({
     }
   }, [canManagePersonnel])
 
+  const visibleOrdersByRayon = useMemo(() => {
+    if (!ownOrdersOnly || !showOwnOrdersFilter) return areaOrdersByRayon
+    const login = (sessionLogin ?? '').trim()
+    return areaOrdersByRayon
+      .map((group) => ({
+        ...group,
+        orders: group.orders.filter((order) => isOwnOpenOfficeOrder(order.attributes, login)),
+      }))
+      .filter((group) => group.orders.length > 0)
+  }, [areaOrdersByRayon, ownOrdersOnly, sessionLogin, showOwnOrdersFilter])
+
   const totalOrdersCount = useMemo(
-    () => areaOrdersByRayon.reduce((sum, group) => sum + group.orders.length, 0),
-    [areaOrdersByRayon],
+    () => visibleOrdersByRayon.reduce((sum, group) => sum + group.orders.length, 0),
+    [visibleOrdersByRayon],
   )
 
   const handleSubmit = () => {
@@ -285,16 +303,33 @@ export function DistrictStartScreen({
 
           {showAreaOrders && (
             <div className="district-orders-list">
-              <h3 className="district-orders-title">Площадные заказы</h3>
+              <div className="district-orders-header">
+                <h3 className="district-orders-title">Площадные заказы</h3>
+                {showOwnOrdersFilter && (
+                  <label className="district-orders-filter">
+                    <input
+                      type="checkbox"
+                      checked={ownOrdersOnly}
+                      disabled={areaOrdersLoading}
+                      onChange={(e) => setOwnOrdersOnly(e.target.checked)}
+                    />
+                    Мои в работе
+                  </label>
+                )}
+              </div>
               {areaOrdersLoading ? (
                 <p className="muted small">Загрузка заказов…</p>
               ) : areaOrdersError ? (
                 <p className="error-banner small">{areaOrdersError}</p>
               ) : totalOrdersCount === 0 ? (
-                <p className="muted small">Нет площадных заказов</p>
+                <p className="muted small">
+                  {ownOrdersOnly && showOwnOrdersFilter
+                    ? 'Нет заказов, которые вы начали или приостановили'
+                    : 'Нет площадных заказов'}
+                </p>
               ) : (
                 <div className="district-orders-groups">
-                  {areaOrdersByRayon.map((group) => (
+                  {visibleOrdersByRayon.map((group) => (
                     <section key={group.rayon} className="district-orders-group">
                       <h4 className="district-orders-group-title">{group.rayon}</h4>
                       <ul className="district-orders-items">

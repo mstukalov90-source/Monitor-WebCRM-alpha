@@ -18,8 +18,10 @@ import {
 } from '../lib/areaOrders'
 import {
   buildDistrictStyleByRayon,
+  DISTRICT_MAP_MODES,
   districtBasePathStyle,
   districtBlinkClassName,
+  type DistrictMapMode,
   type DistrictOrderVisual,
 } from '../lib/districtOrderStyle'
 import {
@@ -337,10 +339,11 @@ export function DistrictPickerMap({
   areaOrdersReady = false,
 }: DistrictPickerMapProps) {
   const [layerKey, setLayerKey] = useState<string | null>(null)
+  const [mapMode, setMapMode] = useState<DistrictMapMode>('field')
 
   const styleByRayon = useMemo(
-    () => buildDistrictStyleByRayon(areaOrdersByRayon),
-    [areaOrdersByRayon],
+    () => buildDistrictStyleByRayon(areaOrdersByRayon, mapMode),
+    [areaOrdersByRayon, mapMode],
   )
 
   useEffect(() => {
@@ -351,7 +354,22 @@ export function DistrictPickerMap({
 
   return (
     <div className="district-map">
-      <p className="district-map-hint">Или выберите район на карте</p>
+      <div className="district-map-toolbar">
+        <p className="district-map-hint">Или выберите район на карте</p>
+        <div className="district-map-modes" role="group" aria-label="Режим карты">
+          {DISTRICT_MAP_MODES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`btn small${mapMode === item.id ? ' primary' : ''}`}
+              aria-pressed={mapMode === item.id}
+              onClick={() => setMapMode(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <MapContainer
         center={MOSCOW_CENTER}
         zoom={10}

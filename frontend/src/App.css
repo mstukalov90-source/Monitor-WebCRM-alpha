@@ -151,10 +151,24 @@ body,
   box-sizing: border-box;
 }
 
+.district-map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .district-map-hint {
   margin: 0;
   color: #666;
   font-size: 0.85rem;
+}
+
+.district-map-modes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .district-map-container {
@@ -247,10 +261,28 @@ body,
   flex-direction: column;
 }
 
+.district-orders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
 .district-orders-title {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.district-orders-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #444;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .district-orders-items {
@@ -592,6 +624,16 @@ body,
   display: flex;
   flex-direction: column;
   background: #fff;
+}
+
+.task-edit-aside {
+  width: var(--task-edit-width, 380px);
+  flex-shrink: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-left: none;
 }
 
 .layer-control {
@@ -1169,6 +1211,16 @@ a.btn {
   width: min(720px, 96vw);
 }
 
+.modal.task-edit-panel {
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px;
+  font-size: calc(0.875rem * var(--task-edit-scale, 1));
+}
+
 .modal.order-group-search-modal {
   width: min(960px, 96vw);
 }
@@ -1526,6 +1578,24 @@ a.btn {
   width: 100%;
   resize: vertical;
   min-height: 4.5rem;
+}
+
+.camera-block-backdrop {
+  z-index: 2100;
+}
+
+.camera-block-modal {
+  max-width: 28rem;
+}
+
+.camera-block-options {
+  flex-direction: column;
+  margin-bottom: 10px;
+}
+
+.camera-block-options .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 .btn-status-field {

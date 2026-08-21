@@ -141,6 +141,32 @@ class SendToFieldRequest(BaseModel):
     office_comment: str | None = None
 
 
+CameraBlockMode = Literal[
+    "until_field_observed",
+    "until_quarter",
+    "until_date",
+    "until_order_end",
+]
+
+
+class CameraBlockOptionsOut(BaseModel):
+    cam_id: str | None = None
+    order_end_date: date | None = None
+
+
+class CameraBlockRequest(BaseModel):
+    mode: CameraBlockMode
+    until_date: date | None = None
+
+
+class CameraBlockResultOut(BaseModel):
+    status: str
+    cam_id: str
+    mode: str
+    until_date: date | None = None
+    task_key: str | None = None
+
+
 class SnapshotActionRequest(BaseModel):
     rayon: str | None = None
 

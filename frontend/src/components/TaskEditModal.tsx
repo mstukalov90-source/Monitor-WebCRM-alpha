@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   closeTaskIllegal,
   closeTaskLegal,
+  fetchCameraBlockOptions,
   fetchFieldReports,
   fetchLinkedFeatures,
   fetchTask,
@@ -11,6 +12,7 @@ import {
   lookupTaskByFeature,
   markDisruptionAbsent,
   postponeTask,
+  postCameraBlock,
   returnTaskToActive,
   sendTaskToField,
   updateTask,
@@ -23,11 +25,14 @@ import {
   siblingsToLinkedFeatures,
 } from '../lib/notificationSiblings'
 import { TaskExecutorAssign } from './TaskExecutorAssign'
+import { CameraBlockModal } from './CameraBlockModal'
 import { FieldMaterialsModal } from './FieldMaterialsModal'
 import { LensPhotoModal } from './LensPhotoModal'
 import { PhotoViewModal } from './PhotoViewModal'
 import { TaskGroupMapView } from './TaskGroupMapView'
 import type {
+  CameraBlockMode,
+  CameraBlockOptions,
   FieldReportFeature,
   LinkLayerInfo,
   SelectedTaskContext,
@@ -50,6 +55,7 @@ import {
   isFieldObserved,
   isLensPhotoContext,
   lensExternalIdFromAttributes,
+  TASK_MODAL_EXTRA_COLUMNS,
   TASK_SOURCE_LABELS,
   taskTableColumnsForSubgroup,
 } from '../types'
@@ -199,6 +205,7 @@ interface TaskEditModalProps {
   userRole: UserRole
   officeWorking?: boolean
   showGroupMap?: boolean
+  docked?: boolean
   onStartPlaceOfficePoint?: (linkPrefill: Record<string, string> | null) => void
   onClose: () => void
   onTaskRemoved: (taskKey: string) => void
@@ -221,6 +228,7 @@ export function TaskEditModal({
   userRole,
   officeWorking = false,
   showGroupMap = false,
+  docked = false,
   onStartPlaceOfficePoint,
   onClose,
   onTaskRemoved,
@@ -254,6 +262,10 @@ export function TaskEditModal({
   const [groupMap, setGroupMap] = useState<TaskGroupMap | null>(null)
   const [groupMapLoading, setGroupMapLoading] = useState(false)
   const [groupMapError, setGroupMapError] = useState<string | null>(null)
+  const [cameraBlockTaskKey, setCameraBlockTaskKey] = useState<string | null>(null)
+  const [cameraBlockOptions, setCameraBlockOptions] = useState<CameraBlockOptions | null>(null)
+  const [cameraBlockBusy, setCameraBlockBusy] = useState(false)
+  const [cameraBlockError, setCameraBlockError] = useState<string | null>(null)
   const autoPhotoOpenedRef = useRef(false)
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
@@ -303,7 +315,12 @@ export function TaskEditModal({
   const showLegalFieldHints = canCloseLegal && canPerformStatusActions
   const sourceContextColumns = useMemo(() => {
     if (!context || context.groupName !== CRM_GROUP_ORDERS) return []
-    return taskTableColumnsForSubgroup(context.subgroupName) ?? []
+    const base = taskTableColumnsForSubgroup(context.subgroupName) ?? []
+    const extra = (TASK_MODAL_EXTRA_COLUMNS[context.subgroupName] ?? []).filter((col) => {
+      const value = formatTaskTableCell(context.feature.attributes[col.field], col.format)
+      return value.trim() !== ''
+    })
+    return [...base, ...extra]
   }, [context])
   const canAddOfficePoint =
     ((userRole === 'office' && officeWorking) || userRole === 'manager') &&
@@ -724,6 +741,19 @@ export function TaskEditModal({
       } else {
         setMessage(`Статус: ${result.status}`)
       }
+      if (action === 'field' && isAiPhoto) {
+        try {
+          const options = await fetchCameraBlockOptions(record.key)
+          if (options.cam_id) {
+            setCameraBlockTaskKey(record.key)
+            setCameraBlockOptions(options)
+            setCameraBlockError(null)
+            return
+          }
+        } catch {
+          // send already succeeded; close without blocking
+        }
+      }
       onTaskRemoved(record.key)
       onClose()
     } catch (e) {
@@ -755,17 +785,50 @@ export function TaskEditModal({
     setPendingStatusAction(action)
   }
 
+  const closeAfterFieldSend = () => {
+    const key = cameraBlockTaskKey || record?.key
+    if (key) onTaskRemoved(key)
+    setCameraBlockOptions(null)
+    setCameraBlockTaskKey(null)
+    setCameraBlockError(null)
+    onClose()
+  }
+
+  const handleCameraBlockSelect = async (mode: CameraBlockMode, untilDate?: string) => {
+    const key = cameraBlockTaskKey || record?.key
+    if (!key) return
+    setCameraBlockBusy(true)
+    setCameraBlockError(null)
+    try {
+      await postCameraBlock(key, mode, untilDate)
+      closeAfterFieldSend()
+    } catch (e) {
+      setCameraBlockError(String(e))
+    } finally {
+      setCameraBlockBusy(false)
+    }
+  }
+
+  const handleDismiss = () => {
+    if (cameraBlockTaskKey) closeAfterFieldSend()
+    else onClose()
+  }
+
   const legalLinkLabels = legalLinkFields.map((field) => labels[field] || field)
   const legalStationLabels = LEGAL_STATION_FIELDS.map((field) => labels[field] || field)
 
   if (!context) return null
 
-  return (
-    <>
-      <div className="modal-backdrop" onClick={onClose}>
+  const modal = (
       <div
-        className={['modal', showGroupMap && 'task-edit-modal--with-map'].filter(Boolean).join(' ')}
-        onClick={(e) => e.stopPropagation()}
+        className={[
+          'modal',
+          docked && 'task-edit-panel',
+          !docked && showGroupMap && 'task-edit-modal--with-map',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+        onClick={docked ? undefined : (e) => e.stopPropagation()}
       >
         <h2>{isReadonly ? 'Просмотр задачи' : 'Исполнить задачу'}</h2>
         <p className="muted small">Источник: {TASK_SOURCE_LABELS[taskSource]}</p>
@@ -952,7 +1015,7 @@ export function TaskEditModal({
                       Сохранить
                     </button>
                   )}
-                  <button type="button" className="btn" onClick={onClose}>
+                  <button type="button" className="btn" onClick={handleDismiss}>
                     Закрыть
                   </button>
                 </div>
@@ -1120,7 +1183,17 @@ export function TaskEditModal({
           </div>
         )}
       </div>
-      </div>
+  )
+
+  return (
+    <>
+      {docked ? (
+        modal
+      ) : (
+        <div className="modal-backdrop" onClick={handleDismiss}>
+          {modal}
+        </div>
+      )}
 
       {photoTarget && (
         <PhotoViewModal
@@ -1156,6 +1229,16 @@ export function TaskEditModal({
           taskKey={fieldMaterialsKey}
           canGenerateLetter={canGenerateLetters}
           onClose={() => setFieldMaterialsKey(null)}
+        />
+      )}
+      {cameraBlockOptions?.cam_id && cameraBlockTaskKey && (
+        <CameraBlockModal
+          camId={cameraBlockOptions.cam_id}
+          orderEndDate={cameraBlockOptions.order_end_date}
+          busy={cameraBlockBusy}
+          error={cameraBlockError}
+          onSelect={(mode, untilDate) => void handleCameraBlockSelect(mode, untilDate)}
+          onSkip={closeAfterFieldSend}
         />
       )}
     </>

@@ -47,6 +47,9 @@ from app.crm.schemas import (
     AnaliseDispatchContextOut,
     AnaliseDispatchRequest,
     AnaliseDispatchResultOut,
+    CameraBlockOptionsOut,
+    CameraBlockRequest,
+    CameraBlockResultOut,
     CollectLayerRequest,
     CollectTasksRequest,
     CreateOfficeTaskRequest,
@@ -423,7 +426,7 @@ def get_tasks_area_list(
 
 @router.get("/tasks/orders/search", response_model=OrderSearchResultOut)
 def search_order_group_tasks(
-    q: str = Query(..., min_length=1, description="Номер ордера, исполнитель или заказчик"),
+    q: str = Query(..., min_length=1, description="Номер ордера, исполнитель, заказчик или адрес"),
     rayon: str = Query(..., description="Выбранный район сессии"),
     user: UserSession = Depends(get_current_user),
 ) -> OrderSearchResultOut:
@@ -646,6 +649,64 @@ def post_send_to_field(
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SnapshotResultOut(status=status)
+
+
+@router.get("/tasks/{key}/camera-block-options")
+def get_camera_block_options(
+    key: str,
+    user: UserSession = Depends(get_current_user),
+) -> CameraBlockOptionsOut:
+    check_task_source_any(user, ["active", "delay", "field"])
+    store_cfg = crm_task_store_config()
+    from app.crm.camera_blocks import resolve_cam_id, resolve_order_end_date
+
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        cam_id = resolve_cam_id(conn, record.photo_uuid)
+        order_end_date = None
+        if cam_id:
+            order_end_date = resolve_order_end_date(
+                conn, record, store_cfg, get_registry()
+            )
+    return CameraBlockOptionsOut(cam_id=cam_id, order_end_date=order_end_date)
+
+
+@router.post("/tasks/{key}/camera-block")
+def post_camera_block(
+    key: str,
+    body: CameraBlockRequest,
+    user: UserSession = Depends(get_current_user),
+) -> CameraBlockResultOut:
+    check_task_source_any(user, ["active", "delay", "field"])
+    store_cfg = crm_task_store_config()
+    from app.crm.camera_blocks import apply_camera_block
+
+    with get_connection() as conn:
+        record = fetch_task_by_key(conn, store_cfg, key)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            saved = apply_camera_block(
+                conn,
+                record,
+                mode=body.mode,
+                until_date=body.until_date,
+                login=user.login,
+                store_cfg=store_cfg,
+                registry=get_registry(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    until_date = saved.get("until_date")
+    return CameraBlockResultOut(
+        status="ok",
+        cam_id=str(saved.get("cam_id") or ""),
+        mode=str(saved.get("mode") or body.mode),
+        until_date=until_date,
+        task_key=saved.get("task_key"),
+    )
 
 
 @router.post("/tasks/{key}/postpone")

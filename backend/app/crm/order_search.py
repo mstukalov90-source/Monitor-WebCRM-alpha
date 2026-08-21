@@ -18,19 +18,27 @@ logger = logging.getLogger(__name__)
 MIN_QUERY_LENGTH = 2
 MAX_HITS = 50
 PER_LAYER_LIMIT = 30
+ADDRESS_FIELD = "work_place_description"
 
 SEARCH_FIELDS_BY_SUBGROUP: dict[str, tuple[str, ...]] = {
-    "Ордера ОАТИ": ("order_number", "general_contractor", "customer_construction"),
+    "Ордера ОАТИ": (
+        "order_number",
+        "general_contractor",
+        "customer_construction",
+        ADDRESS_FIELD,
+    ),
     "Уведомления на земляные работы": (
         "registration_number_notifications",
         "executor",
+        ADDRESS_FIELD,
     ),
     "Аварийно-восстановительные работы": (
         "em_call_reg_num",
         "lead_of_work",
         "balanceholder",
+        ADDRESS_FIELD,
     ),
-    "Текущие локальные ремонты": ("global_id", "customer"),
+    "Текущие локальные ремонты": ("global_id", "customer", ADDRESS_FIELD),
 }
 
 ID_FIELD_BY_SUBGROUP: dict[str, str] = {
