@@ -85,6 +85,8 @@ def post_oati_letter(
                 violation_names=list(body.violation_names or []),
                 photo_ids=list(body.photo_ids or []),
                 map_scale=body.map_scale,
+                sps=body.sps or "",
+                kgs=body.kgs or "",
             )
     except LetterError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

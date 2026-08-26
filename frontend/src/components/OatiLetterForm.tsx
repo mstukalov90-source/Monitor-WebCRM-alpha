@@ -67,6 +67,8 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
   const [engineering, setEngineering] = useState('')
   const [engineeringSource, setEngineeringSource] = useState<EngineeringSource>('list')
   const [description, setDescription] = useState('')
+  const [sps, setSps] = useState('')
+  const [kgs, setKgs] = useState('')
   const [selectedViolations, setSelectedViolations] = useState<string[]>([])
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([])
   const [mapScale, setMapScale] = useState(1000)
@@ -88,6 +90,8 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         setEngineering(eng)
         setEngineeringSource(defaultEngineeringSource(eng))
         setDescription(data.description ?? '')
+        setSps(data.sps ?? '')
+        setKgs(data.kgs ?? '')
         setSelectedViolations([])
         setSelectedPhotoIds(data.photos.map((p) => p.id))
         setMapScale(data.map_scale_default ?? 1000)
@@ -214,6 +218,8 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
         address,
         engineering,
         description,
+        sps,
+        kgs,
         violation_names: selectedViolations,
         photo_ids: selectedPhotoIds,
         map_scale: mapScale,
@@ -416,8 +422,27 @@ export function OatiLetterForm({ taskKey, reportId, onClose }: OatiLetterFormPro
                 />
               </label>
 
+              <div className="form-row oati-mggt-block">
+                <span>7. Данные Мосгоргеотрест:</span>
+                <input
+                  type="text"
+                  value={sps}
+                  onChange={(e) => setSps(e.target.value)}
+                  disabled={submitting}
+                />
+                <input
+                  type="text"
+                  value={kgs}
+                  onChange={(e) => setKgs(e.target.value)}
+                  disabled={submitting}
+                />
+              </div>
+
               <div className="form-row oati-violation-block">
-                <span>7. Признаки незаконности</span>
+                <span>
+                  8. Данные, указывающие на признаки наличия административного
+                  правонарушения:
+                </span>
                 {violationOptions.length === 0 ? (
                   <p className="muted">Справочник признаков пуст</p>
                 ) : (

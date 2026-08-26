@@ -580,6 +580,8 @@ class OatiLetterDraftOut(BaseModel):
     engineering: str = ""
     description: str = ""
     violation: str = ""
+    sps: str = ""
+    kgs: str = ""
     photos: list[OatiLetterPhotoOut] = Field(default_factory=list)
     map_warning: str | None = None
     task_geometry_visibility: str = "missing"
@@ -600,6 +602,8 @@ class OatiLetterGenerateRequest(BaseModel):
     engineering: str = ""
     description: str = ""
     violation: str = ""
+    sps: str = ""
+    kgs: str = ""
     violation_names: list[str] = Field(default_factory=list)
     photo_ids: list[int] = Field(default_factory=list)
     map_scale: int = 1000

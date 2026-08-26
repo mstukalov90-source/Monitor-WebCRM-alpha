@@ -13,12 +13,16 @@ from app.auth.session import UserSession
 from app.letters.docx_fill import (
     BODY_FONT_NAME,
     BODY_FONT_SIZE,
+    CAPTION_ICON_PATH,
     DEFAULT_DESCRIPTION,
     PH_DESCRIPTION,
     PH_DOC_DATE,
     PH_STREET,
     PH_VIOLATION,
+    SECTION_7_HEADER,
+    SECTION_8_HEADER,
     TEMPLATE_PATH,
+    _pack_photo_pages,
     append_map_page,
     append_photo_pages,
     document_to_bytes,
@@ -27,6 +31,7 @@ from app.letters.docx_fill import (
     format_ru_date,
     format_ru_date_value,
     format_ru_datetime,
+    format_station_line,
     format_violation_block,
     format_wgs84,
     letter_download_filename,
@@ -44,7 +49,9 @@ from app.letters.map_image import (
     ALLOWED_MAP_SCALES,
     DEFAULT_MAP_SCALE,
     GROUND_WIDTH_M,
+    LETTER_TILE_URL,
     MAP_SCALE,
+    _overlay_scale_labels,
     classify_geometry_visibility,
     ground_width_m,
     map_bbox_mercator,
@@ -83,6 +90,20 @@ def _docx_image_count(data: bytes) -> int:
     return len(drawings)
 
 
+def _docx_page_break_count(data: bytes) -> int:
+    root = ET.fromstring(ZipFile(io.BytesIO(data)).read("word/document.xml"))
+    w_type = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}type"
+    return sum(1 for br in root.findall(".//w:br", NS) if br.get(w_type) == "page")
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), (180, 180, 180)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 class DocxFillTests(unittest.TestCase):
     def test_replaces_new_template_placeholders(self) -> None:
         doc = fill_letter_template(
@@ -107,7 +128,7 @@ class DocxFillTests(unittest.TestCase):
         Image.new("RGB", (40, 40), (180, 180, 180)).save(buf, format="PNG")
         png = buf.getvalue()
         append_map_page(doc, png, scale=2000, lon=37.5, lat=55.8)
-        append_photo_pages(doc, [(png, "Фото 1 · Обзорное фото")])
+        append_photo_pages(doc, [(png, "Фото 1 · Обзорное")])
         data = document_to_bytes(doc)
         text = _docx_text(data)
 
@@ -125,7 +146,14 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("описание А", text)
         self.assertIn("незаконности земляных работ при строительстве инженерных коммуникаций", text)
         self.assertIn("Описание характера работ", text)
-        self.assertIn("Признаки незаконности", text)
+        self.assertIn("Данные Мосгоргеотрест", text)
+        self.assertIn("ТЗ ОПС: не определено", text)
+        self.assertIn("КГС: не определено", text)
+        self.assertIn(
+            "Данные, указывающие на признаки наличия административного правонарушения",
+            text,
+        )
+        self.assertNotIn("7. Признаки незаконности", text)
         self.assertIn("• Отсутствие КГС", text)
         self.assertIn("• Отсутствие уведомления", text)
         self.assertIn("ОАТИ города Москвы", text)
@@ -140,7 +168,13 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("\n1. Сведения о производителе работ:", joined)
         self.assertIn("Заказчик: АО Заказчик", joined)
         self.assertIn("Исполнитель: ООО Строй", joined)
-        self.assertIn("\n7. Признаки незаконности:\n• Отсутствие КГС", joined)
+        self.assertIn("\n7. Данные Мосгоргеотрест:", joined)
+        self.assertIn("ТЗ ОПС: не определено", joined)
+        self.assertIn("КГС: не определено", joined)
+        self.assertIn(
+            "\n8. Данные, указывающие на признаки наличия административного правонарушения:\n• Отсутствие КГС",
+            joined,
+        )
 
         # Auto-filled values in п.1–7 are semi-bold; labels and outside text stay regular.
         for paragraph in doc.paragraphs:
@@ -150,7 +184,7 @@ class DocxFillTests(unittest.TestCase):
                     self.assertTrue(run.bold, msg=repr(chunk[:60]))
                 if "АО Заказчик" in chunk or "ООО Строй" in chunk:
                     self.assertTrue(run.bold, msg=repr(chunk[:60]))
-                if chunk.startswith("6. Описание") or chunk.startswith("7. Признаки"):
+                if chunk.startswith("6. Описание") or chunk.startswith("8. Данные"):
                     self.assertFalse(run.bold, msg=repr(chunk[:60]))
                 if "Заказчик:" in chunk and "АО" not in chunk:
                     self.assertFalse(run.bold, msg=repr(chunk[:60]))
@@ -188,7 +222,8 @@ class DocxFillTests(unittest.TestCase):
             "Отчёт об инциденте",
             "1. Сведения о производителе работ",
             "2. Дата и время",
-            "7. Признаки незаконности",
+            "7. Данные Мосгоргеотрест",
+            "8. Данные, указывающие на признаки наличия административного правонарушения",
             "Приложение:",
             "1. Ситуационный план:",
         )
@@ -212,7 +247,8 @@ class DocxFillTests(unittest.TestCase):
         )
         caption = map_caption_text(1000, 55.8, 37.5)
         self.assertIn("Масштаб 1:1000", caption)
-        self.assertIn("Красный знак — место проведения земляных работ", caption)
+        self.assertIn("место проведения земляных работ", caption)
+        self.assertNotIn("Красный знак", caption)
         self.assertNotIn("разрытие", caption)
         self.assertIn("55.800000, 37.500000", caption)
         self.assertIn("https://yandex.ru/maps/?pt=37.5,55.8&z=17&l=map", caption)
@@ -238,7 +274,8 @@ class DocxFillTests(unittest.TestCase):
         data = document_to_bytes(doc)
         text = _docx_text(data)
         self.assertIn("Масштаб 1:5000", text)
-        self.assertIn("Красный знак — место проведения земляных работ", text)
+        self.assertIn("место проведения земляных работ", text)
+        self.assertNotIn("Красный знак", text)
         self.assertIn("yandex.ru/maps", text)
         self.assertIn(DEFAULT_DESCRIPTION, text)
 
@@ -246,6 +283,82 @@ class DocxFillTests(unittest.TestCase):
         with ZipFile(io.BytesIO(data)) as zf:
             rels = zf.read("word/_rels/document.xml.rels").decode("utf-8")
         self.assertIn("yandex.ru/maps", rels)
+        self.assertGreaterEqual(_docx_image_count(data), 2)
+        self.assertTrue(CAPTION_ICON_PATH.is_file())
+
+    def test_fill_station_lines_and_section_headers(self) -> None:
+        doc = fill_letter_template(
+            street="ул. А",
+            today="24.07.2026",
+            fid=1,
+            executor="",
+            incident_datetime="",
+            address="",
+            coordinates="",
+            engineering="",
+            description="",
+            violation=format_violation_block(["Нет ограждения"]),
+            photo_count=0,
+            sps="501",
+            kgs="",
+        )
+        joined = "\n".join(p.text for p in doc.paragraphs)
+        self.assertIn(SECTION_7_HEADER, joined)
+        self.assertIn(SECTION_8_HEADER, joined)
+        self.assertIn("ТЗ ОПС: 501", joined)
+        self.assertIn("КГС: не определено", joined)
+        self.assertNotIn("7. Признаки незаконности", joined)
+
+    def test_photo_pages_pack_three_landscape(self) -> None:
+        from docx import Document
+
+        landscape = _png_bytes(80, 40)
+        packed = _pack_photo_pages(
+            [(landscape, "Фото 1 · Обзорное")] * 3
+        )
+        self.assertEqual(len(packed), 1)
+        self.assertEqual(len(packed[0]), 3)
+
+        doc = Document()
+        append_photo_pages(
+            doc,
+            [(landscape, f"Фото {i} · Обзорное") for i in range(1, 4)],
+        )
+        data = document_to_bytes(doc)
+        text = _docx_text(data)
+        self.assertIn("Фотофиксация", text)
+        self.assertNotIn("продолжение", text)
+        self.assertEqual(_docx_page_break_count(data), 1)
+        self.assertEqual(_docx_image_count(data), 3)
+
+    def test_photo_pages_pack_portrait_as_two(self) -> None:
+        from docx import Document
+
+        landscape = _png_bytes(80, 40)
+        portrait = _png_bytes(40, 80)
+        packed = _pack_photo_pages(
+            [
+                (landscape, "Фото 1 · Обзорное"),
+                (landscape, "Фото 2 · Обзорное"),
+                (portrait, "Фото 3 · Обзорное"),
+                (portrait, "Фото 4 · Обзорное"),
+            ]
+        )
+        self.assertEqual([len(page) for page in packed], [2, 2])
+
+        doc = Document()
+        append_photo_pages(
+            doc,
+            [
+                (landscape, "Фото 1 · Обзорное"),
+                (portrait, "Фото 2 · Обзорное"),
+                (portrait, "Фото 3 · Обзорное"),
+            ],
+        )
+        data = document_to_bytes(doc)
+        text = _docx_text(data)
+        self.assertIn("Фотофиксация (продолжение)", text)
+        self.assertEqual(_docx_page_break_count(data), 2)
 
     def test_format_helpers(self) -> None:
         self.assertEqual(format_wgs84(37.5, 55.8), "55.800000, 37.500000")
@@ -261,7 +374,11 @@ class DocxFillTests(unittest.TestCase):
             "Об инциденте ул. ABC от 01.01.2026 №1.docx",
         )
         self.assertEqual(photo_caption_label(1, banner=True), "Фото 1 · Информационный щит")
-        self.assertEqual(photo_caption_label(2, banner=False), "Фото 2 · Обзорное фото")
+        self.assertEqual(photo_caption_label(2, banner=False), "Фото 2 · Обзорное")
+        self.assertEqual(format_station_line("ТЗ ОПС", None), "ТЗ ОПС: не определено")
+        self.assertEqual(format_station_line("КГС", "  "), "КГС: не определено")
+        self.assertEqual(format_station_line("ТЗ ОПС", "123"), "ТЗ ОПС: 123")
+        self.assertEqual(format_station_line("ТЗ ОПС", "ТЗ ОПС: 123"), "ТЗ ОПС: 123")
         self.assertEqual(
             format_violation_block(["A", "B"]),
             "• A\n• B",
@@ -302,6 +419,18 @@ class DocxFillTests(unittest.TestCase):
 
 
 class MapScaleTests(unittest.TestCase):
+    def test_letter_tile_url_is_1_2000_basemap(self) -> None:
+        self.assertIn("resource=232992", LETTER_TILE_URL)
+        self.assertNotIn("resource=248465", LETTER_TILE_URL)
+
+    def test_overlay_scale_labels_cyrillic_or_ascii(self) -> None:
+        cyr_scale, cyr_bar = _overlay_scale_labels(1000, has_font=True)
+        self.assertEqual(cyr_scale, "Масштаб 1:1000")
+        self.assertTrue(cyr_bar.endswith(" м"))
+        ascii_scale, ascii_bar = _overlay_scale_labels(2000, has_font=False)
+        self.assertEqual(ascii_scale, "Scale 1:2000")
+        self.assertTrue(ascii_bar.endswith(" M"))
+
     def test_ground_extent_matches_scale_1000(self) -> None:
         self.assertEqual(MAP_SCALE, 1000)
         self.assertEqual(DEFAULT_MAP_SCALE, 1000)
@@ -462,6 +591,103 @@ class SourceLookupTests(unittest.TestCase):
             return_value={"attributes": {"customer": "ООО Клиент"}},
         ):
             self.assertEqual(_lookup_customer(conn, record, {}), "ООО Клиент")
+
+    def test_customer_appends_inn_from_matching_field(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "customer_construction": "ПАО МОЭК",
+                    "customer_construction_inn": "7736050003",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "ПАО МОЭК ИНН: 7736050003")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "balanceholder": "АО Баланс",
+                    "balanceholder_inn": "7700000001",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "АО Баланс ИНН: 7700000001")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "customer": "ООО Клиент",
+                    "customer_inn": "7700000002",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "ООО Клиент ИНН: 7700000002")
+
+    def test_customer_inn_falls_back_when_name_field_inn_empty(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "customer_construction": "ПАО МОЭК",
+                    "customer_construction_inn": "",
+                    "balanceholder_inn": "7700000001",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_customer(conn, record, {}), "ПАО МОЭК ИНН: 7700000001")
+
+    def test_executor_appends_inn_from_matching_field(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "general_contractor": "ООО Ромашка",
+                    "general_contractor_inn": "7712345678",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_executor(conn, record, {}), "ООО Ромашка ИНН: 7712345678")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "executor": "ООО Исполнитель",
+                    "executor_inn": "7700000003",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_executor(conn, record, {}), "ООО Исполнитель ИНН: 7700000003")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "lead_of_work": "ООО Подряд",
+                    "lead_of_work_inn": "7700000004",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_executor(conn, record, {}), "ООО Подряд ИНН: 7700000004")
+
+    def test_executor_inn_falls_back_when_name_field_inn_empty(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(key="task-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={
+                "attributes": {
+                    "general_contractor": "ООО Ромашка",
+                    "executor_inn": "7700000003",
+                }
+            },
+        ):
+            self.assertEqual(_lookup_executor(conn, record, {}), "ООО Ромашка ИНН: 7700000003")
 
     def test_fill_omits_empty_producer_labels(self) -> None:
         doc = fill_letter_template(

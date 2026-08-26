@@ -18,7 +18,8 @@ from docx.text.run import Run
 MSK = ZoneInfo("Europe/Moscow")
 
 TEMPLATE_PATH = Path(__file__).resolve().parent / "templates" / "oati_letter.docx"
-MAP_WIDTH_CM_DOCX = 16.0
+CAPTION_ICON_PATH = Path(__file__).resolve().parent / "templates" / "report.png"
+MAP_WIDTH_CM_DOCX = 15.0
 BODY_FONT_NAME = "Times New Roman"
 BODY_FONT_SIZE = Pt(14)
 MAP_PAGE_TITLE = "Ситуационный план места проведения земельных работ"
@@ -53,16 +54,24 @@ PH_ENG = (
 PH_DESCRIPTION = "{Ввод комментария вручную}"
 PH_VIOLATION = "{Признаки незаконности из справочника}"
 PH_PHOTO_COUNT = "{число выбранных фото}"
+PH_SECTION_7 = "7. Признаки незаконности:"
+SECTION_7_HEADER = "7. Данные Мосгоргеотрест:"
+SECTION_8_HEADER = (
+    "8. Данные, указывающие на признаки наличия административного правонарушения:"
+)
+STATION_UNDEFINED = "не определено"
 
 # Soft line breaks lost during placeholder join — re-insert before these markers.
 _LINE_BREAK_BEFORE = (
     "1. Сведения о производителе работ:",
-    "7. Признаки незаконности:",
+    SECTION_7_HEADER,
+    SECTION_8_HEADER,
 )
 
 # After join, ensure list content starts on the next line under the section header.
 _LINE_BREAK_AFTER = (
-    "7. Признаки незаконности:",
+    SECTION_7_HEADER,
+    SECTION_8_HEADER,
 )
 
 # Subject line in letterhead table: restore soft break after join.
@@ -148,15 +157,26 @@ def map_caption_text(scale: int, lat: float, lon: float) -> str:
     url = yandex_maps_url(lon, lat)
     return (
         f"Масштаб 1:{scale}.\n"
-        f"Красный знак — место проведения земляных работ;\n"
+        f"— место проведения земляных работ;\n"
         f"Координаты инцидента в WGS 84: {coords};\n"
         f"{url}"
     )
 
 
 def photo_caption_label(index: int, *, banner: bool) -> str:
-    kind = "Информационный щит" if banner else "Обзорное фото"
+    kind = "Информационный щит" if banner else "Обзорное"
     return f"Фото {index} · {kind}"
+
+
+def format_station_line(label: str, value: str | None) -> str:
+    text = (value or "").strip() or STATION_UNDEFINED
+    if text.lower().startswith(f"{label.lower()}:"):
+        return text
+    return f"{label}: {text}"
+
+
+def format_mggt_block(sps: str | None, kgs: str | None) -> str:
+    return f"{format_station_line('ТЗ ОПС', sps)}\n{format_station_line('КГС', kgs)}"
 
 
 def format_violation_block(names: list[str]) -> str:
@@ -383,6 +403,8 @@ def fill_letter_template(
     description: str,
     violation: str,
     photo_count: int = 0,
+    sps: str = "",
+    kgs: str = "",
 ) -> Document:
     if not TEMPLATE_PATH.is_file():
         raise FileNotFoundError(f"Letter template not found: {TEMPLATE_PATH}")
@@ -392,7 +414,15 @@ def fill_letter_template(
     desc = (description or "").strip() or DEFAULT_DESCRIPTION
     viol = (violation or "").strip() or blank
     producer = format_producer_block(customer, executor)
-    # Bold only for auto-filled values inside sections 1–7.
+    sps_line = format_station_line("ТЗ ОПС", sps)
+    kgs_line = format_station_line("КГС", kgs)
+    section_7_8 = (
+        f"{SECTION_7_HEADER}\n"
+        f"{_mark_bold(sps_line)}\n"
+        f"{_mark_bold(kgs_line)}\n"
+        f"{SECTION_8_HEADER}"
+    )
+    # Bold only for auto-filled values inside sections 1–8.
     unique_map = {
         PH_DOC_DATE: f"от {today} г." if today else blank,
         PH_DOC_NUMBER: f"№ {fid}",
@@ -405,6 +435,7 @@ def fill_letter_template(
         PH_COORDS: _mark_bold(coordinates if coordinates else blank),
         PH_ENG: _mark_bold(engineering if engineering else blank),
         PH_DESCRIPTION: _mark_bold(desc),
+        PH_SECTION_7: section_7_8,
         PH_VIOLATION: _mark_bold_lines(viol),
         PH_PHOTO_COUNT: str(int(photo_count)),
     }
@@ -412,6 +443,89 @@ def fill_letter_template(
         _replace_in_paragraph(paragraph, unique_map)
     _normalize_body_paragraph_fonts(document)
     return document
+
+
+def _caption_icon_bytes() -> bytes | None:
+    if not CAPTION_ICON_PATH.is_file():
+        return None
+    try:
+        from PIL import Image
+
+        icon = Image.open(CAPTION_ICON_PATH).convert("RGBA")
+        buf = io.BytesIO()
+        icon.save(buf, format="PNG")
+        return buf.getvalue()
+    except OSError:
+        return None
+
+
+def _add_caption_legend_icon(paragraph: Paragraph) -> None:
+    raw = _caption_icon_bytes()
+    run = paragraph.add_run()
+    if raw:
+        try:
+            run.add_picture(io.BytesIO(raw), height=Cm(0.5))
+            return
+        except Exception:
+            pass
+    run.text = "●"
+    run.font.name = BODY_FONT_NAME
+    run.font.size = Pt(9)
+
+
+def _apply_caption_font(run: Run) -> None:
+    run.font.name = BODY_FONT_NAME
+    run.font.size = Pt(9)
+
+
+def _image_is_portrait(image_bytes: bytes) -> bool:
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            width, height = img.size
+        return height > width
+    except OSError:
+        return False
+
+
+def _pack_photo_pages(
+    photos: list[tuple[bytes, str]],
+) -> list[list[tuple[bytes, str]]]:
+    """Greedy pack: 3 landscape per page, 2 if the page has a portrait."""
+    pages: list[list[tuple[bytes, str]]] = []
+    current: list[tuple[bytes, str, bool]] = []
+
+    def flush() -> None:
+        if current:
+            pages.append([(blob, label) for blob, label, _orient in current])
+            current.clear()
+
+    for image_bytes, label in photos:
+        portrait = _image_is_portrait(image_bytes)
+        has_portrait = any(item[2] for item in current)
+        limit = 2 if (portrait or has_portrait) else 3
+        if current and len(current) >= limit:
+            flush()
+        current.append((image_bytes, label, portrait))
+    flush()
+    return pages
+
+
+def _add_fitted_photo(run: Run, image_bytes: bytes, *, max_height_cm: float) -> None:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(image_bytes)) as img:
+        width, height = img.size
+    if width <= 0 or height <= 0:
+        raise ValueError("invalid image size")
+    max_width_cm = 14.0
+    height_cm = max_height_cm
+    width_cm = height_cm * (width / height)
+    if width_cm > max_width_cm:
+        width_cm = max_width_cm
+        height_cm = width_cm * (height / width)
+    run.add_picture(io.BytesIO(image_bytes), width=Cm(width_cm), height=Cm(height_cm))
 
 
 def _add_page_break(document: Document) -> None:
@@ -447,31 +561,30 @@ def append_map_page(
         url = yandex_maps_url(lon, lat)
         coords = format_wgs84(lon, lat)
         r1 = caption.add_run(f"Масштаб 1:{scale}.")
-        r1.font.name = BODY_FONT_NAME
-        r1.font.size = Pt(9)
+        _apply_caption_font(r1)
         r1.add_break(WD_BREAK.LINE)
-        r2 = caption.add_run("Красный знак — место проведения земляных работ;")
-        r2.font.name = BODY_FONT_NAME
-        r2.font.size = Pt(9)
+        _add_caption_legend_icon(caption)
+        r2 = caption.add_run(" — место проведения земляных работ;")
+        _apply_caption_font(r2)
         r2.add_break(WD_BREAK.LINE)
         r3 = caption.add_run(f"Координаты инцидента в WGS 84: {coords};")
-        r3.font.name = BODY_FONT_NAME
-        r3.font.size = Pt(9)
+        _apply_caption_font(r3)
         r3.add_break(WD_BREAK.LINE)
         _add_hyperlink(caption, url, url, font_size=Pt(9))
     else:
-        cap = caption.add_run(
-            f"Масштаб 1:{scale}.\nКрасный знак — место проведения земляных работ."
-        )
-        cap.font.name = BODY_FONT_NAME
-        cap.font.size = Pt(9)
+        r1 = caption.add_run(f"Масштаб 1:{scale}.")
+        _apply_caption_font(r1)
+        r1.add_break(WD_BREAK.LINE)
+        _add_caption_legend_icon(caption)
+        r2 = caption.add_run(" — место проведения земляных работ.")
+        _apply_caption_font(r2)
 
 
 def append_photo_pages(
     document: Document,
     photos: list[tuple[bytes, str]],
 ) -> None:
-    """Append photos starting on a new page; several photos may share a page."""
+    """Append photos starting on a new page; 3 landscape or 2 if a portrait is present."""
     if not photos:
         _add_page_break(document)
         p = document.add_paragraph()
@@ -480,34 +593,32 @@ def append_photo_pages(
         _apply_body_font(run)
         return
 
-    _add_page_break(document)
-    heading = document.add_paragraph()
-    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = heading.add_run("Фотофиксация")
-    run.bold = True
-    _apply_body_font(run)
+    pages = _pack_photo_pages(photos)
+    for page_index, page_photos in enumerate(pages):
+        _add_page_break(document)
+        heading = document.add_paragraph()
+        heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title = "Фотофиксация" if page_index == 0 else "Фотофиксация (продолжение)"
+        run = heading.add_run(title)
+        run.bold = True
+        _apply_body_font(run)
 
-    for index, (image_bytes, label) in enumerate(photos):
-        if index > 0 and index % 2 == 0:
-            _add_page_break(document)
-            h = document.add_paragraph()
-            h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            r = h.add_run("Фотофиксация (продолжение)")
-            r.bold = True
-            _apply_body_font(r)
+        has_portrait = any(_image_is_portrait(blob) for blob, _label in page_photos)
+        max_height_cm = 10.0 if (has_portrait or len(page_photos) <= 2) else 6.7
 
-        caption = document.add_paragraph()
-        caption.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        label_run = caption.add_run(label)
-        _apply_body_font(label_run)
+        for image_bytes, label in page_photos:
+            caption = document.add_paragraph()
+            caption.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            label_run = caption.add_run(label)
+            _apply_body_font(label_run)
 
-        paragraph = document.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = paragraph.add_run()
-        try:
-            run.add_picture(io.BytesIO(image_bytes), width=Cm(14.0))
-        except Exception:
-            paragraph.add_run(" [не удалось вставить изображение] ")
+            paragraph = document.add_paragraph()
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            pic_run = paragraph.add_run()
+            try:
+                _add_fitted_photo(pic_run, image_bytes, max_height_cm=max_height_cm)
+            except Exception:
+                paragraph.add_run(" [не удалось вставить изображение] ")
 
 
 def document_to_bytes(document: Document) -> bytes:

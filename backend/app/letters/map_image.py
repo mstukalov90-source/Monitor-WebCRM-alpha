@@ -11,7 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from app.config import Settings
 
@@ -39,6 +39,23 @@ REPORT_MARKER_PATH = Path(__file__).resolve().parent / "templates" / "report.png
 # Marker width on the rendered PNG (~printed ~0.7 cm at 59 px/cm).
 REPORT_MARKER_WIDTH_PX = 42
 
+# App basemap «1:2000» (mapBasemap.ts). Do not use OSM_TILE_URL — prod .env stays on «Схема».
+LETTER_TILE_URL = (
+    "http://ngtst.mggt:8080/api/component/render/tile"
+    "?resource=232992&nd=204&z={z}&x={x}&y={y}"
+)
+
+_CYRILLIC_FONT_CANDIDATES = (
+    Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path("/usr/share/fonts/liberation/LiberationSans-Regular.ttf"),
+    Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+    Path("/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf"),
+    Path("/Library/Fonts/Arial Unicode.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Arial Unicode.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+)
+
 
 def ground_width_m(scale: int = DEFAULT_MAP_SCALE) -> float:
     """Ground width covered by the printed map frame at the given scale."""
@@ -58,11 +75,34 @@ def normalize_map_scale(scale: int | None) -> int:
     return value
 
 
+def _overlay_scale_labels(scale: int, *, has_font: bool | None = None) -> tuple[str, str]:
+    """Cyrillic labels when a TTF is available; ASCII Scale/M otherwise."""
+    bar_m = _scale_bar_meters(scale)
+    if has_font is None:
+        has_font = _map_overlay_font(16) is not None
+    if has_font:
+        return f"Масштаб 1:{scale}", f"{bar_m} м"
+    return f"Scale 1:{scale}", f"{bar_m} M"
+
+
 def _scale_bar_meters(scale: int) -> int:
     """Pick a round scale-bar length that fits ~1/4 of the frame width."""
     target = ground_width_m(scale) / 4.0
     candidates = (10, 20, 50, 100, 200, 500, 1000, 2000)
     return min(candidates, key=lambda c: abs(c - target))
+
+
+@lru_cache(maxsize=1)
+def _map_overlay_font(size: int = 16) -> ImageFont.FreeTypeFont | ImageFont.ImageFont | None:
+    """TrueType with Cyrillic if available; None means use the bitmap default font."""
+    for path in _CYRILLIC_FONT_CANDIDATES:
+        if not path.is_file():
+            continue
+        try:
+            return ImageFont.truetype(str(path), size=size)
+        except OSError:
+            continue
+    return None
 
 
 @lru_cache(maxsize=1)
@@ -363,7 +403,7 @@ def render_situational_map(
     tminy, tmaxy = min(ty0, ty1), max(ty0, ty1)
 
     canvas = Image.new("RGB", (width, height), color=(230, 230, 230))
-    template = settings.osm_tile_url or "http://ngtst.mggt:8080/api/component/render/tile?resource=248465&nd=204&z={z}&x={x}&y={y}"
+    template = LETTER_TILE_URL
 
     for ty in range(tminy, tmaxy + 1):
         for tx in range(tminx, tmaxx + 1):
@@ -421,9 +461,11 @@ def render_situational_map(
     x0 = margin
     x1 = margin + bar_px
     draw.rectangle((x0, y_bar - 4, x1, y_bar), fill=(0, 0, 0))
-    draw.text((x0, y_bar - 22), "0", fill=(0, 0, 0))
-    draw.text((x1 - 10, y_bar - 22), f"{bar_m} м", fill=(0, 0, 0))
-    draw.text((margin, margin), f"Масштаб 1:{scale}", fill=(0, 0, 0))
+    font = _map_overlay_font(16)
+    scale_label, bar_end = _overlay_scale_labels(scale, has_font=font is not None)
+    draw.text((x0, y_bar - 22), "0", fill=(0, 0, 0), font=font)
+    draw.text((x1 - 10, y_bar - 22), bar_end, fill=(0, 0, 0), font=font)
+    draw.text((margin, margin), scale_label, fill=(0, 0, 0), font=font)
 
     buf = io.BytesIO()
     canvas.save(buf, format="PNG")

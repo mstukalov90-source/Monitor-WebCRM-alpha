@@ -2142,6 +2142,7 @@ a.btn {
 }
 
 .oati-engineering-block,
+.oati-mggt-block,
 .oati-violation-block {
   display: flex;
   flex-direction: column;

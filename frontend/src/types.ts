@@ -646,6 +646,8 @@ export interface OatiLetterDraft {
   engineering: string
   description: string
   violation: string
+  sps: string
+  kgs: string
   photos: OatiLetterPhoto[]
   map_warning?: string | null
   task_geometry_visibility: string
@@ -666,6 +668,8 @@ export interface OatiLetterGeneratePayload {
   engineering: string
   description: string
   violation?: string
+  sps: string
+  kgs: string
   violation_names: string[]
   photo_ids: number[]
   map_scale: number

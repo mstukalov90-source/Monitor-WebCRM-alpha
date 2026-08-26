@@ -25,6 +25,7 @@ from app.letters.docx_fill import (
     fill_letter_template,
     format_ru_date,
     format_ru_date_value,
+    format_station_line,
     format_violation_block,
     format_wgs84,
     letter_download_filename,
@@ -47,6 +48,8 @@ MSK = ZoneInfo("Europe/Moscow")
 # Same fields as UI «Источник» labels in taskTableColumnsForSubgroup.
 SOURCE_CUSTOMER_FIELDS = ("customer_construction", "balanceholder", "customer")
 SOURCE_EXECUTOR_FIELDS = ("general_contractor", "executor", "lead_of_work")
+SOURCE_CUSTOMER_INN_FIELDS = tuple(f"{field}_inn" for field in SOURCE_CUSTOMER_FIELDS)
+SOURCE_EXECUTOR_INN_FIELDS = tuple(f"{field}_inn" for field in SOURCE_EXECUTOR_FIELDS)
 
 
 class LetterError(Exception):
@@ -84,6 +87,8 @@ class LetterDraft:
     engineering: str
     description: str
     violation: str
+    sps: str = ""
+    kgs: str = ""
     photos: list[LetterPhotoDraft] = field(default_factory=list)
     map_warning: str | None = None
     task_geometry_visibility: str = "missing"
@@ -113,6 +118,8 @@ class LetterDraft:
             "engineering": self.engineering,
             "description": self.description,
             "violation": self.violation,
+            "sps": self.sps,
+            "kgs": self.kgs,
             "photos": [
                 {
                     "id": p.id,
@@ -189,17 +196,43 @@ def _lookup_rayon(conn: PgConnection, lon: float, lat: float) -> str:
     return " ".join(str(row["rayon"]).split()).strip()
 
 
-def _attr_text(attrs: dict[str, Any], *keys: str) -> str:
+def _first_attr(attrs: dict[str, Any], *keys: str) -> tuple[str, str | None]:
+    """First non-empty attribute among ``keys``; returns (value, matched key)."""
     for key in keys:
         value = attrs.get(key)
         if value is not None and str(value).strip():
-            return str(value).strip()
+            return str(value).strip(), key
     lower_map = {str(k).lower(): v for k, v in attrs.items()}
     for key in keys:
         value = lower_map.get(key.lower())
         if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
+            return str(value).strip(), key
+    return "", None
+
+
+def _attr_text(attrs: dict[str, Any], *keys: str) -> str:
+    value, _ = _first_attr(attrs, *keys)
+    return value
+
+
+def _format_party_with_inn(name: str, inn: str) -> str:
+    name = (name or "").strip()
+    inn = (inn or "").strip()
+    if not name:
+        return ""
+    if inn:
+        return f"{name} ИНН: {inn}"
+    return name
+
+
+def _inn_fields_for_name(inn_fields: tuple[str, ...], name_key: str | None) -> tuple[str, ...]:
+    """INN for the winning name field first, then the rest of the fallback chain."""
+    ordered = list(inn_fields)
+    if name_key:
+        preferred = f"{name_key}_inn"
+        if preferred in ordered:
+            ordered = [preferred] + [field for field in ordered if field != preferred]
+    return tuple(ordered)
 
 
 def _lookup_source_feature(
@@ -218,16 +251,19 @@ def _lookup_source_party(
     conn: PgConnection,
     record: TaskRecord,
     store_cfg: dict[str, Any],
-    *fields: str,
+    name_fields: tuple[str, ...],
+    inn_fields: tuple[str, ...],
 ) -> str:
-    """First non-empty attribute from source feature among ``fields``."""
+    """Name from source feature among ``name_fields``, plus matching INN fallback."""
     feature = _lookup_source_feature(conn, record, store_cfg)
     if not feature:
         return ""
     attrs = feature.get("attributes") or {}
     if not isinstance(attrs, dict):
         return ""
-    return _attr_text(attrs, *fields)
+    name, name_key = _first_attr(attrs, *name_fields)
+    inn = _attr_text(attrs, *_inn_fields_for_name(inn_fields, name_key))
+    return _format_party_with_inn(name, inn)
 
 
 def _lookup_customer(
@@ -235,8 +271,10 @@ def _lookup_customer(
     record: TaskRecord,
     store_cfg: dict[str, Any],
 ) -> str:
-    """Заказчик from source object «Источник» fields."""
-    return _lookup_source_party(conn, record, store_cfg, *SOURCE_CUSTOMER_FIELDS)
+    """Заказчик from source object «Источник» fields, with INN suffix."""
+    return _lookup_source_party(
+        conn, record, store_cfg, SOURCE_CUSTOMER_FIELDS, SOURCE_CUSTOMER_INN_FIELDS
+    )
 
 
 def _lookup_executor(
@@ -245,7 +283,9 @@ def _lookup_executor(
     store_cfg: dict[str, Any],
 ) -> str:
     """Исполнитель from source object «Источник» fields (no field-assignee fallback)."""
-    return _lookup_source_party(conn, record, store_cfg, *SOURCE_EXECUTOR_FIELDS)
+    return _lookup_source_party(
+        conn, record, store_cfg, SOURCE_EXECUTOR_FIELDS, SOURCE_EXECUTOR_INN_FIELDS
+    )
 
 
 def _lookup_source_engineering(
@@ -541,7 +581,7 @@ def build_letter_draft(
                 file_path=photo.file_path,
                 banner=photo.banner,
                 created_at=photo.created_at,
-                label="Информационный щит" if photo.banner else "Обзорное фото",
+                label="Информационный щит" if photo.banner else "Обзорное",
                 image_url=f"/api/photos/field/{quote(name)}/image",
             )
         )
@@ -582,6 +622,8 @@ def build_letter_draft(
         ),
         description=description,
         violation="",
+        sps=format_station_line("ТЗ ОПС", record.sps),
+        kgs=format_station_line("КГС", record.kgs),
         photos=photos,
         map_warning=_map_warning_for_visibility(visibility),
         task_geometry_visibility=visibility,
@@ -669,6 +711,8 @@ def generate_letter_docx(
     violation_names: list[str] | None = None,
     photo_ids: list[int],
     map_scale: int = DEFAULT_MAP_SCALE,
+    sps: str = "",
+    kgs: str = "",
     settings: Settings | None = None,
 ) -> tuple[int, bytes, str]:
     """Create letter row, build DOCX, return (fid, bytes, filename)."""
@@ -707,6 +751,8 @@ def generate_letter_docx(
     description_text = (description or "").strip() or DEFAULT_DESCRIPTION
     customer_text = (customer or "").strip()
     executor_text = (executor or "").strip()
+    sps_text = format_station_line("ТЗ ОПС", sps)
+    kgs_text = format_station_line("КГС", kgs)
 
     selected_violations = list(violation_names or [])
     if not selected_violations and (violation or "").strip():
@@ -732,6 +778,8 @@ def generate_letter_docx(
         "incident_datetime": incident_dt,
         "today": today,
         "map_scale": scale,
+        "sps": sps_text,
+        "kgs": kgs_text,
     }
     fid = _insert_letter_row(
         conn,
@@ -754,6 +802,8 @@ def generate_letter_docx(
         description=description_text,
         violation=violation_text,
         photo_count=len(ordered_ids),
+        sps=sps_text,
+        kgs=kgs_text,
     )
 
     task_geometry = _lookup_task_geometry(conn, record, store_cfg)
