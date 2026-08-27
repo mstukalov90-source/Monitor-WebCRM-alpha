@@ -302,6 +302,41 @@ export interface TaskGroupMap {
   errors: string[]
 }
 
+export type NearbyContextKind = 'orders' | 'kgs' | 'sps' | 'ops'
+
+export const NEARBY_CONTEXT_BUTTONS: { kind: NearbyContextKind; label: string }[] = [
+  { kind: 'sps', label: 'Посмотреть СПС' },
+  { kind: 'ops', label: 'Посмотреть ОПС' },
+  { kind: 'kgs', label: 'Посмотреть КГС' },
+  { kind: 'orders', label: 'Посмотреть все ордера' },
+]
+
+export interface NearbyFeatureStyle {
+  color?: string
+  weight?: number
+  fillColor?: string
+  fillOpacity?: number
+  opacity?: number
+  radius?: number
+}
+
+export interface NearbyContextFeature {
+  id: string
+  table: string
+  geometry: GeoJSON.Geometry
+  properties: Record<string, unknown>
+  style: NearbyFeatureStyle
+  label?: string | null
+}
+
+export interface NearbyContextResult {
+  kind: NearbyContextKind
+  radius_m: number
+  features: NearbyContextFeature[]
+  errors: string[]
+  count: number
+}
+
 export interface OrderSearchHit {
   subgroup_name: string
   layer_name: string

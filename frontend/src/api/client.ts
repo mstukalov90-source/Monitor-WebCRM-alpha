@@ -33,6 +33,8 @@ import type {
   ReportTemplate,
   TaskViewContext,
   TaskGroupMap,
+  NearbyContextKind,
+  NearbyContextResult,
   OrderSearchResult,
   WorkflowTargetStatus,
   BulkStatusResult,
@@ -900,6 +902,11 @@ export function fetchTaskViewContext(key: string): Promise<TaskViewContext> {
 
 export function fetchTaskGroupMap(key: string): Promise<TaskGroupMap> {
   return request(`/api/tasks/${encodeURIComponent(key)}/group-map`, undefined, 90_000)
+}
+
+export function fetchNearbyContext(key: string, kind: NearbyContextKind): Promise<NearbyContextResult> {
+  const qs = new URLSearchParams({ kind })
+  return request(`/api/tasks/${encodeURIComponent(key)}/nearby-context?${qs}`, undefined, 90_000)
 }
 
 export function searchOrderGroup(query: string, rayon: string): Promise<OrderSearchResult> {

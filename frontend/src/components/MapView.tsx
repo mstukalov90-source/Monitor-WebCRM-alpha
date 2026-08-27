@@ -9,7 +9,7 @@ import { addAreaGeometryToGroup, createAreaSvgRenderer } from '../lib/areaMapSty
 import { pointRadius, styleForGeometryType, MIN_LINE_WEIGHT } from '../lib/symbology'
 import { parsePhotoAzimuth, pointLayerWithAzimuth } from '../lib/photoAzimuth'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
-import type { LayerConfig, LinkLayerInfo, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
+import type { LayerConfig, LinkLayerInfo, NearbyContextResult, SelectedTaskContext, TaskFeature, TaskHighlight, TaskSource } from '../types'
 import { geometryKindLabel } from '../lib/notificationSiblings'
 import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
 import { BasemapLayers } from './BasemapLayers'
@@ -55,6 +55,7 @@ interface MapViewProps {
   onViewArea?: (feature: TaskFeature) => void
   onViewFieldReport?: (taskKey: string, reportId: number) => void
   onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
+  nearbyOverlays?: NearbyContextResult[]
 }
 
 const DISTRICT_BOUNDARY_STYLE: L.PathOptions = {
@@ -805,6 +806,67 @@ function TaskHighlightLayer({
   return null
 }
 
+function nearbyPathStyle(style: NearbyContextResult['features'][number]['style']): L.PathOptions {
+  return {
+    color: style.color ?? '#3388ff',
+    weight: style.weight ?? 2,
+    fillColor: style.fillColor ?? style.color ?? '#3388ff',
+    fillOpacity: style.fillOpacity ?? 0.35,
+    opacity: style.opacity ?? 0.9,
+  }
+}
+
+function NearbyContextLayer({ overlays }: { overlays: NearbyContextResult[] }) {
+  const map = useMap()
+  const layerRef = useRef<L.LayerGroup | null>(null)
+
+  useEffect(() => {
+    if (layerRef.current) {
+      map.removeLayer(layerRef.current)
+      layerRef.current = null
+    }
+    const features = overlays.flatMap((overlay) => overlay.features)
+    if (!features.length) return
+
+    const group = L.layerGroup()
+    for (const feature of features) {
+      if (!feature.geometry) continue
+      const pathStyle = nearbyPathStyle(feature.style ?? {})
+      const radius = feature.style?.radius ?? 5
+      const label = feature.label?.trim()
+      L.geoJSON(feature.geometry as GeoJSON.GeoJsonObject, {
+        style: () => pathStyle,
+        pointToLayer: (_feat, latlng) =>
+          L.circleMarker(latlng, {
+            ...pathStyle,
+            radius,
+          }),
+        onEachFeature: (_feat, pathLayer) => {
+          if (label) {
+            pathLayer.bindTooltip(label, {
+              permanent: true,
+              direction: 'right',
+              offset: [8, 0],
+              className: 'kgs-point-label',
+            })
+          }
+        },
+        interactive: Boolean(label),
+      }).addTo(group)
+    }
+    group.addTo(map)
+    layerRef.current = group
+    return () => {
+      if (layerRef.current) {
+        map.removeLayer(layerRef.current)
+        layerRef.current = null
+      }
+    }
+  }, [map, overlays])
+
+  return null
+}
+
 export function MapView({
   taskFeatures,
   layerConfigByKey,
@@ -825,6 +887,7 @@ export function MapView({
   onViewArea,
   onViewFieldReport,
   onSelectTaskFeature,
+  nearbyOverlays = [],
 }: MapViewProps) {
   return (
     <MapContainer
@@ -865,6 +928,7 @@ export function MapView({
         onFeaturePicked={onFeaturePicked}
       />
       <PlacePointHandler active={placePointMode && !pickMode} onPointPlaced={onPointPlaced} />
+      <NearbyContextLayer overlays={nearbyOverlays} />
       <TaskHighlightLayer
         highlight={taskHighlight}
         taskSource={taskSource}

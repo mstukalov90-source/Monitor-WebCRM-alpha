@@ -8,6 +8,7 @@ import {
   OFFICE_DATA_LAYER_KEY,
   type AreaStatus,
   type LayerConfig,
+  type NearbyContextKind,
   type Symbology,
 } from '../types'
 
@@ -58,6 +59,33 @@ const HIGHLIGHT_REPORT_ITEM: MapLegendItem = {
   kind: 'highlight-report',
 }
 
+const NEARBY_LEGEND_ITEMS: Record<NearbyContextKind, MapLegendItem> = {
+  orders: {
+    id: 'nearby_orders',
+    label: 'Все ордера (250 м)',
+    kind: 'line',
+    symbology: { color: '#006400', width: 3 },
+  },
+  kgs: {
+    id: 'nearby_kgs',
+    label: 'КГС',
+    kind: 'line',
+    symbology: { color: '#800020', width: 3 },
+  },
+  sps: {
+    id: 'nearby_sps',
+    label: 'СПС',
+    kind: 'line',
+    symbology: { color: '#1565c0', width: 3 },
+  },
+  ops: {
+    id: 'nearby_ops',
+    label: 'ОПС',
+    kind: 'line',
+    symbology: { color: '#6a1b9a', width: 3 },
+  },
+}
+
 function areaStatusLegendItems(): MapLegendItem[] {
   return AREA_STATUS_ORDER.map((status) => ({
     id: `area_status_${status}`,
@@ -104,6 +132,7 @@ export function buildMapLegendItems(
     isAreaMode?: boolean
     showDistrictBoundary?: boolean
     showFieldReports?: boolean
+    nearbyOverlayKinds?: NearbyContextKind[]
   },
 ): MapLegendItem[] {
   const items: MapLegendItem[] = []
@@ -150,6 +179,9 @@ export function buildMapLegendItems(
   items.push(HIGHLIGHT_PRIMARY_ITEM, HIGHLIGHT_LINKED_ITEM)
   if (options.showFieldReports) {
     items.push(HIGHLIGHT_REPORT_ITEM)
+  }
+  for (const kind of options.nearbyOverlayKinds ?? []) {
+    items.push(NEARBY_LEGEND_ITEMS[kind])
   }
   return items
 }

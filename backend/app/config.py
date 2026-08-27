@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     db_name: str = "monitor"
     db_user: str = "monitor"
     db_password: str = ""
+    mggt_db_host: str = ""
+    mggt_db_port: int = 5432
+    mggt_db_name: str = "mggt"
+    mggt_db_user: str = "postgres"
+    mggt_db_password: str = ""
     layers_config_path: str = "../shared/layers_config.json"
     cors_origins: str = "http://localhost:5173"
     geojson_default_limit: int = 2000

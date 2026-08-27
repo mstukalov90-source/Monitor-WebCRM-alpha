@@ -63,6 +63,8 @@ from app.crm.schemas import (
     SnapshotActionRequest,
     SnapshotResultOut,
     TaskFormFieldsOut,
+    NearbyContextOut,
+    NearbyContextFeatureOut,
     TaskGroupMapFeatureOut,
     TaskGroupMapOut,
     TaskRecordOut,
@@ -121,6 +123,7 @@ from app.crm.tasks_area import (
     tasks_area_result_to_dict,
 )
 from app.db import get_connection
+from app.layers.nearby_context import NearbyKind, fetch_nearby_context
 from app.layers.geojson import list_districts, lookup_feature
 from app.layers.registry import get_registry
 
@@ -485,6 +488,25 @@ def get_task_group_map(key: str) -> TaskGroupMapOut:
         selected_task_key=payload["selected_task_key"],
         features=[TaskGroupMapFeatureOut(**f) for f in payload.get("features") or []],
         errors=list(payload.get("errors") or []),
+    )
+
+
+@router.get("/tasks/{key}/nearby-context", response_model=NearbyContextOut)
+def get_task_nearby_context(
+    key: str,
+    kind: NearbyKind = Query(..., description="orders | kgs | sps | ops"),
+) -> NearbyContextOut:
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        payload = fetch_nearby_context(conn, key, kind, store_cfg)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return NearbyContextOut(
+        kind=payload["kind"],
+        radius_m=payload["radius_m"],
+        features=[NearbyContextFeatureOut(**f) for f in payload.get("features") or []],
+        errors=list(payload.get("errors") or []),
+        count=int(payload.get("count") or 0),
     )
 
 

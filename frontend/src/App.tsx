@@ -57,6 +57,8 @@ import type {
   AppView,
   LayerGroupConfig,
   LinkLayerInfo,
+  NearbyContextKind,
+  NearbyContextResult,
   OfficeAnaliseStage,
   OfficeWorkMode,
   SelectedTaskContext,
@@ -105,6 +107,9 @@ function App() {
     taskKey: string
     reportId?: number | null
   } | null>(null)
+  const [nearbyOverlays, setNearbyOverlays] = useState<
+    Partial<Record<NearbyContextKind, NearbyContextResult>>
+  >({})
 
   const isOfficeUser = user?.role === 'office'
   const canPlaceOfficePoints = user?.role === 'office' || user?.role === 'manager'
@@ -112,6 +117,21 @@ function App() {
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
   const workspace = useWorkspaceLayout()
+  const nearbyOverlayList = useMemo(
+    () =>
+      (['sps', 'ops', 'kgs', 'orders'] as NearbyContextKind[])
+        .map((kind) => nearbyOverlays[kind])
+        .filter((item): item is NearbyContextResult => Boolean(item)),
+    [nearbyOverlays],
+  )
+  const nearbyOverlayKinds = useMemo(
+    () => nearbyOverlayList.map((item) => item.kind),
+    [nearbyOverlayList],
+  )
+
+  useEffect(() => {
+    setNearbyOverlays({})
+  }, [editContext?.taskKey, editContext?.feature.task_key, editContext?.feature.layer_key])
 
   useEffect(() => {
     if (!user) return
@@ -491,6 +511,18 @@ function App() {
     setPickMode(active)
     setPickLayers(layers)
   }, [])
+
+  const handleNearbyOverlayChange = useCallback(
+    (kind: NearbyContextKind, data: NearbyContextResult | null) => {
+      setNearbyOverlays((prev) => {
+        const next = { ...prev }
+        if (data) next[kind] = data
+        else delete next[kind]
+        return next
+      })
+    },
+    [],
+  )
 
   const handleFeaturePicked = useCallback((taskColumn: string, value: string) => {
     setPickedValue({ column: taskColumn, value })
@@ -1078,6 +1110,7 @@ function App() {
                   setFieldMaterials({ taskKey, reportId })
                 }
                 onSelectTaskFeature={setPanelSelectFromMap}
+                nearbyOverlays={nearbyOverlayList}
               />
             </div>
             <MapLegend
@@ -1086,6 +1119,7 @@ function App() {
               showAreaOverlay={areaPolygonsOnMap && !isAreaSource(taskSource)}
               isAreaMode={isAreaSource(taskSource) && areaPolygonsOnMap}
               showFieldReports={Boolean(activeHighlight?.fieldReports?.length)}
+              nearbyOverlayKinds={nearbyOverlayKinds}
             />
           </div>
         </main>
@@ -1120,6 +1154,7 @@ function App() {
               onPickModeChange={handlePickModeChange}
               pickedValue={pickedValue}
               onPickedConsumed={() => setPickedValue(null)}
+              onNearbyOverlayChange={handleNearbyOverlayChange}
             />
           </aside>
         )}

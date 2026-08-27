@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { TaskFeatureOnMap } from '../lib/taskFeatures'
 import { buildMapLegendItems, swatchStyles, type MapLegendItem } from '../lib/mapLegend'
-import type { LayerConfig } from '../types'
+import type { LayerConfig, NearbyContextKind } from '../types'
 
 interface MapLegendProps {
   taskFeatures: TaskFeatureOnMap[]
@@ -10,6 +10,7 @@ interface MapLegendProps {
   isAreaMode?: boolean
   showDistrictBoundary?: boolean
   showFieldReports?: boolean
+  nearbyOverlayKinds?: NearbyContextKind[]
 }
 
 function LegendSwatch({ item }: { item: MapLegendItem }) {
@@ -51,6 +52,7 @@ export function MapLegend({
   isAreaMode = false,
   showDistrictBoundary = true,
   showFieldReports = false,
+  nearbyOverlayKinds = [],
 }: MapLegendProps) {
   const items = useMemo(
     () =>
@@ -59,8 +61,9 @@ export function MapLegend({
         isAreaMode,
         showDistrictBoundary,
         showFieldReports,
+        nearbyOverlayKinds,
       }),
-    [taskFeatures, layerConfigByKey, showAreaOverlay, isAreaMode, showDistrictBoundary, showFieldReports],
+    [taskFeatures, layerConfigByKey, showAreaOverlay, isAreaMode, showDistrictBoundary, showFieldReports, nearbyOverlayKinds],
   )
 
   if (!items.length) return null

@@ -427,6 +427,32 @@ class TaskGroupMapOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class NearbyFeatureStyleOut(BaseModel):
+    color: str | None = None
+    weight: float | None = None
+    fillColor: str | None = None
+    fillOpacity: float | None = None
+    opacity: float | None = None
+    radius: float | None = None
+
+
+class NearbyContextFeatureOut(BaseModel):
+    id: str
+    table: str
+    geometry: dict[str, Any]
+    properties: dict[str, Any] = Field(default_factory=dict)
+    style: NearbyFeatureStyleOut = Field(default_factory=NearbyFeatureStyleOut)
+    label: str | None = None
+
+
+class NearbyContextOut(BaseModel):
+    kind: Literal["orders", "kgs", "sps", "ops"]
+    radius_m: float
+    features: list[NearbyContextFeatureOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    count: int = 0
+
+
 class OrderSearchHitOut(BaseModel):
     subgroup_name: str
     layer_name: str

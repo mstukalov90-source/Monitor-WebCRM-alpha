@@ -8,6 +8,7 @@ import {
   fetchTask,
   fetchTaskFormFields,
   fetchTaskGroupMap,
+  fetchNearbyContext,
   lookupFieldSnapshot,
   lookupTaskByFeature,
   markDisruptionAbsent,
@@ -35,6 +36,8 @@ import type {
   CameraBlockOptions,
   FieldReportFeature,
   LinkLayerInfo,
+  NearbyContextKind,
+  NearbyContextResult,
   SelectedTaskContext,
   TaskFeature,
   TaskGroupMap,
@@ -55,6 +58,7 @@ import {
   isFieldObserved,
   isLensPhotoContext,
   lensExternalIdFromAttributes,
+  NEARBY_CONTEXT_BUTTONS,
   TASK_MODAL_EXTRA_COLUMNS,
   TASK_SOURCE_LABELS,
   taskTableColumnsForSubgroup,
@@ -214,6 +218,7 @@ interface TaskEditModalProps {
   onPickModeChange: (active: boolean, layers: LinkLayerInfo[]) => void
   pickedValue: { column: string; value: string } | null
   onPickedConsumed: () => void
+  onNearbyOverlayChange?: (kind: NearbyContextKind, data: NearbyContextResult | null) => void
 }
 
 export function TaskEditModal({
@@ -237,6 +242,7 @@ export function TaskEditModal({
   onPickModeChange,
   pickedValue,
   onPickedConsumed,
+  onNearbyOverlayChange,
 }: TaskEditModalProps) {
   const [record, setRecord] = useState<TaskRecord | null>(null)
   const [readonlyFields, setReadonlyFields] = useState<string[]>([])
@@ -262,6 +268,10 @@ export function TaskEditModal({
   const [groupMap, setGroupMap] = useState<TaskGroupMap | null>(null)
   const [groupMapLoading, setGroupMapLoading] = useState(false)
   const [groupMapError, setGroupMapError] = useState<string | null>(null)
+  const [nearbyActive, setNearbyActive] = useState<Set<NearbyContextKind>>(new Set())
+  const [nearbyLoading, setNearbyLoading] = useState<Partial<Record<NearbyContextKind, boolean>>>({})
+  const [nearbyError, setNearbyError] = useState<Partial<Record<NearbyContextKind, string>>>({})
+  const [nearbyCount, setNearbyCount] = useState<Partial<Record<NearbyContextKind, number>>>({})
   const [cameraBlockTaskKey, setCameraBlockTaskKey] = useState<string | null>(null)
   const [cameraBlockOptions, setCameraBlockOptions] = useState<CameraBlockOptions | null>(null)
   const [cameraBlockBusy, setCameraBlockBusy] = useState(false)
@@ -378,6 +388,44 @@ export function TaskEditModal({
     setFieldMaterialsKey(record.key)
   }
 
+  const handleToggleNearby = async (kind: NearbyContextKind) => {
+    if (!onNearbyOverlayChange) return
+    if (nearbyActive.has(kind)) {
+      setNearbyActive((prev) => {
+        const next = new Set(prev)
+        next.delete(kind)
+        return next
+      })
+      setNearbyError((prev) => ({ ...prev, [kind]: undefined }))
+      onNearbyOverlayChange(kind, null)
+      return
+    }
+    const mapKey = context?.taskKey || record?.key || null
+    if (!mapKey) {
+      setNearbyError((prev) => ({ ...prev, [kind]: 'Ключ задачи не найден' }))
+      return
+    }
+    setNearbyLoading((prev) => ({ ...prev, [kind]: true }))
+    setNearbyError((prev) => ({ ...prev, [kind]: undefined }))
+    try {
+      const data = await fetchNearbyContext(mapKey, kind)
+      if ((context?.taskKey || record?.key) !== mapKey) return
+      setNearbyActive((prev) => new Set(prev).add(kind))
+      setNearbyCount((prev) => ({ ...prev, [kind]: data.count }))
+      if (data.errors?.length) {
+        setNearbyError((prev) => ({ ...prev, [kind]: data.errors.join('; ') }))
+      }
+      onNearbyOverlayChange(kind, data)
+    } catch (e) {
+      if ((context?.taskKey || record?.key) !== mapKey) return
+      setNearbyError((prev) => ({ ...prev, [kind]: String(e) }))
+    } finally {
+      if ((context?.taskKey || record?.key) === mapKey) {
+        setNearbyLoading((prev) => ({ ...prev, [kind]: false }))
+      }
+    }
+  }
+
   const openPhotoIfAvailable = () => {
     if (!context || autoPhotoOpenedRef.current) return
     if (!isAiPhoto && !isDitPhoto && !isLensPhoto) return
@@ -487,6 +535,10 @@ export function TaskEditModal({
       setGroupMap(null)
       setGroupMapError(null)
       setGroupMapLoading(false)
+      setNearbyActive(new Set())
+      setNearbyLoading({})
+      setNearbyError({})
+      setNearbyCount({})
       autoPhotoOpenedRef.current = false
       onPickModeChange(false, [])
       return
@@ -503,6 +555,10 @@ export function TaskEditModal({
     setShowLegalRequirements(false)
     setLinkSectionOpen(false)
     setStationSectionOpen(false)
+    setNearbyActive(new Set())
+    setNearbyLoading({})
+    setNearbyError({})
+    setNearbyCount({})
     let cancelled = false
     setLoading(true)
     lookupAndLoad(context)
@@ -982,6 +1038,39 @@ export function TaskEditModal({
             )}
 
             <div className="modal-actions">
+              {onNearbyOverlayChange && (
+                <div className="modal-action-group">
+                  <h4>Контекст на карте</h4>
+                  <p className="muted small">Объекты в радиусе 250 м от задачи</p>
+                  <div className="modal-action-buttons">
+                    {NEARBY_CONTEXT_BUTTONS.map(({ kind, label }) => {
+                      const active = nearbyActive.has(kind)
+                      const loadingKind = Boolean(nearbyLoading[kind])
+                      const count = nearbyCount[kind]
+                      return (
+                        <button
+                          key={kind}
+                          type="button"
+                          className={`btn nearby-context-btn${active ? ' active' : ''}`}
+                          aria-pressed={active}
+                          disabled={loading || loadingKind}
+                          onClick={() => void handleToggleNearby(kind)}
+                        >
+                          {loadingKind ? `${label}…` : label}
+                          {active && count != null ? ` (${count})` : ''}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {NEARBY_CONTEXT_BUTTONS.map(({ kind }) =>
+                    nearbyError[kind] ? (
+                      <p key={kind} className="error-banner small">
+                        {NEARBY_CONTEXT_BUTTONS.find((item) => item.kind === kind)?.label}: {nearbyError[kind]}
+                      </p>
+                    ) : null,
+                  )}
+                </div>
+              )}
               <div className="modal-action-group">
                 <h4>Управление задачей</h4>
                 <div className="modal-action-buttons">

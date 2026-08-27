@@ -544,6 +544,22 @@ body,
   color: #fff;
 }
 
+.nearby-context-btn.active {
+  background: #1976d2;
+  border-color: #1976d2;
+  color: #fff;
+}
+
+.kgs-point-label {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #800020;
+  color: #800020;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 4px;
+  box-shadow: none;
+}
+
 .task-source-tab {
   padding: 6px 12px;
   border: 1px solid #ccc;
