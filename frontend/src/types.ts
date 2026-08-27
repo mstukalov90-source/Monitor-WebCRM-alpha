@@ -317,6 +317,7 @@ export interface NearbyFeatureStyle {
   fillColor?: string
   fillOpacity?: number
   opacity?: number
+  dashArray?: string
   radius?: number
 }
 

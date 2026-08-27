@@ -433,6 +433,7 @@ class NearbyFeatureStyleOut(BaseModel):
     fillColor: str | None = None
     fillOpacity: float | None = None
     opacity: float | None = None
+    dashArray: str | None = None
     radius: float | None = None
 
 

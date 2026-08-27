@@ -19,6 +19,7 @@ from app.layers.registry import LayerDef, get_registry
 NearbyKind = Literal["orders", "kgs", "sps", "ops"]
 
 NEARBY_RADIUS_M = 250.0
+SPS_RADIUS_M = 50.0
 PER_TABLE_LIMIT = 500
 TOTAL_CAP = 2000
 METRIC_SRID_DEFAULT = 32637
@@ -40,6 +41,12 @@ KGS_TABLE_KINDS = {
 }
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def radius_for_kind(kind: NearbyKind) -> float:
+    if kind == "sps":
+        return SPS_RADIUS_M
+    return NEARBY_RADIUS_M
 
 
 def quote_ident(name: str) -> str:
@@ -543,6 +550,11 @@ def _collect_sps(
         qualified = f"{SPS_SCHEMA}.{table}"
         for index, (attrs, geometry) in enumerate(rows):
             style = parsed.resolve(attrs) if parsed else dict(DEFAULT_STYLE)
+            label = None
+            field = parsed.label_field or "label"
+            text = attrs.get(field)
+            if text is not None and str(text).strip():
+                label = str(text).strip()
             features.append(
                 _pack_feature(
                     table=qualified,
@@ -550,6 +562,7 @@ def _collect_sps(
                     attrs=attrs,
                     style=style,
                     index=index,
+                    label=label,
                 )
             )
         remaining = TOTAL_CAP - len(features)
@@ -581,10 +594,11 @@ def fetch_nearby_context(
         return None
     metric = metric_srid()
     errors: list[str] = []
+    radius_m = radius_for_kind(kind)
     if status == "no_geometry" or center is None:
         return {
             "kind": kind,
-            "radius_m": NEARBY_RADIUS_M,
+            "radius_m": radius_m,
             "features": [],
             "errors": ["Нет геометрии у задачи"],
             "count": 0,
@@ -600,13 +614,13 @@ def fetch_nearby_context(
             errors.append(f"Не удалось загрузить МСК 77 (srid={MSK77_SRID}): {exc}")
             return {
                 "kind": kind,
-                "radius_m": NEARBY_RADIUS_M,
+                "radius_m": radius_m,
                 "features": [],
                 "errors": errors,
                 "count": 0,
             }
     if kind == "orders":
-        features = _collect_from_layers(conn, iter_order_layers(), center, NEARBY_RADIUS_M, metric, errors)
+        features = _collect_from_layers(conn, iter_order_layers(), center, radius_m, metric, errors)
     elif kind == "kgs":
         assert msk77_proj is not None
         if schema_exists(conn, KGS_SCHEMA):
@@ -630,7 +644,7 @@ def fetch_nearby_context(
                 features = _collect_sps(
                     mggt_conn,
                     center,
-                    NEARBY_RADIUS_M,
+                    radius_m,
                     errors,
                     source_proj=msk77_proj,
                     ops_only=(kind == "ops"),
@@ -644,7 +658,7 @@ def fetch_nearby_context(
 
     return {
         "kind": kind,
-        "radius_m": NEARBY_RADIUS_M,
+        "radius_m": radius_m,
         "features": features,
         "errors": errors,
         "count": len(features),

@@ -105,6 +105,15 @@ class NearbyContextHelperTests(unittest.TestCase):
         self.assertNotIn("32637", sql)
         self.assertEqual(WGS84_PROJ4, "+proj=longlat +datum=WGS84 +no_defs")
 
+    def test_sps_radius_is_50(self) -> None:
+        from app.layers.nearby_context import SPS_RADIUS_M, radius_for_kind
+
+        self.assertEqual(SPS_RADIUS_M, 50.0)
+        self.assertEqual(radius_for_kind("sps"), 50.0)
+        self.assertEqual(radius_for_kind("ops"), 250.0)
+        self.assertEqual(radius_for_kind("kgs"), 250.0)
+        self.assertEqual(radius_for_kind("orders"), 250.0)
+
     def test_order_sql_keeps_utm_metric(self) -> None:
         from app.layers.nearby_context import features_within_radius_sql
 

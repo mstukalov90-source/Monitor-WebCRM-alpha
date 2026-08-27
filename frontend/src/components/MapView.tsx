@@ -807,13 +807,25 @@ function TaskHighlightLayer({
 }
 
 function nearbyPathStyle(style: NearbyContextResult['features'][number]['style']): L.PathOptions {
-  return {
+  const options: L.PathOptions = {
     color: style.color ?? '#3388ff',
     weight: style.weight ?? 2,
     fillColor: style.fillColor ?? style.color ?? '#3388ff',
     fillOpacity: style.fillOpacity ?? 0.35,
     opacity: style.opacity ?? 0.9,
   }
+  if (style.dashArray) {
+    options.dashArray = style.dashArray
+  }
+  return options
+}
+
+function nearbyLabelClass(table: string): string {
+  return table.startsWith('kgs.') ? 'kgs-point-label' : 'sps-label'
+}
+
+function escapeNearbyLabel(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 function NearbyContextLayer({ overlays }: { overlays: NearbyContextResult[] }) {
@@ -834,24 +846,40 @@ function NearbyContextLayer({ overlays }: { overlays: NearbyContextResult[] }) {
       const pathStyle = nearbyPathStyle(feature.style ?? {})
       const radius = feature.style?.radius ?? 5
       const label = feature.label?.trim()
+      const labelClass = nearbyLabelClass(feature.table)
       L.geoJSON(feature.geometry as GeoJSON.GeoJsonObject, {
         style: () => pathStyle,
-        pointToLayer: (_feat, latlng) =>
-          L.circleMarker(latlng, {
+        pointToLayer: (_feat, latlng) => {
+          if (radius <= 0) {
+            if (!label) {
+              return L.circleMarker(latlng, { ...pathStyle, radius: 0, opacity: 0, fillOpacity: 0 })
+            }
+            return L.marker(latlng, {
+              icon: L.divIcon({
+                className: 'sps-label-icon',
+                html: `<span class="sps-label-text">${escapeNearbyLabel(label)}</span>`,
+                iconSize: [1, 1],
+                iconAnchor: [0, 8],
+              }),
+              interactive: false,
+            })
+          }
+          return L.circleMarker(latlng, {
             ...pathStyle,
             radius,
-          }),
+          })
+        },
         onEachFeature: (_feat, pathLayer) => {
-          if (label) {
+          if (label && radius > 0) {
             pathLayer.bindTooltip(label, {
               permanent: true,
               direction: 'right',
               offset: [8, 0],
-              className: 'kgs-point-label',
+              className: labelClass,
             })
           }
         },
-        interactive: Boolean(label),
+        interactive: Boolean(label && radius > 0),
       }).addTo(group)
     }
     group.addTo(map)
