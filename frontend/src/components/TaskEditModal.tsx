@@ -280,25 +280,37 @@ export function TaskEditModal({
 
   const taskSource: TaskSource = context?.taskSource ?? 'active'
   const isReadonly = taskSource !== 'active'
+  const isOfficeClosedReview =
+    userRole === 'office' &&
+    (taskSource === 'done_legal' || taskSource === 'done_illegal' || taskSource === 'clear')
   const canManageFieldTaskStatus = taskSource === 'field' && canManageFieldStatus
-  const canPerformStatusActions = !isReadonly || canManageFieldTaskStatus || taskSource === 'delay'
+  const canPerformStatusActions =
+    !isReadonly || canManageFieldTaskStatus || taskSource === 'delay' || isOfficeClosedReview
   const canSendToField =
     (taskSource === 'active' && Boolean(sessionRayon) && taskInCurrentResult) ||
     (taskSource === 'delay' && Boolean(sessionRayon) && canPostponeTasks)
   const canCloseLegal =
-    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
+    taskSource === 'active' ||
+    (taskSource === 'field' && canManageFieldTaskStatus) ||
+    isOfficeClosedReview
   const showIllegalClose =
-    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
+    taskSource === 'active' ||
+    (taskSource === 'field' && canManageFieldTaskStatus) ||
+    isOfficeClosedReview
   const canCloseIllegal = showIllegalClose && record != null && record.field_observed !== false
   const showIllegalFieldHint =
     showIllegalClose && canPerformStatusActions && record?.field_observed === false
   const canMarkDisruptionAbsent =
-    taskSource === 'active' || (taskSource === 'field' && canManageFieldTaskStatus)
+    taskSource === 'active' ||
+    (taskSource === 'field' && canManageFieldTaskStatus) ||
+    isOfficeClosedReview
   const canReturnToActive =
     (taskSource === 'field' && canManageFieldTaskStatus) ||
-    (taskSource === 'delay' && canManageFieldStatus)
+    (taskSource === 'delay' && canManageFieldStatus) ||
+    (isOfficeClosedReview && Boolean(context?.canReturnToActive))
   const canPostpone =
-    canPostponeTasks && (taskSource === 'active' || taskSource === 'field')
+    canPostponeTasks &&
+    (taskSource === 'active' || taskSource === 'field' || isOfficeClosedReview)
   const hasStatusActions =
     canSendToField ||
     canCloseLegal ||

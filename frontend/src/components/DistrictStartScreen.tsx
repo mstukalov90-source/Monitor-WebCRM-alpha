@@ -40,6 +40,7 @@ interface DistrictStartScreenProps {
   onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
   onOpenStatistics?: () => void
+  onOpenMyClosed?: () => void
   onOpenOrderStatus?: () => void
   onOpenOznMatch?: () => void
   onOpenServerMonitor?: () => void
@@ -67,6 +68,7 @@ export function DistrictStartScreen({
   onOpenEmployeeLocations,
   onOpenOrderTracks,
   onOpenStatistics,
+  onOpenMyClosed,
   onOpenOrderStatus,
   onOpenOznMatch,
   onOpenServerMonitor,
@@ -230,6 +232,11 @@ export function DistrictStartScreen({
             {onOpenStatistics && (
               <button type="button" className="btn" onClick={onOpenStatistics}>
                 Статистика
+              </button>
+            )}
+            {onOpenMyClosed && (
+              <button type="button" className="btn" onClick={onOpenMyClosed}>
+                Мои закрытые задачи
               </button>
             )}
             {canViewServerMonitor && onOpenServerMonitor && (

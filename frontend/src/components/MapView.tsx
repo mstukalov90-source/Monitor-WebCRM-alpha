@@ -14,6 +14,7 @@ import { geometryKindLabel } from '../lib/notificationSiblings'
 import { FIELD_DATA_LAYER_KEY, OFFICE_DATA_LAYER_KEY } from '../types'
 import { BasemapLayers } from './BasemapLayers'
 import { MapResizeObserver } from './MapResizeObserver'
+import { YandexMapsControl } from './YandexMapsControl'
 import {
   DISTRICT_RAYON_FIELD,
   filterDistrictGeoJson,
@@ -928,6 +929,7 @@ export function MapView({
     >
       <MapResizeObserver />
       <AttributionControl prefix={LEAFLET_ATTRIBUTION_PREFIX} />
+      <YandexMapsControl />
       <BasemapLayers />
       <DistrictBoundaryLayer districtName={districtName} />
       {!pickMode && (

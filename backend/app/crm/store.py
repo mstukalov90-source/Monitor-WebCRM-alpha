@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 SendTaskSnapshotResult = Literal["inserted", "skipped", "deleted", "not_found"]
 WorkflowStatus = Literal["active", "field", "clear", "done_legal", "done_illegal", "delay"]
 WorkflowTarget = Literal["active", "field", "clear"]
+CLOSED_SNAPSHOT_STATUSES: frozenset[str] = frozenset({"done_legal", "done_illegal", "clear"})
+_WORKFLOW_SNAPSHOT_REFS: dict[str, tuple[str, str]] = {
+    "field": ("field_table", "tasks_field"),
+    "delay": ("delay_table", "tasks_delay"),
+    "clear": ("clear_table", "tasks_clear"),
+    "done_legal": ("done_legal_table", "tasks_done_legal"),
+    "done_illegal": ("done_illegal_table", "tasks_done_illegal"),
+}
+
+
+class OrderAnaliseCompleteError(PermissionError):
+    """Cannot return a closed task to active: order analysis is finished or missing."""
 
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
@@ -1139,6 +1151,34 @@ def fetch_field_rayon_for_task(
         return None
 
 
+def fetch_snapshot_rayon_for_status(
+    conn: PgConnection,
+    store_cfg: Dict[str, Any],
+    task_key: str,
+    status: WorkflowStatus,
+) -> str | None:
+    refs = _WORKFLOW_SNAPSHOT_REFS.get(status)
+    if refs is None:
+        return None
+    if status == "field":
+        return fetch_field_rayon_for_task(conn, store_cfg, task_key)
+    config_key, default_table = refs
+    schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
+    ensure_rayon_column(conn, schema, table)
+    query = f'SELECT rayon FROM "{schema}"."{table}" WHERE task_key = %s::uuid LIMIT 1'
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, (task_key,))
+            row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        from app.layers.geojson import normalize_rayon_name
+
+        return normalize_rayon_name(str(row[0])) or None
+    except Exception:
+        return None
+
+
 def send_task_to_done_legal(
     conn: PgConnection,
     record: TaskRecord,
@@ -1285,28 +1325,12 @@ def send_task_to_delay(
     delay_until: date,
     rayon: str | None = None,
 ) -> SendTaskSnapshotResult:
-    today = moscow_today()
-    if delay_until <= today:
-        raise ValueError("Дата отложения должна быть позже сегодняшнего дня")
-
-    current = detect_task_workflow_status(conn, store_cfg, record.key)
-    if current not in ("active", "field"):
-        raise ValueError("Отложить можно только активную задачу или задачу «В поле»")
-
-    if current == "field":
-        field_rayon = fetch_field_rayon_for_task(conn, store_cfg, record.key)
-        remove_task_from_field(
-            conn, record, store_cfg, login, log_return_to_active=False
-        )
-        rayon = rayon or field_rayon
-
-    return send_task_snapshot(
+    return relocate_task_snapshot(
         conn,
         record,
         store_cfg,
-        "delay_table",
-        "tasks_delay",
         login,
+        "delay",
         rayon=rayon,
         delay_until=delay_until,
     )
@@ -1349,19 +1373,18 @@ def return_task_to_active(
     store_cfg: Dict[str, Any],
     login: str,
 ) -> SendTaskSnapshotResult:
-    current = detect_task_workflow_status(conn, store_cfg, record.key)
-    if current == "delay":
-        return remove_task_from_delay(conn, record, store_cfg, login)
-    return remove_task_from_field(conn, record, store_cfg, login)
+    return relocate_task_snapshot(conn, record, store_cfg, login, "active")
 
 
-def remove_task_from_clear(
+def _delete_snapshot_row(
     conn: PgConnection,
     record: TaskRecord,
     store_cfg: Dict[str, Any],
     login: str,
+    config_key: str,
+    default_table: str,
 ) -> SendTaskSnapshotResult:
-    schema, table = _snapshot_table_ref(store_cfg, "clear_table", "tasks_clear")
+    schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     audit = make_user_audit(login)
     try:
         with conn.cursor() as cur:
@@ -1385,6 +1408,153 @@ def remove_task_from_clear(
     except Exception:
         conn.rollback()
         raise
+
+
+def remove_task_from_clear(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return _delete_snapshot_row(
+        conn, record, store_cfg, login, "clear_table", "tasks_clear"
+    )
+
+
+def remove_task_from_done_legal(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return _delete_snapshot_row(
+        conn, record, store_cfg, login, "done_legal_table", "tasks_done_legal"
+    )
+
+
+def remove_task_from_done_illegal(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+) -> SendTaskSnapshotResult:
+    return _delete_snapshot_row(
+        conn, record, store_cfg, login, "done_illegal_table", "tasks_done_illegal"
+    )
+
+
+def remove_task_from_workflow_snapshot(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+    status: WorkflowStatus,
+    *,
+    log_field_return_to_active: bool = False,
+) -> SendTaskSnapshotResult:
+    if status == "active":
+        return "not_found"
+    if status == "field":
+        return remove_task_from_field(
+            conn,
+            record,
+            store_cfg,
+            login,
+            log_return_to_active=log_field_return_to_active,
+        )
+    if status == "delay":
+        return remove_task_from_delay(conn, record, store_cfg, login)
+    if status == "clear":
+        return remove_task_from_clear(conn, record, store_cfg, login)
+    if status == "done_legal":
+        return remove_task_from_done_legal(conn, record, store_cfg, login)
+    if status == "done_illegal":
+        return remove_task_from_done_illegal(conn, record, store_cfg, login)
+    return "not_found"
+
+
+def relocate_task_snapshot(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: Dict[str, Any],
+    login: str,
+    target: WorkflowStatus,
+    *,
+    rayon: str | None = None,
+    delay_until: date | None = None,
+) -> SendTaskSnapshotResult:
+    current = detect_task_workflow_status(conn, store_cfg, record.key)
+    if current == target:
+        return "skipped"
+
+    if target == "delay":
+        if delay_until is None:
+            raise ValueError("delay_until is required")
+        if delay_until <= moscow_today():
+            raise ValueError("Дата отложения должна быть позже сегодняшнего дня")
+        if current not in ("active", "field") and current not in CLOSED_SNAPSHOT_STATUSES:
+            raise ValueError(
+                "Отложить можно только активную задачу, задачу «В поле» или закрытую"
+            )
+        resolved = rayon
+        if current != "active":
+            resolved = rayon or fetch_snapshot_rayon_for_status(
+                conn, store_cfg, record.key, current
+            )
+            remove_task_from_workflow_snapshot(conn, record, store_cfg, login, current)
+        return send_task_snapshot(
+            conn,
+            record,
+            store_cfg,
+            "delay_table",
+            "tasks_delay",
+            login,
+            rayon=resolved,
+            delay_until=delay_until,
+        )
+
+    if target == "active":
+        if current not in ("field", "delay") and current not in CLOSED_SNAPSHOT_STATUSES:
+            raise ValueError("Нельзя вернуть задачу в активные из текущего статуса")
+        if current in CLOSED_SNAPSHOT_STATUSES:
+            from app.crm.my_closed_tasks import containing_order_allows_return
+
+            if not containing_order_allows_return(conn, store_cfg, record.key):
+                raise OrderAnaliseCompleteError(
+                    "Нельзя вернуть в активные: анализ заказа уже завершён или заказ не найден"
+                )
+        return remove_task_from_workflow_snapshot(
+            conn,
+            record,
+            store_cfg,
+            login,
+            current,
+            log_field_return_to_active=current == "field",
+        )
+
+    if target not in CLOSED_SNAPSHOT_STATUSES:
+        raise ValueError(f"Неподдерживаемый целевой статус: {target}")
+    if current not in ("active", "field") and current not in CLOSED_SNAPSHOT_STATUSES:
+        raise ValueError("Нельзя сменить решение из текущего статуса")
+    if target == "done_illegal" and record.field_observed is False:
+        raise ValueError(ILLEGAL_CLOSE_REQUIRES_FIELD_SURVEY)
+
+    resolved = rayon
+    if current != "active":
+        resolved = rayon or fetch_snapshot_rayon_for_status(
+            conn, store_cfg, record.key, current
+        )
+        remove_task_from_workflow_snapshot(conn, record, store_cfg, login, current)
+
+    if target == "done_legal":
+        return send_task_to_done_legal(
+            conn, record, store_cfg, login, rayon=resolved
+        )
+    if target == "done_illegal":
+        return send_task_to_done_illegal(
+            conn, record, store_cfg, login, rayon=resolved
+        )
+    return send_task_to_clear(conn, record, store_cfg, login, rayon=resolved)
 
 
 def detect_task_workflow_status(

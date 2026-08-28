@@ -32,6 +32,7 @@ import type {
   ReportSpec,
   ReportTemplate,
   TaskViewContext,
+  MyClosedTasksResult,
   TaskGroupMap,
   NearbyContextKind,
   NearbyContextResult,
@@ -898,6 +899,10 @@ export function fetchOrderStatusFeed(params: {
 
 export function fetchTaskViewContext(key: string): Promise<TaskViewContext> {
   return request(`/api/tasks/${encodeURIComponent(key)}/view-context`)
+}
+
+export function fetchMyClosedTasks(): Promise<MyClosedTasksResult> {
+  return request('/api/tasks/my-closed')
 }
 
 export function fetchTaskGroupMap(key: string): Promise<TaskGroupMap> {

@@ -27,6 +27,7 @@ import { OznMatchScreen } from './components/OznMatchScreen'
 import { OfficeWorkModeModal } from './components/OfficeWorkModeModal'
 import { FieldScoreScreen } from './components/FieldScoreScreen'
 import { OrderStatusModal } from './components/OrderStatusModal'
+import { MyClosedTasksModal } from './components/MyClosedTasksModal'
 import { ZipCloseModal } from './components/ZipCloseModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { ServerMonitorScreen } from './components/ServerMonitorScreen'
@@ -61,6 +62,7 @@ import type {
   NearbyContextResult,
   OfficeAnaliseStage,
   OfficeWorkMode,
+  MyClosedTask,
   SelectedTaskContext,
   StatisticsActionDetail,
   TaskFeature,
@@ -92,6 +94,8 @@ function App() {
   const [appView, setAppView] = useState<AppView>('workspace')
   const [areaViewFeature, setAreaViewFeature] = useState<TaskFeature | null>(null)
   const [orderStatusOpen, setOrderStatusOpen] = useState(false)
+  const [myClosedOpen, setMyClosedOpen] = useState(false)
+  const [taskOverlayReview, setTaskOverlayReview] = useState(false)
   const [zipCloseOpen, setZipCloseOpen] = useState(false)
   const [fieldScoreOrderKey, setFieldScoreOrderKey] = useState<string | null>(null)
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
@@ -358,6 +362,7 @@ function App() {
     setPanelHighlight(null)
     setModalHighlight(null)
     setEditContext(null)
+    setTaskOverlayReview(false)
 
     setSourceLoading(true)
     try {
@@ -385,6 +390,23 @@ function App() {
     } finally {
       setSourceLoading(false)
     }
+  }
+
+  const handleMyClosedSelect = async (task: MyClosedTask) => {
+    setMyClosedOpen(false)
+    const view = await fetchTaskViewContext(task.task_key)
+    setTaskOverlayReview(true)
+    setEditContext({
+      groupName: view.group_name,
+      subgroupName: view.subgroup_name,
+      feature: {
+        ...view.feature,
+        task_key: view.task_key,
+      },
+      taskKey: view.task_key,
+      taskSource: task.task_source,
+      canReturnToActive: task.can_return_to_active,
+    })
   }
 
   const handleLoadFieldTasks = async () => {
@@ -466,6 +488,7 @@ function App() {
     setPanelHighlight(null)
     setModalHighlight(null)
     setEditContext(null)
+    setTaskOverlayReview(false)
     setPickMode(false)
     setPickLayers([])
     setPlacePointMode(false)
@@ -615,6 +638,7 @@ function App() {
         ctx.feature,
         ctx.taskSource,
       )
+      setTaskOverlayReview(false)
       setEditContext(verified)
     } catch {
       alert('Задача не найдена.')
@@ -863,6 +887,7 @@ function App() {
           onOpenEmployeeLocations={() => setAppView('employee_locations')}
           onOpenOrderTracks={() => setAppView('order_tracks')}
           onOpenStatistics={() => setAppView('statistics')}
+          onOpenMyClosed={isOfficeUser ? () => setMyClosedOpen(true) : undefined}
           onOpenServerMonitor={() => setAppView('server_monitor')}
           onOpenZipClose={user.role === 'admin' ? () => setZipCloseOpen(true) : undefined}
           onOpenOznMatch={
@@ -885,6 +910,12 @@ function App() {
             canDispatchAnalise={user.can_manage_personnel}
           />
         )}
+        {myClosedOpen && (
+          <MyClosedTasksModal
+            onClose={() => setMyClosedOpen(false)}
+            onSelect={handleMyClosedSelect}
+          />
+        )}
         {zipCloseOpen && user.role === 'admin' && (
           <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
         )}
@@ -899,8 +930,14 @@ function App() {
           canPostponeTasks={user.can_postpone_tasks}
           userRole={user.role}
           showGroupMap
-          onClose={() => setEditContext(null)}
-          onTaskRemoved={() => setEditContext(null)}
+          onClose={() => {
+            setEditContext(null)
+            setTaskOverlayReview(false)
+          }}
+          onTaskRemoved={() => {
+            setEditContext(null)
+            setTaskOverlayReview(false)
+          }}
           onHighlightChange={setModalHighlight}
           onPickModeChange={handlePickModeChange}
           pickedValue={pickedValue}
@@ -974,6 +1011,11 @@ function App() {
             {isOfficeUser && (
               <button type="button" className="btn" onClick={handleChangeOfficeMode}>
                 Сменить режим
+              </button>
+            )}
+            {isOfficeUser && (
+              <button type="button" className="btn" onClick={() => setMyClosedOpen(true)}>
+                Мои закрытые задачи
               </button>
             )}
             {user.can_manage_personnel && (
@@ -1058,6 +1100,7 @@ function App() {
             onRefresh={handleRefresh}
             selectFromMap={panelSelectFromMap}
             onSelectFromMapConsumed={() => setPanelSelectFromMap(null)}
+            onOpenMyClosed={isOfficeUser ? () => setMyClosedOpen(true) : undefined}
           />
         </aside>
         <ResizeHandle
@@ -1123,7 +1166,7 @@ function App() {
             />
           </div>
         </main>
-        {editContext && (
+        {editContext && !taskOverlayReview && (
           <ResizeHandle
             orientation="vertical"
             ariaLabel="Изменить ширину панели задачи"
@@ -1132,7 +1175,7 @@ function App() {
             onResizeEnd={() => workspace.setResizing(false)}
           />
         )}
-        {editContext && (
+        {editContext && !taskOverlayReview && (
           <aside className="task-edit-aside">
             <TaskEditModal
               docked
@@ -1200,6 +1243,40 @@ function App() {
 
       {zipCloseOpen && user.role === 'admin' && (
         <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
+      )}
+
+      {myClosedOpen && (
+        <MyClosedTasksModal
+          onClose={() => setMyClosedOpen(false)}
+          onSelect={handleMyClosedSelect}
+        />
+      )}
+
+      {editContext && taskOverlayReview && (
+        <TaskEditModal
+          context={editContext}
+          subgroupFeatures={[]}
+          sessionRayon={sessionRayon}
+          taskInCurrentResult={false}
+          canManagePersonnel={user.can_manage_personnel}
+          canGenerateLetters={user.can_generate_letters}
+          canManageFieldStatus={user.can_manage_field_task_status}
+          canPostponeTasks={user.can_postpone_tasks}
+          userRole={user.role}
+          showGroupMap
+          onClose={() => {
+            setEditContext(null)
+            setTaskOverlayReview(false)
+          }}
+          onTaskRemoved={() => {
+            setEditContext(null)
+            setTaskOverlayReview(false)
+          }}
+          onHighlightChange={setModalHighlight}
+          onPickModeChange={handlePickModeChange}
+          pickedValue={pickedValue}
+          onPickedConsumed={() => setPickedValue(null)}
+        />
       )}
 
     </div>

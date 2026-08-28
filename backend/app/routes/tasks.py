@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from functools import partial
+from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
@@ -65,6 +65,8 @@ from app.crm.schemas import (
     TaskFormFieldsOut,
     NearbyContextOut,
     NearbyContextFeatureOut,
+    MyClosedTaskOut,
+    MyClosedTasksOut,
     TaskGroupMapFeatureOut,
     TaskGroupMapOut,
     TaskRecordOut,
@@ -75,17 +77,13 @@ from app.crm.schemas import (
 from app.crm.store import (
     TASK_COLUMN_LABELS,
     TaskRecord,
+    OrderAnaliseCompleteError,
     build_task_view_context,
     fetch_task_by_key,
     fetch_task_for_feature,
+    relocate_task_snapshot,
     restore_due_delayed_tasks,
-    send_task_to_delay,
-    send_task_to_done_illegal,
-    send_task_to_done_legal,
     send_task_to_field,
-    send_task_to_clear,
-    return_task_to_active,
-    remove_task_from_field,
     task_key_exists_in_snapshot,
     task_form_field_groups,
     update_task_record,
@@ -160,25 +158,35 @@ def _require_field_task_manager(user: UserSession, conn, store_cfg, task_key: st
         )
 
 
-def _send_snapshot(
+_CLOSED_RELOCATE_SOURCES = ["active", "field", "done_legal", "done_illegal", "clear"]
+
+
+def _relocate_snapshot(
     key: str,
-    handler,
-    login: str,
+    target: str,
+    user: UserSession,
     *,
-    user: UserSession | None = None,
-    remove_from_field_after: bool = False,
+    rayon: str | None = None,
+    delay_until: date | None = None,
 ) -> SnapshotResultOut:
     store_cfg = crm_task_store_config()
     with get_connection() as conn:
         record = fetch_task_by_key(conn, store_cfg, key)
         if record is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if user is not None:
-            _require_field_task_manager(user, conn, store_cfg, key)
+        _require_field_task_manager(user, conn, store_cfg, key)
         try:
-            status = handler(conn, record, store_cfg, login)
-            if remove_from_field_after and status in ("inserted", "skipped"):
-                remove_task_from_field(conn, record, store_cfg, login)
+            status = relocate_task_snapshot(
+                conn,
+                record,
+                store_cfg,
+                user.login,
+                target,  # type: ignore[arg-type]
+                rayon=rayon,
+                delay_until=delay_until,
+            )
+        except OrderAnaliseCompleteError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -448,6 +456,18 @@ def search_order_group_tasks(
         hits=[OrderSearchHitOut(**hit) for hit in payload.get("hits") or []],
         errors=list(payload.get("errors") or []),
     )
+
+
+@router.get("/tasks/my-closed", response_model=MyClosedTasksOut)
+def get_my_closed_tasks(
+    user: UserSession = Depends(require_office_or_admin),
+) -> MyClosedTasksOut:
+    from app.crm.my_closed_tasks import fetch_my_closed_tasks
+
+    store_cfg = crm_task_store_config()
+    with get_connection() as conn:
+        items = fetch_my_closed_tasks(conn, store_cfg, user.login)
+    return MyClosedTasksOut(tasks=[MyClosedTaskOut(**item) for item in items])
 
 
 @router.get("/tasks/{key}")
@@ -737,28 +757,16 @@ def post_postpone_task(
     body: PostponeTaskRequest,
     user: UserSession = Depends(require_can_postpone_tasks),
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["active", "field"])
+    check_task_source_any(user, _CLOSED_RELOCATE_SOURCES)
     if body.rayon:
         check_rayon(user, body.rayon)
-    store_cfg = crm_task_store_config()
-    with get_connection() as conn:
-        record = fetch_task_by_key(conn, store_cfg, key)
-        if record is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        try:
-            status = send_task_to_delay(
-                conn,
-                record,
-                store_cfg,
-                user.login,
-                delay_until=body.delay_until,
-                rayon=body.rayon,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return SnapshotResultOut(status=status)
+    return _relocate_snapshot(
+        key,
+        "delay",
+        user,
+        rayon=body.rayon,
+        delay_until=body.delay_until,
+    )
 
 
 @router.post("/tasks/{key}/close-legal")
@@ -767,17 +775,11 @@ def post_close_legal(
     user: UserSession = Depends(get_current_user),
     body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["active", "field"])
+    check_task_source_any(user, _CLOSED_RELOCATE_SOURCES)
     rayon = body.rayon if body else None
     if rayon:
         check_rayon(user, rayon)
-    return _send_snapshot(
-        key,
-        partial(send_task_to_done_legal, rayon=rayon),
-        user.login,
-        user=user,
-        remove_from_field_after=True,
-    )
+    return _relocate_snapshot(key, "done_legal", user, rayon=rayon)
 
 
 @router.post("/tasks/{key}/close-illegal")
@@ -786,17 +788,11 @@ def post_close_illegal(
     user: UserSession = Depends(get_current_user),
     body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["active", "field"])
+    check_task_source_any(user, _CLOSED_RELOCATE_SOURCES)
     rayon = body.rayon if body else None
     if rayon:
         check_rayon(user, rayon)
-    return _send_snapshot(
-        key,
-        partial(send_task_to_done_illegal, rayon=rayon),
-        user.login,
-        user=user,
-        remove_from_field_after=True,
-    )
+    return _relocate_snapshot(key, "done_illegal", user, rayon=rayon)
 
 
 @router.post("/tasks/{key}/disruption-absent")
@@ -805,17 +801,11 @@ def post_disruption_absent(
     user: UserSession = Depends(get_current_user),
     body: SnapshotActionRequest | None = None,
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["active", "field"])
+    check_task_source_any(user, _CLOSED_RELOCATE_SOURCES)
     rayon = body.rayon if body else None
     if rayon:
         check_rayon(user, rayon)
-    return _send_snapshot(
-        key,
-        partial(send_task_to_clear, rayon=rayon),
-        user.login,
-        user=user,
-        remove_from_field_after=True,
-    )
+    return _relocate_snapshot(key, "clear", user, rayon=rayon)
 
 
 @router.post("/tasks/{key}/return-to-active")
@@ -823,8 +813,8 @@ def post_return_to_active(
     key: str,
     user: UserSession = Depends(require_can_manage_field_task_status),
 ) -> SnapshotResultOut:
-    check_task_source_any(user, ["field", "delay"])
-    return _send_snapshot(key, return_task_to_active, user.login, user=user)
+    check_task_source_any(user, ["field", "delay", "done_legal", "done_illegal", "clear"])
+    return _relocate_snapshot(key, "active", user)
 
 
 @router.get("/features/lookup")

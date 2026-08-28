@@ -101,6 +101,7 @@ interface TaskPanelProps {
   onRefresh: () => void | Promise<void>
   selectFromMap?: SelectedTaskContext | null
   onSelectFromMapConsumed?: () => void
+  onOpenMyClosed?: () => void
 }
 
 export function TaskPanel({
@@ -117,6 +118,7 @@ export function TaskPanel({
   onRefresh,
   selectFromMap = null,
   onSelectFromMapConsumed,
+  onOpenMyClosed,
 }: TaskPanelProps) {
   const [selectedGroup, setSelectedGroup] = useState(0)
   const [selectedSub, setSelectedSub] = useState(0)
@@ -504,6 +506,11 @@ export function TaskPanel({
   if (!taskResult) {
     return (
       <div className="task-panel empty">
+        {onOpenMyClosed && (
+          <button type="button" className="btn" onClick={onOpenMyClosed}>
+            Мои закрытые задачи
+          </button>
+        )}
         <p>Выберите район и нажмите «Получить задачу»</p>
       </div>
     )
@@ -512,6 +519,11 @@ export function TaskPanel({
   if (tasksHidden) {
     return (
       <div className="task-panel empty">
+        {onOpenMyClosed && (
+          <button type="button" className="btn" onClick={onOpenMyClosed}>
+            Мои закрытые задачи
+          </button>
+        )}
         <p className="muted">Район: <strong>{taskResult.district_name}</strong></p>
         <p>Выберите тип задач в фильтре или включите «Заказы»</p>
       </div>
@@ -531,15 +543,26 @@ export function TaskPanel({
               сборка {frontendBuildLabel()}
             </span>
           </div>
-          {!isArea && (
-            <button
-              type="button"
-              className="btn task-panel-order-search"
-              onClick={() => setSearchOpen(true)}
-            >
-              Поиск ордеров
-            </button>
-          )}
+          <div className="task-panel-header-actions">
+            {onOpenMyClosed && (
+              <button
+                type="button"
+                className="btn task-panel-order-search"
+                onClick={onOpenMyClosed}
+              >
+                Мои закрытые задачи
+              </button>
+            )}
+            {!isArea && (
+              <button
+                type="button"
+                className="btn task-panel-order-search"
+                onClick={() => setSearchOpen(true)}
+              >
+                Поиск ордеров
+              </button>
+            )}
+          </div>
         </div>
         {linkLoading && <div className="muted small">Загрузка привязок…</div>}
         {linkInfo && !linkLoading && <div className="muted small">{linkInfo}</div>}

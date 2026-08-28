@@ -284,6 +284,18 @@ export interface TaskViewContext {
   feature: TaskFeature
 }
 
+export interface MyClosedTask {
+  task_key: string
+  rayon: string
+  task_name: string
+  task_source: TaskSource
+  can_return_to_active: boolean
+}
+
+export interface MyClosedTasksResult {
+  tasks: MyClosedTask[]
+}
+
 export interface TaskGroupMapFeature {
   task_key: string
   subgroup_name: string
@@ -1399,6 +1411,7 @@ export interface SelectedTaskContext {
   feature: TaskFeature
   taskKey?: string
   taskSource: TaskSource
+  canReturnToActive?: boolean
 }
 
 export const TASK_SOURCE_LABELS: Record<TaskSource, string> = {

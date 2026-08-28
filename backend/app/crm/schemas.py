@@ -136,6 +136,18 @@ class SnapshotResultOut(BaseModel):
     status: str
 
 
+class MyClosedTaskOut(BaseModel):
+    task_key: str
+    rayon: str = ""
+    task_name: str
+    task_source: str
+    can_return_to_active: bool = False
+
+
+class MyClosedTasksOut(BaseModel):
+    tasks: list[MyClosedTaskOut] = Field(default_factory=list)
+
+
 class SendToFieldRequest(BaseModel):
     rayon: str
     office_comment: str | None = None
