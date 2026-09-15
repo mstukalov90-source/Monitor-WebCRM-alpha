@@ -26,19 +26,13 @@ from app.crm.office_data_loader import (
     collect_office_data_tasks,
 )
 from app.crm.store import (
-    CRM_GROUP_DISRUPTIONS,
-    FIELD_DATA_SUBGROUP,
-    OFFICE_DATA_SUBGROUP,
     PersistStats,
     _table_ref,
     acquire_persist_rayon_lock,
-    enrich_features_field_observed,
-    enrich_task_result_field_observed,
-    fetch_snapshot_task_keys,
-    filter_sent_tasks_from_result,
     persist_new_tasks_in_district,
     release_persist_rayon_lock,
     resolve_task_lookup,
+    snapshot_table_refs,
 )
 from app.layers.geojson import fetch_district_wkt, fetch_task_attributes_in_district
 from app.layers.registry import get_registry
@@ -50,6 +44,14 @@ class CollectLayerPlanItem:
     subgroup_name: str
     layer_key: str
     layer_name: str
+
+
+@dataclass(frozen=True)
+class CollectQueryContext:
+    district_wkt: str | None
+    metric_srid: int
+    errors: tuple[str, ...] = ()
+    excluded_task_tables: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass
@@ -246,6 +248,22 @@ def _district_context(
     return district_wkt, metric_srid, errors
 
 
+def build_collect_query_context(
+    conn: PgConnection,
+    rayon: str,
+    store_cfg: dict[str, Any],
+    *,
+    filter_sent: bool = True,
+) -> CollectQueryContext:
+    district_wkt, metric_srid, errors = _district_context(conn, rayon)
+    return CollectQueryContext(
+        district_wkt=district_wkt,
+        metric_srid=metric_srid,
+        errors=tuple(errors),
+        excluded_task_tables=snapshot_table_refs(store_cfg) if filter_sent else (),
+    )
+
+
 def build_collect_plan(
     rayon: str,
     apply_date_filter: bool,
@@ -334,6 +352,8 @@ def collect_layer_tasks(
     group_name: str,
     subgroup_name: str,
     layer_key: str,
+    *,
+    query_context: CollectQueryContext | None = None,
 ) -> tuple[list[TaskFeature], list[str]]:
     cfg = crm_tasks_config()
     store_cfg = crm_task_store_config()
@@ -344,10 +364,14 @@ def collect_layer_tasks(
         return [], errors
 
     if layer_key == FIELD_DATA_LAYER_KEY:
-        return collect_field_data_tasks(conn, rayon, apply_date_filter)
+        return collect_field_data_tasks(
+            conn, rayon, apply_date_filter, query_context=query_context
+        )
 
     if layer_key == OFFICE_DATA_LAYER_KEY:
-        return collect_office_data_tasks(conn, rayon, apply_date_filter)
+        return collect_office_data_tasks(
+            conn, rayon, apply_date_filter, query_context=query_context
+        )
 
     sub_cfg = find_subgroup_cfg(cfg, subgroup_name)
     if sub_cfg is None:
@@ -355,7 +379,11 @@ def collect_layer_tasks(
 
     if is_etl_sync_cfg(sub_cfg):
         return collect_etl_sync_subgroup_tasks(
-            conn, rayon, subgroup_name, apply_date_filter
+            conn,
+            rayon,
+            subgroup_name,
+            apply_date_filter,
+            query_context=query_context,
         )
 
     layer = registry.by_key.get(layer_key)
@@ -368,8 +396,10 @@ def collect_layer_tasks(
     if not source_field or not task_column:
         return [], [f"No task store mapping for subgroup «{subgroup_name}»"]
 
-    district_wkt, metric_srid, district_errors = _district_context(conn, rayon)
-    errors.extend(district_errors)
+    context = query_context or build_collect_query_context(conn, rayon, store_cfg)
+    district_wkt, metric_srid = context.district_wkt, context.metric_srid
+    if query_context is None:
+        errors.extend(context.errors)
     if not district_wkt:
         return [], errors
 
@@ -389,11 +419,11 @@ def collect_layer_tasks(
             district_wkt,
             metric_srid,
             scoped_geometry_id=bool(mapping.get("scoped_geometry_id")),
+            excluded_task_tables=context.excluded_task_tables,
         )
     except Exception as exc:
         return [], [f"{layer.display_name}: {exc}"]
 
-    snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     features: list[TaskFeature] = []
     for item in raw_features:
         field_observed = bool(item.get("attributes", {}).get("field_observed"))
@@ -409,8 +439,6 @@ def collect_layer_tasks(
         ):
             continue
         task_key = item.get("task_key")
-        if task_key and task_key in snapshot_keys:
-            continue
         features.append(
             TaskFeature(
                 layer_name=item["layer_name"],
@@ -420,9 +448,6 @@ def collect_layer_tasks(
                 task_key=task_key,
             )
         )
-
-    if features:
-        enrich_features_field_observed(features, conn, store_cfg, subgroup_name)
 
     return features, errors
 
@@ -487,6 +512,14 @@ def _collect_tasks_impl(
     if result.errors and not layers:
         return result, None
 
+    store_cfg = crm_task_store_config()
+    query_context = build_collect_query_context(
+        conn, rayon, store_cfg, filter_sent=filter_sent
+    )
+    result.errors.extend(query_context.errors)
+    if not query_context.district_wkt:
+        return result, None
+
     subgroup_index: dict[tuple[str, str], TaskSubgroup] = {}
     for group in result.groups:
         for subgroup in group.subgroups:
@@ -500,13 +533,13 @@ def _collect_tasks_impl(
             chunk.group_name,
             chunk.subgroup_name,
             chunk.layer_key,
+            query_context=query_context,
         )
         result.errors.extend(layer_errors)
         subgroup = subgroup_index.get((chunk.group_name, chunk.subgroup_name))
         if subgroup is not None:
             subgroup.features.extend(features)
 
-    store_cfg = crm_task_store_config()
     registry = get_registry()
     if store_cfg:
         for group in result.groups:
@@ -518,18 +551,6 @@ def _collect_tasks_impl(
                     registry,
                 )
 
-    field_features, field_errors = collect_field_data_tasks(conn, rayon, apply_date_filter)
-    result.errors.extend(field_errors)
-    field_subgroup = subgroup_index.get((CRM_GROUP_DISRUPTIONS, FIELD_DATA_SUBGROUP))
-    if field_subgroup is not None:
-        field_subgroup.features.extend(field_features)
-
-    office_features, office_errors = collect_office_data_tasks(conn, rayon, apply_date_filter)
-    result.errors.extend(office_errors)
-    office_subgroup = subgroup_index.get((CRM_GROUP_DISRUPTIONS, OFFICE_DATA_SUBGROUP))
-    if office_subgroup is not None:
-        office_subgroup.features.extend(office_features)
-
     for group in result.groups:
         for subgroup in group.subgroups:
             sub_cfg = find_subgroup_cfg(crm_tasks_config(), subgroup.name)
@@ -540,18 +561,10 @@ def _collect_tasks_impl(
                 rayon,
                 subgroup.name,
                 apply_date_filter,
+                query_context=query_context,
             )
             result.errors.extend(etl_errors)
             subgroup.features.extend(etl_features)
-
-    if filter_sent:
-        store_cfg = crm_task_store_config()
-        if store_cfg:
-            filter_sent_tasks_from_result(result, conn, store_cfg)
-
-    store_cfg = crm_task_store_config()
-    if store_cfg:
-        enrich_task_result_field_observed(result, conn, store_cfg)
 
     return result, None
 

@@ -120,10 +120,7 @@ def list_clear_tasks_for_management(
     store_cfg = crm_task_store_config()
     schema = store_cfg.get("schema", "crm")
     table = store_cfg.get("clear_table", "tasks_clear")
-    from app.crm.store import ensure_rayon_column
     from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
-
-    ensure_rayon_column(conn, schema, table)
 
     filters: list[str] = []
     params: list[Any] = []
@@ -146,7 +143,7 @@ def list_clear_tasks_for_management(
     if not rayon:
         return [_clear_task_row(r) for r in rows]
 
-    from app.crm.snapshot_loader import fetch_snapshot_rows_by_keys, snapshot_row_to_feature
+    from app.crm.snapshot_loader import _batch_resolve_snaps, fetch_snapshot_rows_by_keys
     from app.layers.geojson import fetch_district_wkt
 
     metric_crs = crm_tasks_config().get("metric_crs", "EPSG:32637")
@@ -170,15 +167,16 @@ def list_clear_tasks_for_management(
         snaps = fetch_snapshot_rows_by_keys(
             conn, store_cfg, "clear_table", "tasks_clear", list(key_set)
         )
-        snap_by_key = {s.snapshot_key: s for s in snaps}
+        features_by_key = _batch_resolve_snaps(
+            conn,
+            snaps,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            apply_district_filter=True,
+        )
         for row in need_geometry:
-            snap = snap_by_key.get(row["key"])
-            if snap is None:
-                continue
-            feat = snapshot_row_to_feature(
-                conn, snap, store_cfg, district_wkt, metric_srid, requested_rayon=rayon
-            )
-            if feat is None:
+            if row["key"] not in features_by_key:
                 continue
             matched.append(_clear_task_row(row, rayon=rayon))
     return matched
@@ -427,7 +425,6 @@ def list_field_tasks_for_assignment(
     executor: str | None = None,
     unassigned_only: bool = False,
 ) -> list[dict[str, Any]]:
-    ensure_all_executor_columns(conn)
     store_cfg = crm_task_store_config()
     schema = store_cfg.get("schema", "crm")
     table = store_cfg.get("field_table", "tasks_field")
@@ -441,10 +438,8 @@ def list_field_tasks_for_assignment(
         params.extend(exec_params)
 
     if rayon:
-        from app.crm.store import ensure_rayon_column
         from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
 
-        ensure_rayon_column(conn, schema, table)
         filters.append(sql_rayon_matches('"rayon"'))
         params.append(normalize_rayon_name(rayon))
 
@@ -464,7 +459,7 @@ def list_field_tasks_for_assignment(
     if not rayon:
         return [_field_task_row(r) for r in rows]
 
-    from app.crm.snapshot_loader import fetch_snapshot_rows_by_keys, snapshot_row_to_feature
+    from app.crm.snapshot_loader import _batch_resolve_snaps, fetch_snapshot_rows_by_keys
     from app.layers.geojson import fetch_district_wkt, normalize_rayon_name
 
     rayon_norm = normalize_rayon_name(rayon)
@@ -479,6 +474,15 @@ def list_field_tasks_for_assignment(
         conn, store_cfg, "field_table", "tasks_field", list(key_set)
     )
     snap_by_key = {s.snapshot_key: s for s in snaps}
+    untagged = [s for s in snaps if not s.rayon]
+    untagged_features = _batch_resolve_snaps(
+        conn,
+        untagged,
+        store_cfg,
+        district_wkt,
+        metric_srid,
+        apply_district_filter=True,
+    )
     matched: list[dict[str, Any]] = []
     for row in rows:
         snap = snap_by_key.get(row["key"])
@@ -488,15 +492,7 @@ def list_field_tasks_for_assignment(
         if row_rayon and normalize_rayon_name(str(row_rayon)) == rayon_norm:
             matched.append(_field_task_row(row, rayon=rayon_norm))
             continue
-        feat = snapshot_row_to_feature(
-            conn,
-            snap,
-            store_cfg,
-            district_wkt,
-            metric_srid,
-            requested_rayon=rayon_norm,
-        )
-        if feat is None:
+        if snap.snapshot_key not in untagged_features:
             continue
         matched.append(_field_task_row(row, rayon=rayon_norm))
     return matched
@@ -523,7 +519,6 @@ def list_area_tasks_for_assignment(
     executor: str | None = None,
     unassigned_only: bool = False,
 ) -> list[dict[str, Any]]:
-    ensure_all_executor_columns(conn)
     filters: list[str] = []
     params: list[Any] = []
 
@@ -584,7 +579,6 @@ def lookup_field_snapshot_by_task_key(
     conn: PgConnection,
     task_key: str,
 ) -> dict[str, Any] | None:
-    ensure_all_executor_columns(conn)
     store_cfg = crm_task_store_config()
     schema = store_cfg.get("schema", "crm")
     table = store_cfg.get("field_table", "tasks_field")

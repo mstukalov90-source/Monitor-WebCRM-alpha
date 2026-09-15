@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -24,7 +23,6 @@ from app.auth.deps import (
 from app.auth.session import (
     UserSession,
     allowed_area_statuses,
-    can_collect,
     can_manage_field_task_status,
     districts_unrestricted,
 )
@@ -82,7 +80,6 @@ from app.crm.store import (
     fetch_task_by_key,
     fetch_task_for_feature,
     relocate_task_snapshot,
-    restore_due_delayed_tasks,
     send_task_to_field,
     task_key_exists_in_snapshot,
     task_form_field_groups,
@@ -350,18 +347,12 @@ def get_active_tasks(
     check_rayon(user, rayon)
     del apply_date_filter  # date filter disabled; ETL loads full task set
     with get_connection() as conn:
-        store_cfg = crm_task_store_config()
-        try:
-            restore_due_delayed_tasks(conn, store_cfg)
-        except Exception:
-            logging.getLogger(__name__).exception("Failed to restore due delayed tasks")
         result, _ = collect_tasks(
             conn,
             rayon,
             False,
-            persist=can_collect(user.role),
+            persist=False,
             filter_sent=True,
-            login=user.login if can_collect(user.role) else "",
         )
     data = task_result_to_dict(result)
     data["task_source"] = "active"
@@ -382,11 +373,6 @@ def get_snapshot_tasks(
     check_task_source(user, source)
     check_rayon(user, rayon)
     with get_connection() as conn:
-        if source == "delay":
-            try:
-                restore_due_delayed_tasks(conn, crm_task_store_config())
-            except Exception:
-                logging.getLogger(__name__).exception("Failed to restore due delayed tasks")
         result = collect_snapshot_tasks(
             conn,
             rayon,

@@ -16,7 +16,12 @@ from psycopg2.extras import Json, RealDictCursor
 from app.config import Settings, crm_task_store_config, get_settings
 from app.crm.field_data_loader import fetch_field_report_rows
 from app.crm.snapshot_loader import _lookup_feature_for_record
-from app.crm.store import TaskRecord, _find_subgroup_for_record, fetch_task_by_key
+from app.crm.store import (
+    TaskRecord,
+    _find_subgroup_for_record,
+    fetch_task_by_key,
+    parse_scoped_business_id,
+)
 from app.letters.docx_fill import (
     DEFAULT_DESCRIPTION,
     append_map_page,
@@ -50,6 +55,12 @@ SOURCE_CUSTOMER_FIELDS = ("customer_construction", "balanceholder", "customer")
 SOURCE_EXECUTOR_FIELDS = ("general_contractor", "executor", "lead_of_work")
 SOURCE_CUSTOMER_INN_FIELDS = tuple(f"{field}_inn" for field in SOURCE_CUSTOMER_FIELDS)
 SOURCE_EXECUTOR_INN_FIELDS = tuple(f"{field}_inn" for field in SOURCE_EXECUTOR_FIELDS)
+PERMIT_SOURCE_FIELDS = (
+    "order_number",
+    "registration_number_notifications",
+    "em_call_reg_num",
+)
+PERMIT_TASK_FIELDS = ("oati_id", "earthwork_id", "avr_mos_id", "localwork_id")
 
 
 class LetterError(Exception):
@@ -264,6 +275,36 @@ def _lookup_source_party(
     name, name_key = _first_attr(attrs, *name_fields)
     inn = _attr_text(attrs, *_inn_fields_for_name(inn_fields, name_key))
     return _format_party_with_inn(name, inn)
+
+
+def _lookup_permit_reference(
+    conn: PgConnection,
+    record: TaskRecord,
+    store_cfg: dict[str, Any],
+) -> str:
+    """Order/notice numbers for item 1, preferring user-facing source attributes."""
+    values: list[str] = []
+    feature = _lookup_source_feature(conn, record, store_cfg)
+    attrs = feature.get("attributes") if feature else None
+    if isinstance(attrs, dict):
+        lower_attrs = {str(key).casefold(): value for key, value in attrs.items()}
+        for field in PERMIT_SOURCE_FIELDS:
+            raw = lower_attrs.get(field.casefold())
+            text = str(raw).strip() if raw is not None else ""
+            if text and text not in values:
+                values.append(text)
+
+    # Field/office reports carry link numbers directly on crm.tasks. Geometry-scoped
+    # ids such as ``point:123`` are internal anchors and must not leak into letters.
+    for field in PERMIT_TASK_FIELDS:
+        raw = getattr(record, field, None)
+        text = str(raw).strip() if raw is not None else ""
+        if not text:
+            continue
+        prefix, _raw_id = parse_scoped_business_id(text)
+        if prefix is None and text not in values:
+            values.append(text)
+    return ", ".join(values)
 
 
 def _lookup_customer(
@@ -638,6 +679,14 @@ def build_letter_draft(
     )
 
 
+def resolve_letter_station(client_value: str | None, record_value: str | None) -> str:
+    """Prefer client station text; empty falls back to ``crm.tasks`` sps/kgs."""
+    text = (client_value or "").strip()
+    if text:
+        return text
+    return (record_value or "").strip()
+
+
 def _validate_photo_ids(
     conn: PgConnection,
     task_key: str,
@@ -751,8 +800,9 @@ def generate_letter_docx(
     description_text = (description or "").strip() or DEFAULT_DESCRIPTION
     customer_text = (customer or "").strip()
     executor_text = (executor or "").strip()
-    sps_text = format_station_line("ТЗ ОПС", sps)
-    kgs_text = format_station_line("КГС", kgs)
+    sps_text = format_station_line("ТЗ ОПС", resolve_letter_station(sps, record.sps))
+    kgs_text = format_station_line("КГС", resolve_letter_station(kgs, record.kgs))
+    permit_reference = _lookup_permit_reference(conn, record, store_cfg)
 
     selected_violations = list(violation_names or [])
     if not selected_violations and (violation or "").strip():
@@ -780,6 +830,7 @@ def generate_letter_docx(
         "map_scale": scale,
         "sps": sps_text,
         "kgs": kgs_text,
+        "permit_reference": permit_reference,
     }
     fid = _insert_letter_row(
         conn,
@@ -804,6 +855,7 @@ def generate_letter_docx(
         photo_count=len(ordered_ids),
         sps=sps_text,
         kgs=kgs_text,
+        permit_reference=permit_reference,
     )
 
     task_geometry = _lookup_task_geometry(conn, record, store_cfg)

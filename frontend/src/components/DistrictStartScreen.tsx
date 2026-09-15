@@ -29,7 +29,9 @@ interface DistrictStartScreenProps {
   canManagePersonnel?: boolean
   canViewServerMonitor?: boolean
   canCloseViaZip?: boolean
+  canUploadGpkg?: boolean
   showAreaOrders?: boolean
+  areaOrdersRefreshKey?: number
   userLogin: string
   sessionLogin?: string
   userRole?: UserRole
@@ -39,12 +41,14 @@ interface DistrictStartScreenProps {
   onOpenPersonnel?: () => void
   onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
+  onOpenOrderRoutes?: () => void
   onOpenStatistics?: () => void
   onOpenMyClosed?: () => void
   onOpenOrderStatus?: () => void
   onOpenOznMatch?: () => void
   onOpenServerMonitor?: () => void
   onOpenZipClose?: () => void
+  onOpenGpkgUpload?: () => void
   onLogout: () => Promise<void>
 }
 
@@ -57,7 +61,9 @@ export function DistrictStartScreen({
   canManagePersonnel,
   canViewServerMonitor,
   canCloseViaZip,
+  canUploadGpkg,
   showAreaOrders = false,
+  areaOrdersRefreshKey = 0,
   userLogin,
   sessionLogin,
   userRole,
@@ -67,12 +73,14 @@ export function DistrictStartScreen({
   onOpenPersonnel,
   onOpenEmployeeLocations,
   onOpenOrderTracks,
+  onOpenOrderRoutes,
   onOpenStatistics,
   onOpenMyClosed,
   onOpenOrderStatus,
   onOpenOznMatch,
   onOpenServerMonitor,
   onOpenZipClose,
+  onOpenGpkgUpload,
   onLogout,
 }: DistrictStartScreenProps) {
   const [districts, setDistricts] = useState<string[]>([])
@@ -152,7 +160,7 @@ export function DistrictStartScreen({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [areaOrdersRefreshKey])
 
   useEffect(() => {
     if (!canManagePersonnel) {
@@ -219,6 +227,11 @@ export function DistrictStartScreen({
                 Треки заказов
               </button>
             )}
+            {(canManagePersonnel || userRole === 'field') && onOpenOrderRoutes && (
+              <button type="button" className="btn" onClick={onOpenOrderRoutes}>
+                Маршруты обследования
+              </button>
+            )}
             {canManagePersonnel && onOpenOrderStatus && (
               <button type="button" className="btn" onClick={onOpenOrderStatus}>
                 Состояние заказов
@@ -247,6 +260,11 @@ export function DistrictStartScreen({
             {canCloseViaZip && onOpenZipClose && (
               <button type="button" className="btn" onClick={onOpenZipClose}>
                 Закрытие через ZIP
+              </button>
+            )}
+            {canUploadGpkg && onOpenGpkgUpload && (
+              <button type="button" className="btn" onClick={onOpenGpkgUpload}>
+                Загрузить GeoPackage
               </button>
             )}
             <button type="button" className="btn" onClick={() => void onLogout()}>

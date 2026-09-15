@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
 from xml.etree import ElementTree as ET
 
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
 from app.auth.deps import require_manager_or_admin
 from app.auth.session import UserSession
 from app.letters.docx_fill import (
@@ -63,11 +65,13 @@ from app.letters.oati import (
     _lookup_engineering,
     _lookup_executor,
     _lookup_mos_simple_address,
+    _lookup_permit_reference,
     _validate_photo_ids,
     _validate_violation_names,
     merge_engineering_values,
     pick_default_address,
     resolve_incident_datetime,
+    resolve_letter_station,
 )
 from app.crm.schemas import OatiLetterGenerateRequest
 from pydantic import ValidationError
@@ -143,6 +147,7 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("АО Заказчик", text)
         self.assertIn("Исполнитель:", text)
         self.assertIn("ООО Строй", text)
+        self.assertIn("№ ордера/уведомления: не определено", text)
         self.assertIn("описание А", text)
         self.assertIn("незаконности земляных работ при строительстве инженерных коммуникаций", text)
         self.assertIn("Описание характера работ", text)
@@ -156,7 +161,10 @@ class DocxFillTests(unittest.TestCase):
         self.assertNotIn("7. Признаки незаконности", text)
         self.assertIn("• Отсутствие КГС", text)
         self.assertIn("• Отсутствие уведомления", text)
-        self.assertIn("ОАТИ города Москвы", text)
+        self.assertIn(
+            "Объединению административно-технических инспекций города Москвы",
+            text,
+        )
         self.assertIn("Фотофиксация: 3 экз.", text)
         self.assertIn("Ситуационный план места проведения земельных работ", text)
         self.assertIn("О предоставлении информации", text)
@@ -284,6 +292,7 @@ class DocxFillTests(unittest.TestCase):
             rels = zf.read("word/_rels/document.xml.rels").decode("utf-8")
         self.assertIn("yandex.ru/maps", rels)
         self.assertGreaterEqual(_docx_image_count(data), 2)
+        self.assertEqual(_docx_page_break_count(data), 0)
         self.assertTrue(CAPTION_ICON_PATH.is_file())
 
     def test_fill_station_lines_and_section_headers(self) -> None:
@@ -308,6 +317,30 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("ТЗ ОПС: 501", joined)
         self.assertIn("КГС: не определено", joined)
         self.assertNotIn("7. Признаки незаконности", joined)
+
+    def test_fill_adds_optional_permit_reference_to_item_one(self) -> None:
+        doc = fill_letter_template(
+            street="ул. А",
+            today="24.07.2026",
+            fid=1,
+            customer="АО Заказчик",
+            executor="ООО Исполнитель",
+            permit_reference="ОРД-1, УВ-2",
+            incident_datetime="",
+            address="",
+            coordinates="",
+            engineering="",
+            description="",
+            violation="",
+            photo_count=0,
+        )
+        item_one = next(
+            paragraph
+            for paragraph in doc.paragraphs
+            if "1. Сведения о производителе работ" in paragraph.text
+        )
+        self.assertIn("№ ордера/уведомления: ОРД-1, УВ-2", item_one.text)
+        self.assertEqual(item_one.alignment, WD_ALIGN_PARAGRAPH.LEFT)
 
     def test_photo_pages_pack_three_landscape(self) -> None:
         from docx import Document
@@ -379,11 +412,28 @@ class DocxFillTests(unittest.TestCase):
         self.assertEqual(format_station_line("КГС", "  "), "КГС: не определено")
         self.assertEqual(format_station_line("ТЗ ОПС", "123"), "ТЗ ОПС: 123")
         self.assertEqual(format_station_line("ТЗ ОПС", "ТЗ ОПС: 123"), "ТЗ ОПС: 123")
+        self.assertEqual(resolve_letter_station("", "501"), "501")
+        self.assertEqual(resolve_letter_station("  ", "501"), "501")
+        self.assertEqual(resolve_letter_station(None, "501"), "501")
+        self.assertEqual(
+            format_station_line("ТЗ ОПС", resolve_letter_station("", "501")),
+            "ТЗ ОПС: 501",
+        )
+        self.assertEqual(
+            format_station_line("КГС", resolve_letter_station("", "12")),
+            "КГС: 12",
+        )
+        self.assertEqual(resolve_letter_station("не определено", "501"), "не определено")
+        self.assertEqual(resolve_letter_station("ТЗ ОПС: 9", "501"), "ТЗ ОПС: 9")
+        self.assertEqual(
+            format_station_line("ТЗ ОПС", resolve_letter_station("", None)),
+            "ТЗ ОПС: не определено",
+        )
         self.assertEqual(
             format_violation_block(["A", "B"]),
             "• A\n• B",
         )
-        self.assertEqual(format_violation_block([]), "__________")
+        self.assertEqual(format_violation_block([]), "не определено")
         self.assertEqual(
             DEFAULT_DESCRIPTION,
             "Земляные работы при строительстве подземных коммуникаций.",
@@ -394,16 +444,25 @@ class DocxFillTests(unittest.TestCase):
         self.assertIn("Исполнитель:", both)
         self.assertIn("ООО Исполнитель", both)
         self.assertIn("\n", both)
+        self.assertNotIn("\t", both)
+        with_reference = format_producer_block(
+            "АО Заказчик", "ООО Исполнитель", "ОРД-1, УВ-2"
+        )
+        self.assertIn("№ ордера/уведомления: ", with_reference)
+        self.assertIn("ОРД-1, УВ-2", with_reference)
         only_c = format_producer_block("АО Заказчик", "")
         self.assertIn("Заказчик:", only_c)
-        self.assertNotIn("Исполнитель:", only_c)
+        self.assertIn("Исполнитель: ", only_c)
+        self.assertIn("не определено", only_c)
         only_e = format_producer_block("", "ООО Исполнитель")
         self.assertIn("Исполнитель:", only_e)
-        self.assertNotIn("Заказчик:", only_e)
+        self.assertIn("Заказчик: ", only_e)
         empty = format_producer_block("", "")
-        self.assertIn("__________", empty)
-        self.assertNotIn("Заказчик:", empty)
-        self.assertNotIn("Исполнитель:", empty)
+        self.assertIn("Заказчик:", empty)
+        self.assertIn("Исполнитель:", empty)
+        self.assertIn("№ ордера/уведомления:", empty)
+        self.assertNotIn("__________", empty)
+        self.assertEqual(empty.count("не определено"), 3)
 
     def test_template_has_no_empty_tables(self) -> None:
         from docx import Document
@@ -415,7 +474,10 @@ class DocxFillTests(unittest.TestCase):
                 p.text for row in table.rows for cell in row.cells for p in cell.paragraphs
             ).strip()
             self.assertTrue(text, msg="empty table left in letter template")
-        self.assertIn("ОАТИ города Москвы", doc.tables[0].cell(0, 1).text)
+        self.assertIn(
+            "Объединению административно-технических инспекций города Москвы",
+            doc.tables[0].cell(0, 1).text,
+        )
 
 
 class MapScaleTests(unittest.TestCase):
@@ -558,6 +620,53 @@ class GeocodeFormatTests(unittest.TestCase):
 
 
 class SourceLookupTests(unittest.TestCase):
+    def test_permit_reference_prefers_source_numbers_and_skips_scoped_ids(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(
+            oati_id="point:101",
+            earthwork_id="УВ-2",
+            avr_mos_id=None,
+            localwork_id=None,
+        )
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"order_number": "ОРД-1"}},
+        ):
+            self.assertEqual(
+                _lookup_permit_reference(conn, record, {}),
+                "ОРД-1, УВ-2",
+            )
+
+    def test_permit_reference_empty_when_numbers_missing(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(
+            oati_id=None,
+            earthwork_id=None,
+            avr_mos_id=None,
+            localwork_id=None,
+        )
+        with patch("app.letters.oati._lookup_source_feature", return_value=None):
+            self.assertEqual(_lookup_permit_reference(conn, record, {}), "")
+
+    def test_permit_reference_skips_data_mos_global_id(self) -> None:
+        conn = MagicMock()
+        record = MagicMock(
+            oati_id=None,
+            earthwork_id=None,
+            avr_mos_id=None,
+            localwork_id=None,
+        )
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"global_id": "605621234", "order_number": "ОРД-1"}},
+        ):
+            self.assertEqual(_lookup_permit_reference(conn, record, {}), "ОРД-1")
+        with patch(
+            "app.letters.oati._lookup_source_feature",
+            return_value={"attributes": {"global_id": "605621234"}},
+        ):
+            self.assertEqual(_lookup_permit_reference(conn, record, {}), "")
+
     def test_executor_from_source_general_contractor(self) -> None:
         conn = MagicMock()
         record = MagicMock(key="task-1")
@@ -689,7 +798,7 @@ class SourceLookupTests(unittest.TestCase):
         ):
             self.assertEqual(_lookup_executor(conn, record, {}), "ООО Ромашка ИНН: 7700000003")
 
-    def test_fill_omits_empty_producer_labels(self) -> None:
+    def test_fill_uses_undefined_for_empty_producer_fields(self) -> None:
         doc = fill_letter_template(
             street="ул. А",
             today="24.07.2026",
@@ -706,7 +815,10 @@ class SourceLookupTests(unittest.TestCase):
         )
         joined = "\n".join(p.text for p in doc.paragraphs)
         self.assertIn("Заказчик: Только заказчик", joined)
-        self.assertNotIn("Исполнитель:", joined)
+        self.assertIn("Исполнитель: не определено", joined)
+        self.assertIn("№ ордера/уведомления: не определено", joined)
+        self.assertIn("не определено", joined)
+        self.assertNotIn("__________", joined)
 
         doc2 = fill_letter_template(
             street="ул. А",
@@ -724,7 +836,7 @@ class SourceLookupTests(unittest.TestCase):
         )
         joined2 = "\n".join(p.text for p in doc2.paragraphs)
         self.assertIn("Исполнитель: Только исполнитель", joined2)
-        self.assertNotIn("Заказчик:", joined2)
+        self.assertIn("Заказчик: не определено", joined2)
 
     def test_engineering_from_engineering_net_obj_not_type(self) -> None:
         conn = MagicMock()

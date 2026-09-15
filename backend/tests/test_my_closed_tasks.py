@@ -110,8 +110,7 @@ class FetchMyClosedTasksTests(unittest.TestCase):
         conn = MagicMock()
         conn.cursor.return_value = _cursor_cm(cursor)
 
-        with patch("app.crm.my_closed_tasks.ensure_rayon_column", return_value=True):
-            rows = _fetch_closed_snapshot_rows(conn, {}, "office1")
+        rows = _fetch_closed_snapshot_rows(conn, {}, "office1")
 
         self.assertEqual(rows, [])
         self.assertGreaterEqual(cursor.execute.call_count, 3)

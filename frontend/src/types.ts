@@ -71,6 +71,23 @@ export interface ZipCloseApplyResult {
   items: ZipCloseItem[]
 }
 
+export interface GpkgAreaImportItem {
+  key: string
+  status: string | null
+  task_number: string | null
+  area: number | null
+  rayon: string | null
+  okrug_shor: string | null
+}
+
+export interface GpkgAreaImportResult {
+  inserted: number
+  skipped: number
+  layer: string
+  srid: number
+  items: GpkgAreaImportItem[]
+}
+
 export interface DistrictOption {
   gid: number
   rayon: string
@@ -376,6 +393,7 @@ export type AppView =
   | 'field_score'
   | 'server_monitor'
   | 'ozn_match'
+  | 'order_routes'
 
 export type FieldScoreValue = 'unsatisfactory' | 'satisfactory' | 'good'
 
@@ -434,6 +452,42 @@ export interface FieldScoreContext {
   buffer_meters: number
   saved: FieldScoreSaved | null
   errors: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Order route (OSRM)
+// ---------------------------------------------------------------------------
+
+export interface OrderRouteSegment {
+  profile: string
+  chunk_index: number
+  distance_m: number
+  duration_s: number
+  waypoint_count: number
+}
+
+export interface OrderRouteOrder {
+  task_number: string | null
+  rayon: string | null
+  geometry?: GeoJSON.Geometry | null
+}
+
+export interface OrderRouteContext {
+  order_key: string
+  order: OrderRouteOrder
+  route_geometry?: GeoJSON.Geometry | null
+  buffer_geometry?: GeoJSON.Geometry | null
+  uncovered_geometry?: GeoJSON.Geometry | null
+  segments: OrderRouteSegment[]
+  task_coverage_pct: number | null
+  polygon_coverage_pct: number | null
+  tasks_total: number
+  tasks_covered: number | null
+  buffer_m: number
+  total_distance_m: number | null
+  total_duration_s: number | null
+  built_by: string | null
+  built_at: string | null
 }
 
 export interface TrackFeature {
@@ -1331,6 +1385,9 @@ export function buildTaskPopupHtml(
   } else {
     lines.push(
       `<button type="button" class="btn map-popup-view-area" data-map-action="view-area-order">Просмотр заказа</button>`,
+    )
+    lines.push(
+      `<button type="button" class="btn map-popup-build-route" data-map-action="build-area-route">Маршрут обследования</button>`,
     )
   }
 

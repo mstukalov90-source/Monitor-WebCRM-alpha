@@ -660,3 +660,44 @@ class OatiLetterGenerateOut(BaseModel):
     fid: int
     filename: str
     download_url: str
+
+
+# ---------------------------------------------------------------------------
+# Order route (OSRM)
+# ---------------------------------------------------------------------------
+
+class OrderRouteBuildRequest(BaseModel):
+    start_lng: float | None = None
+    start_lat: float | None = None
+
+
+class OrderRouteSegmentOut(BaseModel):
+    profile: str = "foot"
+    chunk_index: int = 0
+    distance_m: float = 0
+    duration_s: float = 0
+    waypoint_count: int = 0
+
+
+class OrderRouteOrderOut(BaseModel):
+    task_number: str | None = None
+    rayon: str | None = None
+    geometry: dict | None = None
+
+
+class OrderRouteContextOut(BaseModel):
+    order_key: str
+    order: OrderRouteOrderOut
+    route_geometry: dict | None = None
+    buffer_geometry: dict | None = None
+    uncovered_geometry: dict | None = None
+    segments: list[OrderRouteSegmentOut] = Field(default_factory=list)
+    task_coverage_pct: float | None = None
+    polygon_coverage_pct: float | None = None
+    tasks_total: int = 0
+    tasks_covered: int | None = None
+    buffer_m: float = 100
+    total_distance_m: float | None = None
+    total_duration_s: float | None = None
+    built_by: str | None = None
+    built_at: str | None = None

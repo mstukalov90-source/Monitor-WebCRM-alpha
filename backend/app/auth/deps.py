@@ -122,6 +122,16 @@ def require_office_or_admin(user: UserSession = Depends(get_current_user)) -> Us
     return user
 
 
+def require_order_route_access(user: UserSession = Depends(get_current_user)) -> UserSession:
+    """Field (Android), manager and admin may build/read survey routes."""
+    if user.role not in ("field", "manager", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Маршруты обследования недоступны для вашей роли",
+        )
+    return user
+
+
 def check_rayon(user: UserSession, rayon: str) -> None:
     with get_connection() as conn:
         if not is_rayon_allowed(conn, user, rayon):

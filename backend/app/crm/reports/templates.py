@@ -42,7 +42,6 @@ def ensure_report_templates_table(conn: PgConnection) -> None:
 
 
 def list_templates(conn: PgConnection, user_login: str) -> list[dict[str, Any]]:
-    ensure_report_templates_table(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """
@@ -155,7 +154,6 @@ def get_template(
     user_login: str,
     template_id: str,
 ) -> dict[str, Any] | None:
-    ensure_report_templates_table(conn)
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(
             """

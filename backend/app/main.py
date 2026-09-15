@@ -18,9 +18,11 @@ from app.routes import (
     employee_locations,
     excel_uploads,
     field_score,
+    gpkg_area,
     layers,
     letters,
     monitor,
+    order_routes,
     order_tracks,
     ozn_match,
     personnel,
@@ -79,11 +81,13 @@ app.include_router(order_tracks.router)
 app.include_router(ozn_match.router)
 app.include_router(employee_locations.router)
 app.include_router(field_score.router)
+app.include_router(order_routes.router)
 app.include_router(photos.router)
 app.include_router(personnel.router)
 app.include_router(reports.router)
 app.include_router(monitor.router)
 app.include_router(zip_close.router)
+app.include_router(gpkg_area.router)
 
 
 @app.middleware("http")

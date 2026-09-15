@@ -34,6 +34,24 @@ def _is_data_mos_items_table(qualified_table: str) -> bool:
     return bool(_ITEMS_LINK_TABLE_RE.match(qualified_table))
 
 
+def _source_table_names(value: Any) -> tuple[str, ...]:
+    """Normalize legacy TEXT and current text[] source_table values."""
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).replace('"', "").strip() for item in value if item)
+    text = str(value).strip()
+    if text.startswith("{") and text.endswith("}"):
+        text = text[1:-1]
+        return tuple(
+            item.strip().strip('"').replace('"', "")
+            for item in text.split(",")
+            if item.strip()
+        )
+    normalized = text.replace('"', "").strip()
+    return (normalized,) if normalized else ()
+
+
 def _parent_table_from_split(qualified_table: str) -> str | None:
     bare = qualified_table.replace('"', "")
     if "." not in bare:
@@ -161,6 +179,7 @@ def fetch_task_attributes_in_district(
     metric_srid: int = 32637,
     *,
     scoped_geometry_id: bool = False,
+    excluded_task_tables: tuple[tuple[str, str], ...] = (),
 ) -> list[dict[str, Any]]:
     """Атрибуты объектов в районе, которые уже есть в crm.tasks."""
     from app.crm.store import scoped_business_id_expr
@@ -171,30 +190,77 @@ def fetch_task_attributes_in_district(
     spatial, params = _district_spatial_filter(layer, district_wkt, metric_srid, table_alias="t")
 
     business_id_expr = scoped_business_id_expr(layer, source_field, scoped_geometry_id)
-    filters = [
+    common_filters = [
         f't."{geom_col}" IS NOT NULL',
         spatial,
-        f't."{source_field}" IS NOT NULL',
-        f'{business_id_expr} <> \'\'',
-        f'ct."{task_column}" IS NOT NULL',
     ]
+    common_filters.extend(
+        f'NOT EXISTS (SELECT 1 FROM "{schema}"."{snapshot_table}" snap '
+        f'WHERE snap.task_key = ct.key)'
+        for schema, snapshot_table in excluded_task_tables
+    )
     if layer.sql_filter:
-        filters.append(f"({layer.sql_filter})")
+        common_filters.append(f"({layer.sql_filter})")
 
-    where = " AND ".join(filters)
-    query = f"""
-        SELECT DISTINCT ON (ct.key)
-               ct.key::text AS task_key,
-               ct.field_observed,
-               {attrs_sql} AS attrs,
-               ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
-        FROM {table} t
-        {parent_join}
-        INNER JOIN "{tasks_schema}"."{tasks_table}" ct
-            ON ct."{task_column}" = {business_id_expr}
-        WHERE {where}
-        ORDER BY ct.key, t."{layer.primary_key or 'id'}"
+    select_columns = f"""
+        ct.key::text AS task_key,
+        ct.field_observed,
+        {attrs_sql} AS attrs,
+        ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry,
+        t."{layer.primary_key or 'id'}"::text AS source_order
     """
+    if _is_data_mos_items_table(table):
+        direct_filters = [*common_filters, "t.task_key IS NOT NULL"]
+        legacy_filters = [
+            *common_filters,
+            "t.task_key IS NULL",
+            f't."{source_field}" IS NOT NULL',
+            f'{business_id_expr} <> \'\'',
+            f'ct."{task_column}" IS NOT NULL',
+        ]
+        query = f"""
+            SELECT DISTINCT ON (task_key)
+                   task_key, field_observed, attrs, geometry
+            FROM (
+                SELECT {select_columns}
+                FROM {table} t
+                {parent_join}
+                INNER JOIN "{tasks_schema}"."{tasks_table}" ct
+                    ON ct.key = t.task_key
+                WHERE {' AND '.join(direct_filters)}
+
+                UNION ALL
+
+                SELECT {select_columns}
+                FROM {table} t
+                {parent_join}
+                INNER JOIN "{tasks_schema}"."{tasks_table}" ct
+                    ON ct."{task_column}" = {business_id_expr}
+                WHERE {' AND '.join(legacy_filters)}
+            ) candidates
+            ORDER BY task_key, source_order
+        """
+        params = [*params, *params]
+    else:
+        filters = [
+            *common_filters,
+            f't."{source_field}" IS NOT NULL',
+            f'{business_id_expr} <> \'\'',
+            f'ct."{task_column}" IS NOT NULL',
+        ]
+        query = f"""
+            SELECT DISTINCT ON (ct.key)
+                   ct.key::text AS task_key,
+                   ct.field_observed,
+                   {attrs_sql} AS attrs,
+                   ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+            FROM {table} t
+            {parent_join}
+            INNER JOIN "{tasks_schema}"."{tasks_table}" ct
+                ON ct."{task_column}" = {business_id_expr}
+            WHERE {' AND '.join(filters)}
+            ORDER BY ct.key, t."{layer.primary_key or 'id'}"
+        """
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(query, params)
@@ -267,7 +333,7 @@ def fetch_features_by_business_ids(
     layer: LayerDef,
     source_field: str,
     business_ids: list[str],
-    district_wkt: str,
+    district_wkt: str | None,
     metric_srid: int = 32637,
 ) -> list[dict[str, Any]]:
     """Геометрии только для указанных business_id в пределах района."""
@@ -276,13 +342,14 @@ def fetch_features_by_business_ids(
 
     geom_col = layer.geometry_column
     table = layer.qualified_table
-    spatial, spatial_params = _district_spatial_filter(layer, district_wkt, metric_srid)
-
     filters = [
         f'"{geom_col}" IS NOT NULL',
-        spatial,
         f'"{source_field}"::text = ANY(%s)',
     ]
+    spatial_params: list[Any] = []
+    if district_wkt is not None:
+        spatial, spatial_params = _district_spatial_filter(layer, district_wkt, metric_srid)
+        filters.insert(1, spatial)
     if layer.sql_filter:
         filters.append(f"({layer.sql_filter})")
 
@@ -309,6 +376,148 @@ def fetch_features_by_business_ids(
             "geometry": row["geometry"],
             "business_id": str(attrs.get(source_field, "")),
         })
+    return features
+
+
+def fetch_features_by_task_keys(
+    conn: PgConnection,
+    layer: LayerDef,
+    task_keys: list[str],
+    district_wkt: str | None,
+    metric_srid: int = 32637,
+) -> list[dict[str, Any]]:
+    """Batch-load linked items rows by task_key, optionally within a district."""
+    if not task_keys or not _is_data_mos_items_table(layer.qualified_table):
+        return []
+
+    geom_col = layer.geometry_column
+    attrs_sql, parent_join = _attrs_sql(layer)
+    filters = [
+        f't."{geom_col}" IS NOT NULL',
+        "t.task_key = ANY(%s::uuid[])",
+    ]
+    params: list[Any] = [task_keys]
+    if district_wkt is not None:
+        spatial, spatial_params = _district_spatial_filter(
+            layer, district_wkt, metric_srid, table_alias="t"
+        )
+        filters.append(spatial)
+        params.extend(spatial_params)
+    if layer.sql_filter:
+        filters.append(f"({layer.sql_filter})")
+
+    query = f"""
+        SELECT t.task_key::text AS task_key,
+               {attrs_sql} AS attrs,
+               ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+        FROM {layer.qualified_table} t
+        {parent_join}
+        WHERE {' AND '.join(filters)}
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+    return [
+        {
+            "task_key": str(row["task_key"]),
+            "layer_name": layer.display_name,
+            "layer_key": layer.layer_key,
+            "attributes": dict(row["attrs"]) if row["attrs"] else {},
+            "geometry": row["geometry"],
+        }
+        for row in rows
+    ]
+
+
+def fetch_features_by_source_anchors(
+    conn: PgConnection,
+    task_keys: list[str],
+    store_cfg: dict[str, Any],
+    district_wkt: str | None,
+    metric_srid: int = 32637,
+    *,
+    allowed_layers: list[LayerDef] | None = None,
+) -> list[dict[str, Any]]:
+    """Batch-load source rows referenced by scalar or array source anchors."""
+    if not task_keys:
+        return []
+
+    from app.layers.registry import get_registry
+
+    tasks_schema = store_cfg.get("schema", "crm")
+    tasks_table = store_cfg.get("table", "tasks")
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f'''
+            SELECT key::text AS task_key, source_table, source_row_id
+            FROM "{tasks_schema}"."{tasks_table}"
+            WHERE key = ANY(%s::uuid[])
+              AND source_table IS NOT NULL
+              AND source_row_id IS NOT NULL
+            ''',
+            (task_keys,),
+        )
+        anchors = cur.fetchall()
+
+    registry = get_registry()
+    source_layers = (
+        allowed_layers
+        if allowed_layers is not None
+        else list(registry.by_key.values())
+    )
+    layers_by_table = {
+        layer.qualified_table.replace('"', ''): layer
+        for layer in source_layers
+    }
+    grouped: dict[str, dict[Any, list[str]]] = {}
+    for anchor in anchors:
+        for table in _source_table_names(anchor.get("source_table")):
+            layer = layers_by_table.get(table)
+            if layer is None:
+                continue
+            grouped.setdefault(layer.layer_key, {}).setdefault(
+                anchor["source_row_id"], []
+            ).append(str(anchor["task_key"]))
+
+    features: list[dict[str, Any]] = []
+    for layer_key, row_tasks in grouped.items():
+        layer = registry.by_key[layer_key]
+        geom_col = layer.geometry_column
+        attrs_sql, parent_join = _attrs_sql(layer)
+        filters = [f't."{geom_col}" IS NOT NULL', "t.id = ANY(%s)"]
+        params: list[Any] = [list(row_tasks.keys())]
+        if district_wkt is not None:
+            spatial, spatial_params = _district_spatial_filter(
+                layer, district_wkt, metric_srid, table_alias="t"
+            )
+            filters.append(spatial)
+            params.extend(spatial_params)
+        if layer.sql_filter:
+            filters.append(f"({layer.sql_filter})")
+
+        query = f'''
+            SELECT t.id AS source_row_id,
+                   {attrs_sql} AS attrs,
+                   ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+            FROM {layer.qualified_table} t
+            {parent_join}
+            WHERE {' AND '.join(filters)}
+        '''
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        for row in rows:
+            for task_key in row_tasks.get(row["source_row_id"], []):
+                features.append(
+                    {
+                        "task_key": task_key,
+                        "layer_name": layer.display_name,
+                        "layer_key": layer.layer_key,
+                        "attributes": dict(row["attrs"]) if row["attrs"] else {},
+                        "geometry": row["geometry"],
+                    }
+                )
     return features
 
 
@@ -504,7 +713,7 @@ def fetch_feature_by_source_anchor(
     task_key: str,
     store_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Full feature via crm.tasks.source_table + source_row_id when items.task_key is missing."""
+    """Full feature via scalar/TEXT[] crm.tasks source anchors."""
     from app.layers.registry import get_registry
 
     schema = "crm"
@@ -527,53 +736,42 @@ def fetch_feature_by_source_anchor(
 
     if not anchor:
         return None
-    source_table = anchor.get("source_table")
     source_row_id = anchor.get("source_row_id")
-    if source_table is None or source_row_id is None:
-        return None
-    if not _is_data_mos_items_table(str(source_table)):
+    source_tables = _source_table_names(anchor.get("source_table"))
+    if not source_tables or source_row_id is None:
         return None
 
     registry = get_registry()
-    layer = next(
-        (layer for layer in registry.by_key.values() if layer.qualified_table == str(source_table)),
-        None,
-    )
-    if layer is None:
-        # source_table may be stored without quotes; try matching table_name.
-        bare = str(source_table).replace('"', "")
-        layer = next(
-            (
-                layer
-                for layer in registry.by_key.values()
-                if layer.qualified_table.replace('"', "") == bare
-            ),
-            None,
-        )
-    if layer is None:
-        return None
-
-    geom_col = layer.geometry_column
-    attrs_sql, parent_join = _attrs_sql(layer)
-    query = f"""
-        SELECT {attrs_sql} AS attrs,
-               ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
-        FROM {layer.qualified_table} t
-        {parent_join}
-        WHERE t.id = %s
-        LIMIT 1
-    """
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(query, (source_row_id,))
-        row = cur.fetchone()
-    if not row or not row.get("geometry"):
-        return None
-    return {
-        "layer_name": layer.display_name,
-        "layer_key": layer.layer_key,
-        "attributes": dict(row["attrs"]) if row["attrs"] else {},
-        "geometry": row["geometry"],
+    layers_by_table = {
+        layer.qualified_table.replace('"', ""): layer
+        for layer in registry.by_key.values()
     }
+    for source_table in source_tables:
+        layer = layers_by_table.get(source_table)
+        if layer is None:
+            continue
+        geom_col = layer.geometry_column
+        attrs_sql, parent_join = _attrs_sql(layer)
+        query = f"""
+            SELECT {attrs_sql} AS attrs,
+                   ST_AsGeoJSON(ST_Transform(t."{geom_col}", 4326))::json AS geometry
+            FROM {layer.qualified_table} t
+            {parent_join}
+            WHERE t.id = %s
+            LIMIT 1
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, (source_row_id,))
+            row = cur.fetchone()
+        if not row or not row.get("geometry"):
+            continue
+        return {
+            "layer_name": layer.display_name,
+            "layer_key": layer.layer_key,
+            "attributes": dict(row["attrs"]) if row["attrs"] else {},
+            "geometry": row["geometry"],
+        }
+    return None
 
 
 def resolve_feature_for_task_key(

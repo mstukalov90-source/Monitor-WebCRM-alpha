@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date, timedelta
 from typing import Any
 
@@ -10,10 +9,7 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.crm.collector import TaskFeature, TaskGroup, TaskResult, TaskSubgroup
-from app.crm.executor import ensure_executor_column
 from app.crm.user_audit import make_user_audit, user_audit_migration_statements
-
-logger = logging.getLogger(__name__)
 
 AREA_LAYER_KEY = "tasks_area"
 AREA_LAYER_NAME = "Площадные заказы"
@@ -90,13 +86,6 @@ def fetch_tasks_area_geojson(
     *,
     field_executor_login: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        clear_stale_analise_locks(conn)
-        clear_stale_pre_analise_locks(conn)
-    except Exception:
-        conn.rollback()
-        logger.exception("Failed to reset stale analise/pre_analise locks")
-
     from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
 
     filters = ['t.geom IS NOT NULL']
@@ -118,7 +107,6 @@ def fetch_tasks_area_geojson(
         filters.append(f't.status IN ({placeholders})')
         params.extend(statuses)
     if field_executor_login is not None:
-        ensure_executor_column(conn, TASKS_AREA_SCHEMA, TASKS_AREA_TABLE)
         filters.append('(t.executor IS NULL OR t.executor = %s)')
         params.append(field_executor_login)
 

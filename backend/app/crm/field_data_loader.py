@@ -12,7 +12,7 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.config import crm_task_store_config, crm_tasks_config
-from app.crm.store import FIELD_DATA_SUBGROUP, TASK_ID_COLUMNS, fetch_snapshot_task_keys
+from app.crm.store import FIELD_DATA_SUBGROUP, TASK_ID_COLUMNS, snapshot_table_refs
 from app.layers.geojson import fetch_district_wkt
 
 FIELD_DATA_LAYER_KEY = "field_data"
@@ -185,6 +185,8 @@ def collect_field_data_tasks(
     conn: PgConnection,
     rayon: str,
     apply_date_filter: bool,
+    *,
+    query_context: Any | None = None,
 ):
     from app.crm.collector import TaskFeature
 
@@ -198,12 +200,14 @@ def collect_field_data_tasks(
     if mapping.get("source") != "field_data":
         return [], []
 
-    try:
-        mark_discovered_field_data_tasks(conn, store_cfg)
-    except Exception as exc:
-        return [], [f"{FIELD_DATA_LAYER_NAME}: не удалось обновить is_field_data: {exc}"]
-
-    district_wkt, metric_srid, errors = _district_context(conn, rayon)
+    if query_context is None:
+        district_wkt, metric_srid, errors = _district_context(conn, rayon)
+        excluded_task_tables = snapshot_table_refs(store_cfg)
+    else:
+        district_wkt = query_context.district_wkt
+        metric_srid = query_context.metric_srid
+        errors = []
+        excluded_task_tables = query_context.excluded_task_tables
     if not district_wkt:
         return [], errors
 
@@ -212,6 +216,11 @@ def collect_field_data_tasks(
     tasks_key_col = mapping.get("reports_tasks_key", "tasks_key")
     geom_col = mapping.get("reports_geometry", "point")
 
+    snapshot_filters = "\n".join(
+        f'          AND NOT EXISTS (SELECT 1 FROM "{schema}"."{table}" snap '
+        f'WHERE snap.task_key = t.key)'
+        for schema, table in excluded_task_tables
+    )
     query = f"""
         SELECT t.key, t.type, t.field_observed, t.is_field_data,
                t.oati_id, t.earthwork_id, t.localwork_id, t.avr_mos_id,
@@ -223,13 +232,16 @@ def collect_field_data_tasks(
         WHERE t.is_field_data IS TRUE
           AND t.field_observed IS TRUE
           AND r."{geom_col}" IS NOT NULL
+          {snapshot_filters}
           AND ST_Intersects(
-              ST_Transform(r."{geom_col}", {metric_srid}),
-              ST_GeomFromText(%s, {metric_srid})
+              r."{geom_col}",
+              ST_Transform(
+                  ST_GeomFromText(%s, {metric_srid}),
+                  ST_SRID(r."{geom_col}")
+              )
           )
     """
 
-    snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     features: list[TaskFeature] = []
 
     try:
@@ -237,8 +249,6 @@ def collect_field_data_tasks(
             cur.execute(query, (district_wkt,))
             for row in cur.fetchall():
                 task_key = str(row["key"])
-                if task_key in snapshot_keys:
-                    continue
                 geometry = row.get("geometry")
                 if isinstance(geometry, str):
                     geometry = json.loads(geometry)

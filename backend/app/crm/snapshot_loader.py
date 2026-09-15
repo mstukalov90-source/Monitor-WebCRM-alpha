@@ -36,11 +36,13 @@ from app.crm.store import (
     TASK_ID_COLUMNS,
     TaskRecord,
     _find_subgroup_for_record,
-    enrich_task_result_field_observed,
 )
 from app.layers.geojson import (
+    _is_data_mos_items_table,
     fetch_district_wkt,
     fetch_features_by_business_ids,
+    fetch_features_by_source_anchors,
+    fetch_features_by_task_keys,
     geometry_in_district,
     lookup_feature,
     normalize_rayon_name,
@@ -176,25 +178,11 @@ def fetch_snapshot_rows(
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     crm_cfg = crm_tasks_config()
     include_executor = table == "tasks_field"
-    from app.crm.store import ensure_rayon_column, ensure_task_snapshot_table
-
-    if table == "tasks_delay":
-        ensure_task_snapshot_table(conn, store_cfg, config_key, default_table)
-    ensure_rayon_column(conn, schema, table)
-    if include_executor:
-        from app.crm.executor import ensure_executor_column
-        from app.crm.store import ensure_office_comment_column
-
-        ensure_executor_column(conn, schema, table)
-        ensure_office_comment_column(conn, schema, table)
     col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
 
     filters: list[str] = []
     params: list[Any] = []
     if field_executor_login is not None and table == "tasks_field":
-        from app.crm.executor import ensure_executor_column
-
-        ensure_executor_column(conn, schema, table)
         filters.append("(executor IS NULL OR executor = %s)")
         params.append(field_executor_login)
     if rayon:
@@ -227,15 +215,6 @@ def fetch_snapshot_rows_by_keys(
     schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
     crm_cfg = crm_tasks_config()
     include_executor = table == "tasks_field"
-    from app.crm.store import ensure_rayon_column
-
-    ensure_rayon_column(conn, schema, table)
-    if include_executor:
-        from app.crm.executor import ensure_executor_column
-        from app.crm.store import ensure_office_comment_column
-
-        ensure_executor_column(conn, schema, table)
-        ensure_office_comment_column(conn, schema, table)
     col_list = ", ".join(f'"{c}"' for c in _snapshot_select_columns(table))
     query = f'SELECT {col_list} FROM "{schema}"."{table}" WHERE key = ANY(%s::uuid[])'
 
@@ -586,6 +565,8 @@ def _batch_field_data_in_district(
     store_cfg: dict[str, Any],
     district_wkt: str,
     metric_srid: int,
+    *,
+    apply_district_filter: bool = True,
 ) -> dict[str, TaskFeature]:
     """Resolve field_data snaps that fall inside the district (one spatial query)."""
     from app.crm.field_data_loader import _field_data_mapping, _reports_qualified_table
@@ -601,6 +582,19 @@ def _batch_field_data_in_district(
     task_keys = [s.task_key for s in snaps]
     snap_by_task = {s.task_key: s for s in snaps}
 
+    spatial_filter = ""
+    params: list[Any] = [task_keys]
+    if apply_district_filter:
+        spatial_filter = f"""
+          AND ST_Contains(
+              ST_Transform(
+                  ST_GeomFromText(%s, {metric_srid}),
+                  ST_SRID(r."{geom_col}")
+              ),
+              r."{geom_col}"
+          )
+        """
+        params.append(district_wkt)
     query = f"""
         SELECT DISTINCT ON (r."{tasks_key_col}")
                r."{tasks_key_col}"::text AS task_key,
@@ -609,16 +603,13 @@ def _batch_field_data_in_district(
         FROM {reports_table} r
         WHERE r."{tasks_key_col}" = ANY(%s::uuid[])
           AND r."{geom_col}" IS NOT NULL
-          AND ST_Contains(
-              ST_Transform(ST_GeomFromText(%s, {metric_srid}), 4326),
-              ST_Transform(r."{geom_col}", 4326)
-          )
+          {spatial_filter}
         ORDER BY r."{tasks_key_col}"
     """
     result: dict[str, TaskFeature] = {}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (task_keys, district_wkt))
+            cur.execute(query, params)
             for row in cur.fetchall():
                 task_key = str(row["task_key"])
                 snap = snap_by_task.get(task_key)
@@ -669,6 +660,8 @@ def _batch_office_data_in_district(
     store_cfg: dict[str, Any],
     district_wkt: str,
     metric_srid: int,
+    *,
+    apply_district_filter: bool = True,
 ) -> dict[str, TaskFeature]:
     from app.crm.office_data_loader import _office_data_mapping, _points_qualified_table
 
@@ -682,6 +675,19 @@ def _batch_office_data_in_district(
     task_keys = [s.task_key for s in snaps]
     snap_by_task = {s.task_key: s for s in snaps}
 
+    spatial_filter = ""
+    params: list[Any] = [task_keys]
+    if apply_district_filter:
+        spatial_filter = f"""
+          AND ST_Contains(
+              ST_Transform(
+                  ST_GeomFromText(%s, {metric_srid}),
+                  ST_SRID(p."{geom_col}")
+              ),
+              p."{geom_col}"
+          )
+        """
+        params.append(district_wkt)
     query = f"""
         SELECT p.task_key::text AS task_key,
                p.created_at,
@@ -689,15 +695,12 @@ def _batch_office_data_in_district(
         FROM {points_table} p
         WHERE p.task_key = ANY(%s::uuid[])
           AND p."{geom_col}" IS NOT NULL
-          AND ST_Contains(
-              ST_Transform(ST_GeomFromText(%s, {metric_srid}), 4326),
-              ST_Transform(p."{geom_col}", 4326)
-          )
+          {spatial_filter}
     """
     result: dict[str, TaskFeature] = {}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (task_keys, district_wkt))
+            cur.execute(query, params)
             for row in cur.fetchall():
                 task_key = str(row["task_key"])
                 snap = snap_by_task.get(task_key)
@@ -750,10 +753,11 @@ def _batch_layer_snaps_in_district(
     store_cfg: dict[str, Any],
     district_wkt: str,
     metric_srid: int,
+    *,
+    apply_district_filter: bool = True,
 ) -> dict[str, TaskFeature]:
-    """Resolve layer-backed snaps via task_key/anchor first, then business_ids."""
+    """Resolve layer-backed snapshots with bounded batch queries."""
     from app.crm.store import parse_scoped_business_id
-    from app.layers.geojson import resolve_feature_for_task_key
 
     if not snaps:
         return {}
@@ -782,22 +786,80 @@ def _batch_layer_snaps_in_district(
             sub_cfg.get("groups", []),
         )
         scoped = bool(mapping.get("scoped_geometry_id"))
+        district_filter = district_wkt if apply_district_filter else None
 
-        # Prefer stable task_key / source anchor over frozen business_id.
-        remaining: list[SnapshotRow] = []
+        def snap_matches_layer(snap: SnapshotRow, layer: Any) -> bool:
+            if not scoped:
+                return True
+            value = str(getattr(snap.record, task_column, "") or "")
+            prefix, _ = parse_scoped_business_id(value)
+            return not prefix or prefix == layer.geometry_type
+
+        # Linked data_mos rows have indexed task_key columns; resolve all of them
+        # per physical layer instead of issuing one query per snapshot row.
+        remaining_by_task: dict[str, list[SnapshotRow]] = {}
         for snap in sub_snaps:
-            feature_data = resolve_feature_for_task_key(
-                conn, snap.task_key, subgroup_name, store_cfg
+            remaining_by_task.setdefault(snap.task_key, []).append(snap)
+        for layer in layers:
+            if not remaining_by_task:
+                break
+            features = fetch_features_by_task_keys(
+                conn,
+                layer,
+                list(remaining_by_task.keys()),
+                district_filter,
+                metric_srid,
             )
-            if feature_data and feature_data.get("geometry"):
-                if geometry_in_district(
-                    conn, feature_data["geometry"], district_wkt, metric_srid
-                ):
+            for feature_data in features:
+                task_key = str(feature_data.get("task_key") or "")
+                candidates = remaining_by_task.get(task_key, [])
+                matched = [
+                    snap for snap in candidates if snap_matches_layer(snap, layer)
+                ]
+                if not matched:
+                    continue
+                unmatched = [snap for snap in candidates if snap not in matched]
+                if unmatched:
+                    remaining_by_task[task_key] = unmatched
+                else:
+                    remaining_by_task.pop(task_key, None)
+                for snap in matched:
                     result[snap.snapshot_key] = _feature_from_layer_data(snap, feature_data)
-                continue
-            remaining.append(snap)
-        sub_snaps = remaining
+
+        sub_snaps = [snap for values in remaining_by_task.values() for snap in values]
         if not sub_snaps:
+            continue
+
+        # Resolve preserved crm.tasks source anchors in one query plus one query
+        # per referenced physical table.
+        anchor_features = fetch_features_by_source_anchors(
+            conn,
+            list(remaining_by_task.keys()),
+            store_cfg,
+            district_filter,
+            metric_srid,
+            allowed_layers=layers,
+        )
+        for feature_data in anchor_features:
+            task_key = str(feature_data.get("task_key") or "")
+            matched = remaining_by_task.pop(task_key, None)
+            if not matched:
+                continue
+            for snap in matched:
+                result[snap.snapshot_key] = _feature_from_layer_data(snap, feature_data)
+
+        sub_snaps = [snap for values in remaining_by_task.values() for snap in values]
+        if not sub_snaps:
+            continue
+
+        # data_mos split tables are authoritative through task_key/source anchors.
+        # Business identifiers there are legacy and may point at a recycled row.
+        layers = [
+            layer
+            for layer in layers
+            if not _is_data_mos_items_table(layer.qualified_table)
+        ]
+        if not layers:
             continue
 
         # Group lookup ids by geometry prefix for scoped ids.
@@ -816,19 +878,35 @@ def _batch_layer_snaps_in_district(
         for layer in layers:
             if not id_to_snaps:
                 break
+            candidate_ids = []
+            for lookup_id, candidates in id_to_snaps.items():
+                if any(snap_matches_layer(snap, layer) for snap in candidates):
+                    candidate_ids.append(lookup_id)
+            if not candidate_ids:
+                continue
             features = fetch_features_by_business_ids(
                 conn,
                 layer,
                 source_field,
-                list(id_to_snaps.keys()),
-                district_wkt,
+                candidate_ids,
+                district_filter,
                 metric_srid,
             )
             for feat in features:
                 bid = str(feat.get("business_id") or "")
-                matched = id_to_snaps.pop(bid, None)
+                candidates = id_to_snaps.get(bid, [])
+                matched = [
+                    snap
+                    for snap in candidates
+                    if snap_matches_layer(snap, layer)
+                ]
                 if not matched:
                     continue
+                remaining = [snap for snap in candidates if snap not in matched]
+                if remaining:
+                    id_to_snaps[bid] = remaining
+                else:
+                    id_to_snaps.pop(bid, None)
                 for snap in matched:
                     result[snap.snapshot_key] = _feature_from_layer_data(snap, feat)
 
@@ -851,7 +929,7 @@ def _batch_layer_snaps_in_district(
                         layer,
                         link_field,
                         list(full_id_to_snaps.keys()),
-                        district_wkt,
+                        district_filter,
                         metric_srid,
                     )
                     for feat in features:
@@ -872,7 +950,26 @@ def _batch_resolve_untagged_snaps(
     district_wkt: str,
     metric_srid: int,
 ) -> dict[str, TaskFeature]:
-    """Batch-resolve snaps without rayon via spatial district queries."""
+    return _batch_resolve_snaps(
+        conn,
+        snaps,
+        store_cfg,
+        district_wkt,
+        metric_srid,
+        apply_district_filter=True,
+    )
+
+
+def _batch_resolve_snaps(
+    conn: PgConnection,
+    snaps: list[SnapshotRow],
+    store_cfg: dict[str, Any],
+    district_wkt: str,
+    metric_srid: int,
+    *,
+    apply_district_filter: bool,
+) -> dict[str, TaskFeature]:
+    """Batch-resolve snapshot rows, optionally applying a spatial district check."""
     if not snaps:
         return {}
 
@@ -889,13 +986,34 @@ def _batch_resolve_untagged_snaps(
 
     result: dict[str, TaskFeature] = {}
     result.update(
-        _batch_field_data_in_district(conn, field_snaps, store_cfg, district_wkt, metric_srid)
+        _batch_field_data_in_district(
+            conn,
+            field_snaps,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            apply_district_filter=apply_district_filter,
+        )
     )
     result.update(
-        _batch_office_data_in_district(conn, office_snaps, store_cfg, district_wkt, metric_srid)
+        _batch_office_data_in_district(
+            conn,
+            office_snaps,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            apply_district_filter=apply_district_filter,
+        )
     )
     result.update(
-        _batch_layer_snaps_in_district(conn, layer_snaps, store_cfg, district_wkt, metric_srid)
+        _batch_layer_snaps_in_district(
+            conn,
+            layer_snaps,
+            store_cfg,
+            district_wkt,
+            metric_srid,
+            apply_district_filter=apply_district_filter,
+        )
     )
     return result
 
@@ -950,15 +1068,16 @@ def collect_snapshot_tasks(
 
     groups_map: dict[str, dict[str, list[TaskFeature]]] = {}
 
+    tagged_features = _batch_resolve_snaps(
+        conn,
+        tagged,
+        store_cfg,
+        district_wkt,
+        metric_srid,
+        apply_district_filter=False,
+    )
     for snap in tagged:
-        feat = snapshot_row_to_feature(
-            conn,
-            snap,
-            store_cfg,
-            district_wkt,
-            metric_srid,
-            requested_rayon=rayon,
-        )
+        feat = tagged_features.get(snap.snapshot_key)
         if feat is None:
             continue
         groups_map.setdefault(snap.group_name, {}).setdefault(snap.subgroup_name, []).append(feat)
@@ -993,9 +1112,6 @@ def collect_snapshot_tasks(
         if group.subgroups:
             result.groups.append(group)
 
-    if store_cfg:
-        enrich_task_result_field_observed(result, conn, store_cfg)
-
     return result
 
 
@@ -1011,11 +1127,8 @@ def _find_rayon_for_task_key(
     task_key: str,
 ) -> str | None:
     """Return rayon from any snapshot table that references the task."""
-    from app.crm.store import ensure_rayon_column
-
     for config_key, default_table in SNAPSHOT_SOURCES.values():
         schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
-        ensure_rayon_column(conn, schema, table)
         query = (
             f'SELECT rayon FROM "{schema}"."{table}" '
             f"WHERE task_key = %s::uuid AND rayon IS NOT NULL AND trim(rayon) <> '' "

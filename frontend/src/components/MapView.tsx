@@ -54,6 +54,7 @@ interface MapViewProps {
   onPointPlaced?: (lng: number, lat: number) => void
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onBuildAreaRoute?: (feature: TaskFeature) => void
   onViewFieldReport?: (taskKey: string, reportId: number) => void
   onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
   nearbyOverlays?: NearbyContextResult[]
@@ -223,46 +224,77 @@ function TasksAreaLayer({ districtName }: { districtName?: string | null }) {
   return null
 }
 
+type PopupActionOptions = {
+  onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
+  onViewArea?: (feature: TaskFeature) => void
+  onBuildAreaRoute?: (feature: TaskFeature) => void
+}
+
+type PopupWithClick = L.Popup & { _webcrmClick?: (ev: Event) => void }
+
+function handleMapPopupAction(
+  action: string,
+  layer: L.Layer,
+  ctx: SelectedTaskContext,
+  options: PopupActionOptions | undefined,
+  btn: HTMLButtonElement,
+) {
+  if (action === 'execute-task' && options?.onExecuteTask) {
+    btn.disabled = true
+    void Promise.resolve(options.onExecuteTask(ctx))
+      .then(() => layer.closePopup())
+      .catch(() => {
+        btn.disabled = false
+      })
+    return
+  }
+  if (action === 'view-area-order' && options?.onViewArea) {
+    options.onViewArea(ctx.feature)
+    layer.closePopup()
+    return
+  }
+  if (action === 'build-area-route' && options?.onBuildAreaRoute) {
+    options.onBuildAreaRoute(ctx.feature)
+    layer.closePopup()
+  }
+}
+
 function bindMapPopup(
   layer: L.Layer,
   popupHtml: string,
   ctx: SelectedTaskContext,
-  options?: {
-    onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
-    onViewArea?: (feature: TaskFeature) => void
-  },
+  options?: PopupActionOptions,
 ) {
   layer.bindPopup(popupHtml)
 
-  layer.on('popupopen', () => {
-    const popupEl = layer.getPopup()?.getElement()
-    if (!popupEl) return
+  layer.on('popupopen', (e: L.PopupEvent) => {
+    const popup = e.popup as PopupWithClick
+    const attach = () => {
+      const popupEl = popup.getElement()
+      if (!popupEl) return
 
-    const executeBtn = popupEl.querySelector<HTMLButtonElement>('[data-map-action="execute-task"]')
-    if (executeBtn && options?.onExecuteTask) {
-      const handleExecute = (event: Event) => {
-        L.DomEvent.stopPropagation(event)
-        L.DomEvent.preventDefault(event)
-        executeBtn.disabled = true
-        void Promise.resolve(options.onExecuteTask!(ctx))
-          .then(() => layer.closePopup())
-          .catch(() => {
-            executeBtn.disabled = false
-          })
+      if (popup._webcrmClick) {
+        popupEl.removeEventListener('click', popup._webcrmClick, true)
       }
-      executeBtn.addEventListener('click', handleExecute, { once: true })
+
+      const onClick = (ev: Event) => {
+        const target = ev.target as HTMLElement | null
+        const btn = target?.closest?.('[data-map-action]') as HTMLButtonElement | null
+        if (!btn || !popupEl.contains(btn)) return
+        const action = btn.getAttribute('data-map-action')
+        if (!action) return
+        L.DomEvent.stop(ev)
+        handleMapPopupAction(action, layer, ctx, options, btn)
+      }
+
+      popup._webcrmClick = onClick
+      L.DomEvent.disableClickPropagation(popupEl)
+      L.DomEvent.on(popupEl, 'mousedown', L.DomEvent.stop)
+      popupEl.addEventListener('click', onClick, true)
     }
 
-    const viewAreaBtn = popupEl.querySelector<HTMLButtonElement>('[data-map-action="view-area-order"]')
-    if (viewAreaBtn && options?.onViewArea) {
-      const handleViewArea = (event: Event) => {
-        L.DomEvent.stopPropagation(event)
-        L.DomEvent.preventDefault(event)
-        options.onViewArea!(ctx.feature)
-        layer.closePopup()
-      }
-      viewAreaBtn.addEventListener('click', handleViewArea, { once: true })
-    }
+    attach()
+    window.setTimeout(attach, 0)
   })
 }
 
@@ -273,6 +305,7 @@ function bindTaskPopup(
   options?: {
     onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
     onViewArea?: (feature: TaskFeature) => void
+    onBuildAreaRoute?: (feature: TaskFeature) => void
     onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
   },
 ) {
@@ -301,6 +334,7 @@ function TaskFeaturesLayer({
   showAreaPolygons = true,
   onExecuteTask,
   onViewArea,
+  onBuildAreaRoute,
   onSelectTaskFeature,
 }: {
   taskFeatures: TaskFeatureOnMap[]
@@ -310,6 +344,7 @@ function TaskFeaturesLayer({
   showAreaPolygons?: boolean
   onExecuteTask?: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onBuildAreaRoute?: (feature: TaskFeature) => void
   onSelectTaskFeature?: (ctx: SelectedTaskContext) => void
 }) {
   const map = useMap()
@@ -344,7 +379,7 @@ function TaskFeaturesLayer({
       rendererRef.current = areaRenderer
     }
 
-    const popupOptions = { onExecuteTask, onViewArea, onSelectTaskFeature }
+    const popupOptions = { onExecuteTask, onViewArea, onBuildAreaRoute, onSelectTaskFeature }
 
     sortedFeatures.forEach((taskFeat) => {
       const layerCfg = layerConfigByKey.get(taskFeat.layer_key)
@@ -427,6 +462,7 @@ function TaskFeaturesLayer({
     showAreaPolygons,
     onExecuteTask,
     onViewArea,
+    onBuildAreaRoute,
     onSelectTaskFeature,
   ])
 
@@ -914,6 +950,7 @@ export function MapView({
   onPointPlaced,
   onExecuteTask,
   onViewArea,
+  onBuildAreaRoute,
   onViewFieldReport,
   onSelectTaskFeature,
   nearbyOverlays = [],
@@ -948,6 +985,7 @@ export function MapView({
             showAreaPolygons={showAreaPolygons}
             onExecuteTask={onExecuteTask}
             onViewArea={onViewArea}
+            onBuildAreaRoute={onBuildAreaRoute}
             onSelectTaskFeature={onSelectTaskFeature}
           />
         </>

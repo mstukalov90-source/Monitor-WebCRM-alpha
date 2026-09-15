@@ -10,7 +10,7 @@ from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
 from app.config import crm_task_store_config, crm_tasks_config
-from app.crm.store import OFFICE_DATA_SUBGROUP, fetch_snapshot_task_keys
+from app.crm.store import OFFICE_DATA_SUBGROUP, snapshot_table_refs
 from app.layers.geojson import fetch_district_wkt
 
 OFFICE_DATA_LAYER_KEY = "office_data"
@@ -109,6 +109,8 @@ def collect_office_data_tasks(
     conn: PgConnection,
     rayon: str,
     apply_date_filter: bool,
+    *,
+    query_context: Any | None = None,
 ):
     from app.crm.collector import TaskFeature
 
@@ -122,7 +124,14 @@ def collect_office_data_tasks(
     if mapping.get("source") != "office_data":
         return [], []
 
-    district_wkt, metric_srid, errors = _district_context(conn, rayon)
+    if query_context is None:
+        district_wkt, metric_srid, errors = _district_context(conn, rayon)
+        excluded_task_tables = snapshot_table_refs(store_cfg)
+    else:
+        district_wkt = query_context.district_wkt
+        metric_srid = query_context.metric_srid
+        errors = []
+        excluded_task_tables = query_context.excluded_task_tables
     if not district_wkt:
         return [], errors
 
@@ -130,6 +139,11 @@ def collect_office_data_tasks(
     points_table = _points_qualified_table(mapping)
     geom_col = mapping.get("points_geometry", "point")
 
+    snapshot_filters = "\n".join(
+        f'          AND NOT EXISTS (SELECT 1 FROM "{schema}"."{table}" snap '
+        f'WHERE snap.task_key = t.key)'
+        for schema, table in excluded_task_tables
+    )
     query = f"""
         SELECT t.key, t.type, t.is_office_task,
                t.oati_id, t.earthwork_id, t.localwork_id, t.avr_mos_id,
@@ -140,13 +154,16 @@ def collect_office_data_tasks(
         INNER JOIN {points_table} p ON p.task_key = t.key
         WHERE t.is_office_task IS TRUE
           AND p."{geom_col}" IS NOT NULL
+          {snapshot_filters}
           AND ST_Intersects(
-              ST_Transform(p."{geom_col}", {metric_srid}),
-              ST_GeomFromText(%s, {metric_srid})
+              p."{geom_col}",
+              ST_Transform(
+                  ST_GeomFromText(%s, {metric_srid}),
+                  ST_SRID(p."{geom_col}")
+              )
           )
     """
 
-    snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     features: list[TaskFeature] = []
 
     try:
@@ -154,8 +171,6 @@ def collect_office_data_tasks(
             cur.execute(query, (district_wkt,))
             for row in cur.fetchall():
                 task_key = str(row["key"])
-                if task_key in snapshot_keys:
-                    continue
                 geometry = row.get("geometry")
                 if isinstance(geometry, str):
                     geometry = json.loads(geometry)

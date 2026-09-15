@@ -3,7 +3,7 @@
 
 ALTER TABLE crm.tasks
     ADD COLUMN IF NOT EXISTS source_global_id BIGINT,
-    ADD COLUMN IF NOT EXISTS source_table TEXT,
+    ADD COLUMN IF NOT EXISTS source_table TEXT[],
     ADD COLUMN IF NOT EXISTS source_row_id BIGINT,
     ADD COLUMN IF NOT EXISTS source_geom_hash TEXT;
 

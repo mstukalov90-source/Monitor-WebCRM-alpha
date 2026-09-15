@@ -516,6 +516,36 @@ def _parent_table_from_split(items_table: str) -> Optional[str]:
     return None
 
 
+_SOURCE_TABLE_ARRAY_CACHE: Dict[Tuple[str, str], bool] = {}
+
+
+def _source_table_uses_array(
+    conn: PgConnection,
+    schema: str = "crm",
+    table: str = "tasks",
+) -> bool:
+    """Support both the legacy TEXT and production text[] source_table schema."""
+    cache_key = (schema, table)
+    cached = _SOURCE_TABLE_ARRAY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.udt_name = '_text'
+            FROM information_schema.columns c
+            WHERE c.table_schema = %s
+              AND c.table_name = %s
+              AND c.column_name = 'source_table'
+            """,
+            (schema, table),
+        )
+        row = cur.fetchone()
+    uses_array = bool(row and row[0])
+    _SOURCE_TABLE_ARRAY_CACHE[cache_key] = uses_array
+    return uses_array
+
+
 def link_items_row_after_persist(
     conn: PgConnection,
     task_key: str,
@@ -548,11 +578,21 @@ def link_items_row_after_persist(
         if cur.rowcount == 0:
             return False
 
-        anchor_params: List[Any] = [items_table, row_id_int]
-        anchor_sets = [
-            "source_table = %s",
-            "source_row_id = %s",
-        ]
+        if _source_table_uses_array(conn, schema, tasks_table):
+            anchor_params: List[Any] = [items_table, items_table, items_table, row_id_int]
+            anchor_sets = [
+                "source_table = CASE "
+                "WHEN ct.source_table IS NULL THEN ARRAY[%s]::text[] "
+                "WHEN %s = ANY(ct.source_table) THEN ct.source_table "
+                "ELSE array_append(ct.source_table, %s) END",
+                "source_row_id = %s",
+            ]
+        else:
+            anchor_params = [items_table, row_id_int]
+            anchor_sets = [
+                "source_table = %s",
+                "source_row_id = %s",
+            ]
         if global_id is not None:
             anchor_sets.append("source_global_id = %s")
             anchor_params.append(global_id)
@@ -657,9 +697,15 @@ def link_items_tasks_in_layer(
         WHERE {where_clause}
           AND t.task_key IS NULL
     """
+    if _source_table_uses_array(conn, schema, tasks_table):
+        source_table_set = "source_table = ARRAY[%s]::text[]"
+        anchor_params: List[Any] = [items_table, *params]
+    else:
+        source_table_set = "source_table = %s"
+        anchor_params = [items_table, *params]
     anchor_query = f"""
         UPDATE "{schema}"."{tasks_table}" ct
-        SET source_table = %s,
+        SET {source_table_set},
             source_row_id = t.id,
             source_global_id = t.global_id,
             source_geom_hash = {_geom_hash_expr(f't."{geom_col}"')}
@@ -673,7 +719,7 @@ def link_items_tasks_in_layer(
     with conn.cursor() as cur:
         cur.execute(query, params)
         linked = cur.rowcount
-        cur.execute(anchor_query, [items_table, *params])
+        cur.execute(anchor_query, anchor_params)
     return linked
 
 
@@ -804,6 +850,14 @@ _SNAPSHOT_TABLES = (
     ("clear_table", "tasks_clear"),
     ("delay_table", "tasks_delay"),
 )
+
+
+def snapshot_table_refs(store_cfg: Dict[str, Any]) -> Tuple[Tuple[str, str], ...]:
+    """Resolved snapshot tables for SQL-side active-task exclusion."""
+    return tuple(
+        _snapshot_table_ref(store_cfg, config_key, default_table)
+        for config_key, default_table in _SNAPSHOT_TABLES
+    )
 
 
 def fetch_snapshot_task_keys(

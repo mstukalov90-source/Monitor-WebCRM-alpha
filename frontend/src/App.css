@@ -1435,6 +1435,25 @@ a.btn {
   cursor: wait;
 }
 
+.order-status-item.selected {
+  border-color: #1565c0;
+  background: #e3f2fd;
+}
+
+.order-routes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.order-routes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .order-status-item-main {
   font-weight: 500;
 }
@@ -1757,7 +1776,8 @@ a.btn {
 }
 
 .map-popup-execute,
-.map-popup-view-area {
+.map-popup-view-area,
+.map-popup-build-route {
   margin-top: 8px;
   width: 100%;
 }
@@ -3005,4 +3025,32 @@ a.btn {
   .monitor-cards {
     grid-template-columns: 1fr;
   }
+}
+
+/* Order route modal */
+.order-route-modal {
+  max-width: 520px;
+  width: 100%;
+}
+
+.order-route-metrics {
+  margin: 12px 0;
+}
+
+.order-route-metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.order-route-metrics-table td {
+  padding: 4px 8px 4px 0;
+  vertical-align: top;
+}
+
+.order-route-metrics-table td:first-child {
+  width: 60%;
+}
+
+.map-popup-build-route {
+  margin-top: 8px;
 }

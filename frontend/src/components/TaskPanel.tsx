@@ -97,6 +97,7 @@ interface TaskPanelProps {
   onTogglePlacePoint?: () => void
   onExecute: (ctx: SelectedTaskContext) => void | Promise<void>
   onViewArea?: (feature: TaskFeature) => void
+  onBuildAreaRoute?: (feature: TaskFeature) => void
   onSelectHighlight: (highlight: TaskHighlight | null) => void
   onRefresh: () => void | Promise<void>
   selectFromMap?: SelectedTaskContext | null
@@ -114,6 +115,7 @@ export function TaskPanel({
   onTogglePlacePoint,
   onExecute,
   onViewArea,
+  onBuildAreaRoute,
   onSelectHighlight,
   onRefresh,
   selectFromMap = null,
@@ -673,6 +675,16 @@ export function TaskPanel({
             }}
           >
             Просмотр заказа
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={selectedRow === null || busy}
+            onClick={() => {
+              if (selectedFeature && onBuildAreaRoute) onBuildAreaRoute(selectedFeature)
+            }}
+          >
+            Маршрут обследования
           </button>
           {canManageAreaSurvey ? (
             <>

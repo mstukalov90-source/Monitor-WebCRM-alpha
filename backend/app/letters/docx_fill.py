@@ -183,25 +183,27 @@ def format_violation_block(names: list[str]) -> str:
     """Join selected illegal-reason names as a bullet list (one item per line)."""
     cleaned = [n.strip() for n in names if (n or "").strip()]
     if not cleaned:
-        return "__________"
+        return STATION_UNDEFINED
     return "\n".join(f"• {name}" for name in cleaned)
 
 
-def format_producer_block(customer: str, executor: str) -> str:
-    """Section 1 body: Заказчик / Исполнитель lines; omit empty labels; bold values."""
-    c = (customer or "").strip()
-    e = (executor or "").strip()
-    lines: list[str] = []
-    if c:
-        lines.append(f"Заказчик: {_mark_bold(c)}")
-    if e:
-        lines.append(f"Исполнитель: {_mark_bold(e)}")
-    if not lines:
-        return _mark_bold("__________")
-    if len(lines) == 1:
-        return lines[0]
-    # Second line indented like the sample letter (tabs before «Исполнитель»).
-    return f"{lines[0]}\n\t\t\t\t\t\t {lines[1]}"
+def _filled_or_undefined(value: str | None) -> str:
+    return (value or "").strip() or STATION_UNDEFINED
+
+
+def format_producer_block(
+    customer: str,
+    executor: str,
+    permit_reference: str = "",
+) -> str:
+    """Section 1 body: always Заказчик / Исполнитель / № ордера; empty → не определено."""
+    return "\n".join(
+        [
+            f"Заказчик: {_mark_bold(_filled_or_undefined(customer))}",
+            f"Исполнитель: {_mark_bold(_filled_or_undefined(executor))}",
+            f"№ ордера/уведомления: {_mark_bold(_filled_or_undefined(permit_reference))}",
+        ]
+    )
 
 
 def _mark_bold(value: str) -> str:
@@ -379,6 +381,10 @@ def _replace_in_paragraph(paragraph: Paragraph, mapping: dict[str, str]) -> None
             changed = True
     if changed:
         _set_paragraph_text(paragraph, _ensure_structural_breaks(new_text))
+        # Justified soft-break lines get stretched badly in LibreOffice/Word.
+        # The reference letter keeps multiline sections 1, 7 and 8 left-aligned.
+        if any(key in full for key in (PH_EXECUTOR, PH_SECTION_7, PH_VIOLATION)):
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
 def _iter_all_paragraphs(document: Document):
@@ -405,15 +411,16 @@ def fill_letter_template(
     photo_count: int = 0,
     sps: str = "",
     kgs: str = "",
+    permit_reference: str = "",
 ) -> Document:
     if not TEMPLATE_PATH.is_file():
         raise FileNotFoundError(f"Letter template not found: {TEMPLATE_PATH}")
 
     document = Document(str(TEMPLATE_PATH))
-    blank = "__________"
+    blank = STATION_UNDEFINED
     desc = (description or "").strip() or DEFAULT_DESCRIPTION
     viol = (violation or "").strip() or blank
-    producer = format_producer_block(customer, executor)
+    producer = format_producer_block(customer, executor, permit_reference)
     sps_line = format_station_line("ТЗ ОПС", sps)
     kgs_line = format_station_line("КГС", kgs)
     section_7_8 = (
@@ -543,15 +550,16 @@ def append_map_page(
     lon: float | None = None,
     lat: float | None = None,
 ) -> None:
-    _add_page_break(document)
     heading = document.add_paragraph()
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    heading.paragraph_format.keep_with_next = True
     run = heading.add_run(title)
     run.bold = True
     _apply_body_font(run)
 
     paragraph = document.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    paragraph.paragraph_format.keep_with_next = True
     run = paragraph.add_run()
     run.add_picture(io.BytesIO(map_png), width=Cm(MAP_WIDTH_CM_DOCX))
 

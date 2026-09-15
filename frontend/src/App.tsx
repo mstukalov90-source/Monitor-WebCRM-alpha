@@ -16,6 +16,7 @@ import {
 } from './api/client'
 import { AreaOrderPickerModal } from './components/AreaOrderPickerModal'
 import { AreaTaskViewModal } from './components/AreaTaskViewModal'
+import { OrderRouteModal } from './components/OrderRouteModal'
 import { DistrictStartScreen } from './components/DistrictStartScreen'
 import { LoginScreen } from './components/LoginScreen'
 import { ExcelUploadScreen } from './components/ExcelUploadScreen'
@@ -23,12 +24,14 @@ import { MapView } from './components/MapView'
 import { MapLegend } from './components/MapLegend'
 import { EmployeeLocationsScreen } from './components/EmployeeLocationsScreen'
 import { OrderTracksScreen } from './components/OrderTracksScreen'
+import { OrderRoutesScreen } from './components/OrderRoutesScreen'
 import { OznMatchScreen } from './components/OznMatchScreen'
 import { OfficeWorkModeModal } from './components/OfficeWorkModeModal'
 import { FieldScoreScreen } from './components/FieldScoreScreen'
 import { OrderStatusModal } from './components/OrderStatusModal'
 import { MyClosedTasksModal } from './components/MyClosedTasksModal'
 import { ZipCloseModal } from './components/ZipCloseModal'
+import { GpkgAreaUploadModal } from './components/GpkgAreaUploadModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
 import { ServerMonitorScreen } from './components/ServerMonitorScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
@@ -97,7 +100,10 @@ function App() {
   const [myClosedOpen, setMyClosedOpen] = useState(false)
   const [taskOverlayReview, setTaskOverlayReview] = useState(false)
   const [zipCloseOpen, setZipCloseOpen] = useState(false)
+  const [gpkgUploadOpen, setGpkgUploadOpen] = useState(false)
+  const [areaOrdersRefreshKey, setAreaOrdersRefreshKey] = useState(0)
   const [fieldScoreOrderKey, setFieldScoreOrderKey] = useState<string | null>(null)
+  const [routeOrderFeature, setRouteOrderFeature] = useState<TaskFeature | null>(null)
   const [areaPolygonsOnMap, setAreaPolygonsOnMap] = useState(false)
   const [lastTaskSource, setLastTaskSource] = useState<TaskSource>('active')
   const [taskFilterSelection, setTaskFilterSelection] = useState<TaskFilterSelection>(TASK_FILTER_NONE)
@@ -117,6 +123,7 @@ function App() {
 
   const isOfficeUser = user?.role === 'office'
   const canPlaceOfficePoints = user?.role === 'office' || user?.role === 'manager'
+  const canUseOrderRoutes = Boolean(user && (user.can_manage_personnel || user.role === 'field'))
 
   const activeHighlight = editContext ? modalHighlight : panelHighlight
   const collection = useTaskCollection()
@@ -843,6 +850,17 @@ function App() {
     )
   }
 
+  if (appView === 'order_routes' && canUseOrderRoutes) {
+    return (
+      <OrderRoutesScreen
+        userLogin={userDisplayName}
+        initialRayon={collection.rayon || taskResult?.district_name || ''}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
   if (appView === 'ozn_match' && user.can_manage_personnel) {
     return (
       <OznMatchScreen
@@ -876,7 +894,9 @@ function App() {
           canManagePersonnel={user.can_manage_personnel}
           canViewServerMonitor={user.can_view_server_monitor}
           canCloseViaZip={user.role === 'admin'}
+          canUploadGpkg={user.role === 'admin'}
           showAreaOrders={user.allowed_task_sources.includes('area')}
+          areaOrdersRefreshKey={areaOrdersRefreshKey}
           userLogin={userDisplayName}
           sessionLogin={user.login}
           userRole={user.role}
@@ -886,10 +906,12 @@ function App() {
           onOpenPersonnel={() => setAppView('personnel')}
           onOpenEmployeeLocations={() => setAppView('employee_locations')}
           onOpenOrderTracks={() => setAppView('order_tracks')}
+          onOpenOrderRoutes={() => setAppView('order_routes')}
           onOpenStatistics={() => setAppView('statistics')}
           onOpenMyClosed={isOfficeUser ? () => setMyClosedOpen(true) : undefined}
           onOpenServerMonitor={() => setAppView('server_monitor')}
           onOpenZipClose={user.role === 'admin' ? () => setZipCloseOpen(true) : undefined}
+          onOpenGpkgUpload={user.role === 'admin' ? () => setGpkgUploadOpen(true) : undefined}
           onOpenOznMatch={
             user.can_manage_personnel ? () => setAppView('ozn_match') : undefined
           }
@@ -918,6 +940,12 @@ function App() {
         )}
         {zipCloseOpen && user.role === 'admin' && (
           <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
+        )}
+        {gpkgUploadOpen && user.role === 'admin' && (
+          <GpkgAreaUploadModal
+            onClose={() => setGpkgUploadOpen(false)}
+            onSuccess={() => setAreaOrdersRefreshKey((n) => n + 1)}
+          />
         )}
         <TaskEditModal
           context={editContext}
@@ -1033,6 +1061,11 @@ function App() {
                 Треки заказов
               </button>
             )}
+            {canUseOrderRoutes && (
+              <button type="button" className="btn" onClick={() => setAppView('order_routes')}>
+                Маршруты обследования
+              </button>
+            )}
             <button type="button" className="btn" onClick={() => setAppView('statistics')}>
               Статистика
             </button>
@@ -1044,6 +1077,11 @@ function App() {
             {user.role === 'admin' && (
               <button type="button" className="btn" onClick={() => setZipCloseOpen(true)}>
                 Закрытие через ZIP
+              </button>
+            )}
+            {user.role === 'admin' && (
+              <button type="button" className="btn" onClick={() => setGpkgUploadOpen(true)}>
+                Загрузить GeoPackage
               </button>
             )}
             <button type="button" className="btn" onClick={() => void logout()}>
@@ -1096,6 +1134,7 @@ function App() {
             onTogglePlacePoint={showPlaceOfficePoint ? handleTogglePlacePointMode : undefined}
             onExecute={handleExecuteTask}
             onViewArea={setAreaViewFeature}
+            onBuildAreaRoute={setRouteOrderFeature}
             onSelectHighlight={setPanelHighlight}
             onRefresh={handleRefresh}
             selectFromMap={panelSelectFromMap}
@@ -1149,6 +1188,7 @@ function App() {
                 onPointPlaced={(lng, lat) => void handleMapPointPlaced(lng, lat)}
                 onExecuteTask={handleExecuteTask}
                 onViewArea={setAreaViewFeature}
+                onBuildAreaRoute={setRouteOrderFeature}
                 onViewFieldReport={(taskKey, reportId) =>
                   setFieldMaterials({ taskKey, reportId })
                 }
@@ -1213,6 +1253,16 @@ function App() {
         onAttributesPatched={handleTaskAttributesPatched}
       />
 
+      {routeOrderFeature && (
+        <OrderRouteModal
+          orderKey={routeOrderFeature.task_key ?? String(routeOrderFeature.attributes.key ?? '')}
+          taskNumber={routeOrderFeature.attributes.task_number != null ? String(routeOrderFeature.attributes.task_number) : null}
+          rayon={routeOrderFeature.attributes.rayon != null ? String(routeOrderFeature.attributes.rayon) : null}
+          autoBuild
+          onClose={() => setRouteOrderFeature(null)}
+        />
+      )}
+
       {fieldMaterials && (
         <FieldMaterialsModal
           taskKey={fieldMaterials.taskKey}
@@ -1243,6 +1293,12 @@ function App() {
 
       {zipCloseOpen && user.role === 'admin' && (
         <ZipCloseModal onClose={() => setZipCloseOpen(false)} />
+      )}
+      {gpkgUploadOpen && user.role === 'admin' && (
+        <GpkgAreaUploadModal
+          onClose={() => setGpkgUploadOpen(false)}
+          onSuccess={() => setAreaOrdersRefreshKey((n) => n + 1)}
+        />
       )}
 
       {myClosedOpen && (

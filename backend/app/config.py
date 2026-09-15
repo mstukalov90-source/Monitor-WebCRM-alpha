@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     """Max number of ZIP archives in one preview request."""
     zip_close_staging_dir: str = "./data/zip_close_staging"
     """Temporary directory for ZIP-close preview tokens."""
+    gpkg_area_max_bytes: int = 50 * 1024 * 1024
+    """Max GeoPackage size for admin tasks_area import."""
+    gpkg_area_max_features: int = 5000
+    """Max polygon features in one GeoPackage import."""
     auth_secret_key: str = "change-me-in-production-use-32-chars-min"
     auth_cookie_name: str = "monitor_session"
     auth_token_ttl_hours: int = 12
@@ -69,6 +73,19 @@ class Settings(BaseSettings):
     """HTTP User-Agent for OSM/Nominatim requests."""
     geocode_timeout_seconds: float = 8.0
     """Timeout for external geocode/tile HTTP calls."""
+
+    osrm_foot_url: str = "http://127.0.0.1:5002"
+    """OSRM foot/walking profile base URL (prod .219: monitor-osrm-foot)."""
+    osrm_bike_url: str = "http://127.0.0.1:5001"
+    """OSRM bicycle profile base URL (prod .219: monitor-osrm-bicycle)."""
+    osrm_driving_url: str = "http://127.0.0.1:5000"
+    """OSRM driving/car profile base URL (prod .219: monitor-osrm-car)."""
+    osrm_timeout_seconds: float = 30.0
+    """Timeout for OSRM HTTP requests."""
+    order_route_buffer_m: float = 100.0
+    """Buffer radius (metres) for order route coverage validation."""
+    order_route_grid_m: float = 180.0
+    """Grid spacing (metres) for coverage waypoint generation (~2x buffer for overlap)."""
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -190,8 +190,8 @@ class StartAreaAnaliseAfterDailyResetTests(unittest.TestCase):
         self.assertEqual(result, "skipped")
 
 
-class FetchTasksAreaClearsStaleLocksTests(unittest.TestCase):
-    def test_fetch_geojson_clears_stale_locks_first(self) -> None:
+class FetchTasksAreaReadOnlyTests(unittest.TestCase):
+    def test_fetch_geojson_does_not_clear_stale_locks(self) -> None:
         from app.crm.tasks_area import fetch_tasks_area_geojson
 
         cursor = MagicMock()
@@ -207,8 +207,8 @@ class FetchTasksAreaClearsStaleLocksTests(unittest.TestCase):
         ):
             result = fetch_tasks_area_geojson(conn, rayon="Сокол")
 
-        clear_mock.assert_called_once_with(conn)
-        clear_pre_mock.assert_called_once_with(conn)
+        clear_mock.assert_not_called()
+        clear_pre_mock.assert_not_called()
         self.assertEqual(result["type"], "FeatureCollection")
 
 
@@ -347,8 +347,8 @@ class StartAreaPreAnaliseAfterDailyResetTests(unittest.TestCase):
         self.assertEqual(result, "skipped")
 
 
-class FetchTasksAreaSurvivesResetFailureTests(unittest.TestCase):
-    def test_geojson_loads_when_reset_raises(self) -> None:
+class FetchTasksAreaDoesNotRunResetTests(unittest.TestCase):
+    def test_geojson_does_not_invoke_reset_or_rollback(self) -> None:
         from app.crm.tasks_area import fetch_tasks_area_geojson
 
         cursor = MagicMock()
@@ -361,11 +361,12 @@ class FetchTasksAreaSurvivesResetFailureTests(unittest.TestCase):
         with patch(
             "app.crm.tasks_area.clear_stale_analise_locks",
             side_effect=Exception("column f.geom does not exist"),
-        ):
+        ) as clear_mock:
             result = fetch_tasks_area_geojson(conn)
 
         self.assertEqual(result["type"], "FeatureCollection")
-        conn.rollback.assert_called()
+        clear_mock.assert_not_called()
+        conn.rollback.assert_not_called()
 
 
 class AnaliseResetCutoffTests(unittest.TestCase):

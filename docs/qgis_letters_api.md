@@ -1,7 +1,7 @@
 # Интеграция QGIS-модуля с API писем ОАТИ (MONITOR WebCRM)
 
 **Аудитория:** разработчик QGIS-плагина  
-**Версия:** 2026-08-10  
+**Версия:** 2026-09-02  
 **Назначение:** вызвать WebCRM по HTTP для формирования DOCX-письма ОАТИ (геокод, шаблон, ситуационный план, вложения фото). Остальной CRM — по-прежнему прямой доступ к БД `monitor` (см. [qgis_module_data_contract.md](qgis_module_data_contract.md)).
 
 ---
@@ -99,7 +99,7 @@ Cookie для плагина **не нужен**.
 1. Пользователь выбирает задачу (есть task_key) и полевой отчёт (report_id).
 2. GET letter-draft → заполнить форму значениями по умолчанию.
 3. Пользователь правит заказчика, исполнителя, адрес, коммуникации,
-   описание, признаки незаконности, выбор фото, масштаб карты.
+   ТЗ ОПС / КГС, описание, признаки незаконности, выбор фото, масштаб карты.
 4. (Опционально) GET map-preview при смене scale — показать PNG.
 5. (Опционально) GET photos/.../image для превью в списке фото.
 6. POST letters → получить fid, filename, download_url.
@@ -134,11 +134,13 @@ full = base.rstrip('/') + relative_path
 | `rayon`, `street`, `today`, `coordinates` | str | метаданные письма |
 | `lon`, `lat` | float | центроид отчёта WGS84 |
 | `incident_datetime` | str | дата фиксации (из фото) |
-| `customer`, `executor`, `address`, `engineering`, `description` | str | префилл формы |
+| `customer`, `executor` | str | префилл; если на источнике есть ИНН, уже в виде `Название ИНН: 77…` |
+| `address`, `engineering`, `description` | str | префилл формы |
+| `sps`, `kgs` | str | станции МГГТ: `ТЗ ОПС: …` / `КГС: …` (пустое значение → `не определено`) |
 | `address_geocode`, `address_mos`, `address_has_house` | str/bool | источники адреса |
 | `engineering_options` | string[] | справочник `dict.comms_full` |
 | `violation_options` | string[] | справочник признаков незаконности |
-| `photos[]` | объекты | `id`, `label`, `banner`, `image_url`, … |
+| `photos[]` | объекты | `id`, `label` (`Обзорное` / `Информационный щит`), `banner`, `image_url`, … |
 | `map_scales`, `map_scale_default` | int[] / int | обычно `[1000,2000,5000,10000]`, default `1000` |
 | `map_warning` | str\|null | предупреждение по геометрии задачи |
 | `task_geometry_visibility` | str | `ok` / `partial` / `outside` / `missing` |
@@ -159,11 +161,13 @@ full = base.rstrip('/') + relative_path
 
 ```json
 {
-  "customer": "…",
-  "executor": "…",
+  "customer": "ООО Пример ИНН: 7700000000",
+  "executor": "ООО Подряд ИНН: 7700000001",
   "address": "улица, дом",
   "engineering": "не определено",
   "description": "…",
+  "sps": "ТЗ ОПС: 501",
+  "kgs": "КГС: не определено",
   "violation_names": ["признак из справочника", "…"],
   "photo_ids": [101, 102],
   "map_scale": 1000
@@ -172,7 +176,8 @@ full = base.rstrip('/') + relative_path
 
 | Поле | Обязательность | Заметки |
 | ---- | -------------- | ------- |
-| `customer`, `executor`, `address`, `engineering`, `description` | строки, могут быть пустыми | пустое description на сервере подставится дефолтом |
+| `customer`, `executor`, `address`, `engineering`, `description` | строки, могут быть пустыми | пустое description на сервере подставится дефолтом; `customer`/`executor` лучше эхом из draft (ИНН уже внутри) |
+| `sps`, `kgs` | строки | эхо из draft; пустые → сервер подставит `crm.tasks.sps` / `kgs`; явная `не определено` не перетирается |
 | `violation_names` | список | только имена из `violation_options`; иначе 422 |
 | `violation` | устаревшее | многострочная строка; предпочтителен `violation_names` |
 | `photo_ids` | список int | id из draft.photos; чужие id → 400 |
@@ -254,6 +259,8 @@ curl -sS -X POST "$BASE/api/tasks/$TASK_KEY/field-reports/$REPORT_ID/letters" \
     "address":"ул. Примерная, д. 1",
     "engineering":"не определено",
     "description":"Земляные работы без ордера",
+    "sps":"ТЗ ОПС: 501",
+    "kgs":"КГС: не определено",
     "violation_names":[],
     "photo_ids":[101,102],
     "map_scale":1000
@@ -349,6 +356,8 @@ class WebCrmLettersClient:
 #     "address": draft["address"],
 #     "engineering": draft["engineering"],
 #     "description": draft["description"],
+#     "sps": draft["sps"],
+#     "kgs": draft["kgs"],
 #     "violation_names": [],
 #     "photo_ids": [p["id"] for p in draft["photos"]],
 #     "map_scale": draft["map_scale_default"],
@@ -363,8 +372,8 @@ class WebCrmLettersClient:
 - [ ] Login возвращает `token` и `can_generate_letters`.
 - [ ] Запросы с `Authorization: Bearer` к draft/generate/download работают **без** cookie.
 - [ ] Role `field` получает 403 на letter-эндпоинтах; кнопка скрыта.
-- [ ] Draft подставляет адрес / заказчика / список фото и `violation_options`.
-- [ ] Generate с выбранными `photo_ids` и `map_scale` сохраняет DOCX; файл открывается в Word.
+- [ ] Draft подставляет адрес / заказчика (с ИНН при наличии) / `sps`/`kgs` / список фото (`Обзорное` / `Информационный щит`) и `violation_options`.
+- [ ] Generate с `sps`/`kgs` из draft, выбранными `photo_ids` и `map_scale` сохраняет DOCX; файл открывается в Word.
 - [ ] После истечения TTL повторный login восстанавливает работу (нет «залипания» старого token).
 - [ ] Относительные `download_url` / `image_url` корректно склеиваются с base URL.
 

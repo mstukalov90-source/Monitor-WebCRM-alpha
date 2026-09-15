@@ -11,7 +11,6 @@ from psycopg2.extras import RealDictCursor
 from app.crm.store import (
     _find_subgroup_for_record,
     _snapshot_table_ref,
-    ensure_rayon_column,
     fetch_tasks_by_keys,
 )
 
@@ -94,7 +93,6 @@ def _fetch_closed_snapshot_rows(
     for config_key, default_table, source in CLOSED_SNAPSHOTS:
         schema, table = _snapshot_table_ref(store_cfg, config_key, default_table)
         try:
-            ensure_rayon_column(conn, schema, table)
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f'''

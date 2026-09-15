@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.crm.collector import (
+    CollectQueryContext,
     TaskResult,
     build_collect_plan,
     collect_tasks,
@@ -83,11 +84,10 @@ class EtlPhotoCollectorPlanTests(unittest.TestCase):
 
 
 class CollectTasksPersistTests(unittest.TestCase):
-    @patch("app.crm.collector.enrich_task_result_field_observed")
-    @patch("app.crm.collector.filter_sent_tasks_from_result")
-    @patch("app.crm.collector.collect_etl_sync_subgroup_tasks", return_value=([], []))
-    @patch("app.crm.collector.collect_office_data_tasks", return_value=([], []))
-    @patch("app.crm.collector.collect_field_data_tasks", return_value=([], []))
+    @patch(
+        "app.crm.collector.build_collect_query_context",
+        return_value=CollectQueryContext("POLYGON()", 32637),
+    )
     @patch("app.crm.collector.collect_layer_tasks", return_value=([], []))
     @patch("app.crm.collector.build_collect_plan")
     @patch("app.crm.collector.persist_district_tasks")
@@ -107,11 +107,10 @@ class CollectTasksPersistTests(unittest.TestCase):
         collect_tasks(conn, "Сокол", True, persist=True, login="test")
         persist_mock.assert_called_once_with(conn, "Сокол", True, "test")
 
-    @patch("app.crm.collector.enrich_task_result_field_observed")
-    @patch("app.crm.collector.filter_sent_tasks_from_result")
-    @patch("app.crm.collector.collect_etl_sync_subgroup_tasks", return_value=([], []))
-    @patch("app.crm.collector.collect_office_data_tasks", return_value=([], []))
-    @patch("app.crm.collector.collect_field_data_tasks", return_value=([], []))
+    @patch(
+        "app.crm.collector.build_collect_query_context",
+        return_value=CollectQueryContext("POLYGON()", 32637),
+    )
     @patch("app.crm.collector.collect_layer_tasks", return_value=([], []))
     @patch("app.crm.collector.build_collect_plan")
     @patch("app.crm.collector.persist_district_tasks")
@@ -133,7 +132,7 @@ class CollectTasksPersistTests(unittest.TestCase):
 
 
 class EtlPhotoLoaderSqlTests(unittest.TestCase):
-    @patch("app.crm.etl_photo_loader.fetch_snapshot_task_keys", return_value=set())
+    @patch("app.crm.etl_photo_loader.snapshot_table_refs", return_value=())
     @patch("app.crm.etl_photo_loader.fetch_task_attributes_in_district")
     @patch("app.crm.etl_photo_loader._district_context")
     @patch("app.crm.etl_photo_loader.crm_task_store_config")
@@ -144,7 +143,7 @@ class EtlPhotoLoaderSqlTests(unittest.TestCase):
         store_mock: MagicMock,
         district_mock: MagicMock,
         fetch_mock: MagicMock,
-        _snap_mock: MagicMock,
+        _refs_mock: MagicMock,
     ) -> None:
         from app.crm.etl_photo_loader import collect_etl_sync_subgroup_tasks
 

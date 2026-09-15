@@ -29,6 +29,13 @@ merge_env_key GEOCODE_TIMEOUT_SECONDS 8.0
 merge_env_key AUTH_COOKIE_NAME monitor_session
 merge_env_key AUTH_TOKEN_TTL_HOURS 12
 merge_env_key EXCEL_UPLOAD_DIR /opt/monitor/excel_inbox
+# Ports on 172.21.198.219: car=5000, bicycle=5001, foot=5002
+merge_env_key OSRM_FOOT_URL 'http://127.0.0.1:5002'
+merge_env_key OSRM_BIKE_URL 'http://127.0.0.1:5001'
+merge_env_key OSRM_DRIVING_URL 'http://127.0.0.1:5000'
+merge_env_key OSRM_TIMEOUT_SECONDS 30
+merge_env_key ORDER_ROUTE_BUFFER_M 100
+merge_env_key ORDER_ROUTE_GRID_M 180
 
 mkdir -p /opt/monitor/excel_inbox
 

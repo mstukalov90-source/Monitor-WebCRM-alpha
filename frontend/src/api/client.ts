@@ -51,6 +51,8 @@ import type {
   MonitorStatus,
   ZipCloseApplyResult,
   ZipClosePreview,
+  GpkgAreaImportResult,
+  OrderRouteContext,
 } from '../types'
 
 const API_BASE = ''
@@ -215,6 +217,36 @@ export function applyZipClose(previewId: string, username: string): Promise<ZipC
   )
 }
 
+export async function uploadTasksAreaGpkg(file: File): Promise<GpkgAreaImportResult> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 300_000)
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch(`${API_BASE}/api/admin/tasks-area/gpkg`, {
+      method: 'POST',
+      credentials: 'include',
+      body,
+      signal: controller.signal,
+    })
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      throw errorFromApiBody(text, res.statusText)
+    }
+    return res.json() as Promise<GpkgAreaImportResult>
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера')
+    }
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export function fetchLayersConfig(): Promise<{ groups: LayerGroupConfig[] }> {
   return request('/api/config/layers')
 }
@@ -271,28 +303,12 @@ export async function collectTasksByLayers(
   rayon: string,
   onProgress?: (progress: CollectProgress) => void,
 ): Promise<TaskResult> {
-  const plan = await fetchCollectPlan(rayon)
-
-  const total = plan.layers.length
-  const layerErrors: string[] = [...plan.errors]
-  for (let index = 0; index < plan.layers.length; index += 1) {
-    const layer = plan.layers[index]
-    onProgress?.({
-      current: index + 1,
-      total,
-      layerName: layer.layer_name,
-    })
-    const chunk = await collectTasksLayer(rayon, layer)
-    if (chunk.errors.length) {
-      layerErrors.push(...chunk.errors)
-    }
-  }
-
-  const active = await fetchActiveTasks(rayon)
-  if (layerErrors.length) {
-    active.errors = [...active.errors, ...layerErrors]
-  }
-  return active
+  onProgress?.({
+    current: 1,
+    total: 1,
+    layerName: 'Активные задачи',
+  })
+  return fetchActiveTasks(rayon)
 }
 
 export function fetchActiveTasks(rayon: string): Promise<TaskResult> {
@@ -1040,6 +1056,34 @@ export async function exportStatisticsReport(payload: {
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+// ---------------------------------------------------------------------------
+// Order route (OSRM)
+// ---------------------------------------------------------------------------
+
+export function buildOrderRoute(
+  orderKey: string,
+  start?: { lng: number; lat: number } | null,
+): Promise<OrderRouteContext> {
+  const body = start ? { start_lng: start.lng, start_lat: start.lat } : {}
+  return request(
+    `/api/crm/tasks-area/${encodeURIComponent(orderKey)}/build-route`,
+    { method: 'POST', body: JSON.stringify(body) },
+    120_000,
+  )
+}
+
+export function fetchOrderRoute(orderKey: string): Promise<OrderRouteContext> {
+  return request(`/api/crm/tasks-area/${encodeURIComponent(orderKey)}/route`)
+}
+
+export function orderRouteGpxUrl(orderKey: string): string {
+  return `/api/crm/tasks-area/${encodeURIComponent(orderKey)}/route.gpx`
+}
+
+export function orderRouteGeoJsonUrl(orderKey: string): string {
+  return `/api/crm/tasks-area/${encodeURIComponent(orderKey)}/route.geojson`
 }
 
 function filenameFromDisposition(header: string | null, fallback: string): string {

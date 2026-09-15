@@ -10,8 +10,7 @@ from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.link_resolver import find_subgroup_cfg
 from app.crm.store import (
     _table_ref,
-    enrich_features_field_observed,
-    fetch_snapshot_task_keys,
+    snapshot_table_refs,
 )
 from app.layers.geojson import fetch_district_wkt, fetch_task_attributes_in_district
 from app.layers.registry import get_registry
@@ -64,6 +63,8 @@ def collect_etl_sync_subgroup_tasks(
     rayon: str,
     subgroup_name: str,
     apply_date_filter: bool,
+    *,
+    query_context: Any | None = None,
 ) -> tuple[list[Any], list[str]]:
     """Active tasks for ETL-synced photo subgroups (JOIN crm.tasks, no persist)."""
     from app.crm.collector import TaskFeature
@@ -88,7 +89,14 @@ def collect_etl_sync_subgroup_tasks(
     if not source_field or not task_column:
         return [], [f"No task store mapping for subgroup «{subgroup_name}»"]
 
-    district_wkt, metric_srid, district_errors = _district_context(conn, rayon)
+    if query_context is None:
+        district_wkt, metric_srid, district_errors = _district_context(conn, rayon)
+        excluded_task_tables = snapshot_table_refs(store_cfg)
+    else:
+        district_wkt = query_context.district_wkt
+        metric_srid = query_context.metric_srid
+        district_errors = []
+        excluded_task_tables = query_context.excluded_task_tables
     errors.extend(district_errors)
     if not district_wkt:
         return [], errors
@@ -100,7 +108,6 @@ def collect_etl_sync_subgroup_tasks(
         errors.append(f"Layer or group not found: {name}")
 
     tasks_schema, tasks_table = _table_ref(store_cfg)
-    snapshot_keys = fetch_snapshot_task_keys(conn, store_cfg)
     features: list[Any] = []
 
     for layer in resolved_layers:
@@ -115,26 +122,21 @@ def collect_etl_sync_subgroup_tasks(
                 district_wkt,
                 metric_srid,
                 scoped_geometry_id=bool(mapping.get("scoped_geometry_id")),
+                excluded_task_tables=excluded_task_tables,
             )
         except Exception as exc:
             errors.append(f"{layer.display_name}: {exc}")
             continue
 
         for item in raw_features:
-            task_key = item.get("task_key")
-            if task_key and task_key in snapshot_keys:
-                continue
             features.append(
                 TaskFeature(
                     layer_name=item["layer_name"],
                     layer_key=item["layer_key"],
                     attributes=item["attributes"],
                     geometry=item.get("geometry"),
-                    task_key=task_key,
+                    task_key=item.get("task_key"),
                 )
             )
-
-    if features:
-        enrich_features_field_observed(features, conn, store_cfg, subgroup_name)
 
     return features, errors

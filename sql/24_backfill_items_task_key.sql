@@ -68,7 +68,7 @@ WHERE t.task_key IS NULL AND ct.avr_mos_id = 'polygon:' || TRIM(t.id::text);
 
 -- Backfill source anchors on crm.tasks from linked items rows.
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_2855_points',
+    source_table = ARRAY['data_mos.items_2855_points'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -76,7 +76,7 @@ FROM data_mos.items_2855_points t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.oati_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_2855_lines',
+    source_table = ARRAY['data_mos.items_2855_lines'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -84,7 +84,7 @@ FROM data_mos.items_2855_lines t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.oati_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_2855_polygons',
+    source_table = ARRAY['data_mos.items_2855_polygons'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -92,7 +92,7 @@ FROM data_mos.items_2855_polygons t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.oati_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62501_points',
+    source_table = ARRAY['data_mos.items_62501_points'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -100,7 +100,7 @@ FROM data_mos.items_62501_points t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.earthwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62501_lines',
+    source_table = ARRAY['data_mos.items_62501_lines'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -108,7 +108,7 @@ FROM data_mos.items_62501_lines t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.earthwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62501_polygons',
+    source_table = ARRAY['data_mos.items_62501_polygons'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -116,7 +116,7 @@ FROM data_mos.items_62501_polygons t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.earthwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62441_points',
+    source_table = ARRAY['data_mos.items_62441_points'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -124,7 +124,7 @@ FROM data_mos.items_62441_points t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.localwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62441_lines',
+    source_table = ARRAY['data_mos.items_62441_lines'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -132,7 +132,7 @@ FROM data_mos.items_62441_lines t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.localwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62441_polygons',
+    source_table = ARRAY['data_mos.items_62441_polygons'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -140,7 +140,7 @@ FROM data_mos.items_62441_polygons t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.localwork_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62461_points',
+    source_table = ARRAY['data_mos.items_62461_points'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -148,7 +148,7 @@ FROM data_mos.items_62461_points t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.avr_mos_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62461_lines',
+    source_table = ARRAY['data_mos.items_62461_lines'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
@@ -156,7 +156,7 @@ FROM data_mos.items_62461_lines t
 WHERE t.task_key = ct.key AND ct.source_row_id IS NULL AND ct.avr_mos_id IS NOT NULL;
 
 UPDATE crm.tasks ct SET
-    source_table = 'data_mos.items_62461_polygons',
+    source_table = ARRAY['data_mos.items_62461_polygons'],
     source_row_id = t.id,
     source_global_id = t.global_id,
     source_geom_hash = md5(ST_AsEWKB(ST_SetSRID(ST_MakeValid(t.geom), 4326)))
