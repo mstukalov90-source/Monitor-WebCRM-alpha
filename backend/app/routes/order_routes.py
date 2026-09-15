@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.responses import Response
 
@@ -16,6 +18,7 @@ from app.crm.order_route import (
 from app.crm.schemas import OrderRouteBuildRequest, OrderRouteContextOut
 from app.db import get_connection
 from app.routing.gpx_export import route_to_gpx
+from app.routing.osrm_profiles import FILE_LETTER, route_content_disposition
 
 router = APIRouter(prefix="/api/crm/tasks-area", tags=["order-routes"])
 
@@ -43,8 +46,11 @@ def post_build_route(
 ) -> OrderRouteContextOut:
     _ensure_order_rayon_allowed(user, key)
     start = None
-    if body and body.start_lng is not None and body.start_lat is not None:
-        start = (body.start_lng, body.start_lat)
+    profile = "foot"
+    if body:
+        if body.start_lng is not None and body.start_lat is not None:
+            start = (body.start_lng, body.start_lat)
+        profile = body.profile
     try:
         with get_connection() as conn:
             data = build_order_route(
@@ -52,6 +58,7 @@ def post_build_route(
                 key,
                 start_lng_lat=start,
                 actor_login=user.login,
+                profile=profile,
             )
     except OrderRouteError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -88,15 +95,19 @@ def get_route_gpx(
         raise HTTPException(status_code=404, detail="Маршрут ещё не построен")
 
     order_info = data.get("order") or {}
-    name = f"Маршрут {order_info.get('task_number') or key[:8]}"
+    profile = str(data.get("profile") or "foot")
+    task_number = order_info.get("task_number")
+    letter = FILE_LETTER.get(profile, "П")
+    name = f"{task_number or key[:8]}_{letter}"
     gpx_xml = route_to_gpx(data.get("route_geometry"), name=name)
 
-    filename = f"route_{key[:8]}.gpx"
     return Response(
         content=gpx_xml,
         media_type="application/gpx+xml",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": route_content_disposition(
+                task_number, key, profile, "gpx"
+            ),
         },
     )
 
@@ -105,10 +116,26 @@ def get_route_gpx(
 def get_route_geojson(
     key: str,
     user: UserSession = Depends(require_order_route_access),
-) -> dict:
+) -> Response:
     _ensure_order_rayon_allowed(user, key)
     with get_connection() as conn:
         fc = fetch_route_geojson_export(conn, key)
     if fc is None:
         raise HTTPException(status_code=404, detail="Маршрут ещё не построен")
-    return fc
+    profile = "foot"
+    task_number = None
+    for feat in fc.get("features") or []:
+        props = feat.get("properties") or {}
+        if props.get("layer") == "route":
+            profile = str(props.get("profile") or "foot")
+            task_number = props.get("task_number")
+            break
+    return Response(
+        content=json.dumps(fc, ensure_ascii=False).encode("utf-8"),
+        media_type="application/geo+json",
+        headers={
+            "Content-Disposition": route_content_disposition(
+                task_number, key, profile, "geojson"
+            ),
+        },
+    )

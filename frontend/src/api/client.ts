@@ -48,11 +48,15 @@ import type {
   OatiLetterDraft,
   OatiLetterGeneratePayload,
   OatiLetterGenerateResult,
+  OatiLetterReviewItem,
+  LetterReviewStatus,
+  LetterReviewLimit,
   MonitorStatus,
   ZipCloseApplyResult,
   ZipClosePreview,
   GpkgAreaImportResult,
   OrderRouteContext,
+  OrderRouteProfile,
 } from '../types'
 
 const API_BASE = ''
@@ -336,6 +340,16 @@ export function fetchTasksArea(rayon: string, status?: AreaStatus): Promise<Task
 export function sendAreaToSurvey(key: string): Promise<{ status: string }> {
   return request(`/api/crm/tasks-area/${encodeURIComponent(key)}/send-to-survey`, {
     method: 'POST',
+  })
+}
+
+export function bulkSendAreaToSurvey(
+  rayon: string,
+  executor: string,
+): Promise<{ updated: number; skipped: number }> {
+  return request('/api/crm/tasks-area/bulk-send-to-survey', {
+    method: 'POST',
+    body: JSON.stringify({ rayon, executor }),
   })
 }
 
@@ -691,6 +705,27 @@ export async function generateOatiLetter(
   } finally {
     window.clearTimeout(timer)
   }
+}
+
+export function fetchLettersForReview(limit: LetterReviewLimit): Promise<OatiLetterReviewItem[]> {
+  const q = new URLSearchParams({ limit: String(limit) })
+  return request(`/api/letters?${q}`)
+}
+
+export function updateLetterReview(
+  fid: number,
+  status: LetterReviewStatus | null,
+): Promise<OatiLetterReviewItem> {
+  return request(`/api/letters/${fid}/review`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+}
+
+export function hideLetterFromReview(fid: number): Promise<{ status: string }> {
+  return request(`/api/letters/${fid}/hide`, {
+    method: 'POST',
+  })
 }
 
 export function fieldPhotoImageUrl(filePath: string): string {
@@ -1065,8 +1100,18 @@ export async function exportStatisticsReport(payload: {
 export function buildOrderRoute(
   orderKey: string,
   start?: { lng: number; lat: number } | null,
+  profile?: OrderRouteProfile,
 ): Promise<OrderRouteContext> {
-  const body = start ? { start_lng: start.lng, start_lat: start.lat } : {}
+  const body: {
+    start_lng?: number
+    start_lat?: number
+    profile?: OrderRouteProfile
+  } = {}
+  if (start) {
+    body.start_lng = start.lng
+    body.start_lat = start.lat
+  }
+  if (profile) body.profile = profile
   return request(
     `/api/crm/tasks-area/${encodeURIComponent(orderKey)}/build-route`,
     { method: 'POST', body: JSON.stringify(body) },
@@ -1084,6 +1129,47 @@ export function orderRouteGpxUrl(orderKey: string): string {
 
 export function orderRouteGeoJsonUrl(orderKey: string): string {
   return `/api/crm/tasks-area/${encodeURIComponent(orderKey)}/route.geojson`
+}
+
+export async function downloadOrderRouteFile(
+  url: string,
+  fallbackName: string,
+): Promise<void> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 60_000)
+  try {
+    const res = await fetch(`${API_BASE}${url}`, {
+      credentials: 'include',
+      signal: controller.signal,
+    })
+    if (res.status === 401) {
+      unauthorizedHandler?.()
+    }
+    if (!res.ok) {
+      const text = await res.text()
+      try {
+        const parsed = JSON.parse(text) as { detail?: string }
+        throw new Error(parsed.detail || text || res.statusText)
+      } catch (e) {
+        if (e instanceof Error && e.message !== text && !e.message.startsWith('Unexpected token')) {
+          throw e
+        }
+        throw new Error(text || res.statusText)
+      }
+    }
+    const blob = await res.blob()
+    const filename = filenameFromDisposition(res.headers.get('Content-Disposition'), fallbackName)
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 function filenameFromDisposition(header: string | null, fallback: string): string {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   buildOrderRoute,
+  downloadOrderRouteFile,
   fetchDistricts,
   fetchOrderRoute,
   fetchTasksArea,
@@ -9,10 +10,16 @@ import {
 } from '../api/client'
 import { useWorkspaceLayout } from '../hooks/useWorkspaceLayout'
 import { areaOrderDisplayName } from '../lib/areaOrders'
-import type { OrderRouteContext, TaskFeature } from '../types'
+import {
+  DEFAULT_ORDER_ROUTE_PROFILE,
+  orderRouteDurationLabel,
+  orderRouteProfileMeta,
+} from '../lib/orderRouteProfile'
+import type { OrderRouteContext, OrderRouteProfile, TaskFeature } from '../types'
 import { formatAreaHectares, formatAreaStatus, normalizeRayonName } from '../types'
 import { areaStatusFromAttributes } from '../types'
 import { OrderRouteMapView } from './OrderRouteMapView'
+import { OrderRouteProfileSelect } from './OrderRouteProfileSelect'
 import { ResizeHandle } from './ResizeHandle'
 
 interface OrderRoutesScreenProps {
@@ -60,7 +67,9 @@ export function OrderRoutesScreen({
   const [route, setRoute] = useState<OrderRouteContext | null>(null)
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [building, setBuilding] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [profile, setProfile] = useState<OrderRouteProfile>(DEFAULT_ORDER_ROUTE_PROFILE)
 
   const selectedOrder = orders.find((o) => orderKeyOf(o) === selectedKey) ?? null
 
@@ -110,7 +119,10 @@ export function OrderRoutesScreen({
     let cancelled = false
     fetchOrderRoute(selectedKey)
       .then((data) => {
-        if (!cancelled) setRoute(data)
+        if (!cancelled) {
+          setRoute(data)
+          if (data.profile) setProfile(data.profile)
+        }
       })
       .catch(() => {
         if (!cancelled) setRoute(null)
@@ -125,12 +137,36 @@ export function OrderRoutesScreen({
     setBuilding(true)
     setError(null)
     try {
-      const data = await buildOrderRoute(selectedKey)
+      const data = await buildOrderRoute(selectedKey, null, profile)
       setRoute(data)
+      if (data.profile) setProfile(data.profile)
     } catch (e) {
       setError(String(e))
     } finally {
       setBuilding(false)
+    }
+  }
+
+  const handleDownload = async (kind: 'gpx' | 'geojson') => {
+    if (!selectedKey) return
+    setDownloading(true)
+    setError(null)
+    const usedProfile = route?.profile || profile
+    const meta = orderRouteProfileMeta(usedProfile)
+    const stem =
+      areaOrderDisplayName(selectedOrder?.attributes ?? {}) !== '—'
+        ? areaOrderDisplayName(selectedOrder?.attributes ?? {})
+        : selectedKey.slice(0, 8)
+    const ext = kind === 'gpx' ? 'gpx' : 'geojson'
+    try {
+      await downloadOrderRouteFile(
+        kind === 'gpx' ? orderRouteGpxUrl(selectedKey) : orderRouteGeoJsonUrl(selectedKey),
+        `${stem}_${meta.letter}.${ext}`,
+      )
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -224,6 +260,11 @@ export function OrderRoutesScreen({
 
               {selectedOrder && (
                 <div className="order-routes-actions">
+                  <OrderRouteProfileSelect
+                    value={profile}
+                    disabled={building}
+                    onChange={setProfile}
+                  />
                   <button
                     type="button"
                     className="btn primary"
@@ -234,24 +275,22 @@ export function OrderRoutesScreen({
                   </button>
                   {route && selectedKey && (
                     <>
-                      <a
-                        href={orderRouteGpxUrl(selectedKey)}
+                      <button
+                        type="button"
                         className="btn"
-                        download
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        disabled={building || downloading}
+                        onClick={() => void handleDownload('gpx')}
                       >
                         Скачать GPX
-                      </a>
-                      <a
-                        href={orderRouteGeoJsonUrl(selectedKey)}
+                      </button>
+                      <button
+                        type="button"
                         className="btn"
-                        download
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        disabled={building || downloading}
+                        onClick={() => void handleDownload('geojson')}
                       >
                         Скачать GeoJSON
-                      </a>
+                      </button>
                     </>
                   )}
                 </div>
@@ -281,8 +320,16 @@ export function OrderRoutesScreen({
                       <td>{formatDistance(route.total_distance_m)}</td>
                     </tr>
                     <tr>
-                      <td className="muted">Время</td>
+                      <td className="muted">{orderRouteDurationLabel(route.profile)}</td>
                       <td>{formatDuration(route.total_duration_s)}</td>
+                    </tr>
+                    <tr>
+                      <td className="muted">Граф</td>
+                      <td>
+                        {orderRouteProfileMeta(route.profile).label}
+                        {' '}
+                        ({orderRouteProfileMeta(route.profile).letter})
+                      </td>
                     </tr>
                   </tbody>
                 </table>

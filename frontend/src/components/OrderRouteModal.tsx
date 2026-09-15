@@ -1,12 +1,24 @@
 import { useCallback, useEffect, useState } from 'react'
-import { buildOrderRoute, fetchOrderRoute, orderRouteGpxUrl, orderRouteGeoJsonUrl } from '../api/client'
-import type { OrderRouteContext } from '../types'
+import {
+  buildOrderRoute,
+  downloadOrderRouteFile,
+  fetchOrderRoute,
+  orderRouteGeoJsonUrl,
+  orderRouteGpxUrl,
+} from '../api/client'
+import {
+  DEFAULT_ORDER_ROUTE_PROFILE,
+  orderRouteDurationLabel,
+  orderRouteProfileMeta,
+} from '../lib/orderRouteProfile'
+import type { OrderRouteContext, OrderRouteProfile } from '../types'
+import { OrderRouteProfileSelect } from './OrderRouteProfileSelect'
 
 interface OrderRouteModalProps {
   orderKey: string
   taskNumber?: string | null
   rayon?: string | null
-  /** If true, build a new route on mount; otherwise load the saved one. */
+  /** If true, load saved route on mount. Build only after the user picks a graph. */
   autoBuild?: boolean
   onClose: () => void
   onRouteReady?: (route: OrderRouteContext) => void
@@ -32,16 +44,28 @@ function formatPct(pct: number | null | undefined): string {
   return `${pct.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`
 }
 
+function fallbackExportName(
+  taskNumber: string | null | undefined,
+  orderKey: string,
+  profile: string,
+  ext: string,
+): string {
+  const meta = orderRouteProfileMeta(profile)
+  const stem = taskNumber?.trim() || orderKey.slice(0, 8)
+  return `${stem}_${meta.letter}.${ext}`
+}
+
 export function OrderRouteModal({
   orderKey,
   taskNumber,
   rayon,
-  autoBuild = true,
   onClose,
   onRouteReady,
 }: OrderRouteModalProps) {
   const [data, setData] = useState<OrderRouteContext | null>(null)
+  const [profile, setProfile] = useState<OrderRouteProfile>(DEFAULT_ORDER_ROUTE_PROFILE)
   const [loading, setLoading] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const heading = [taskNumber?.trim(), rayon?.trim()].filter(Boolean).join(' · ') || orderKey.slice(0, 8)
@@ -52,9 +76,9 @@ export function OrderRouteModal({
     try {
       const result = await fetchOrderRoute(orderKey)
       setData(result)
+      if (result.profile) setProfile(result.profile)
       onRouteReady?.(result)
     } catch {
-      // no saved route — will offer to build
       setData(null)
     } finally {
       setLoading(false)
@@ -65,23 +89,39 @@ export function OrderRouteModal({
     setLoading(true)
     setError(null)
     try {
-      const result = await buildOrderRoute(orderKey)
+      const result = await buildOrderRoute(orderKey, null, profile)
       setData(result)
+      if (result.profile) setProfile(result.profile)
       onRouteReady?.(result)
     } catch (e) {
       setError(String(e))
     } finally {
       setLoading(false)
     }
-  }, [orderKey, onRouteReady])
+  }, [orderKey, onRouteReady, profile])
 
   useEffect(() => {
-    if (autoBuild) {
-      void doBuild()
-    } else {
-      void doLoad()
+    void doLoad()
+  }, [doLoad])
+
+  const handleDownload = async (kind: 'gpx' | 'geojson') => {
+    setDownloading(true)
+    setError(null)
+    const usedProfile = data?.profile || profile
+    const name = fallbackExportName(taskNumber ?? data?.order.task_number, orderKey, usedProfile, kind === 'gpx' ? 'gpx' : 'geojson')
+    try {
+      await downloadOrderRouteFile(
+        kind === 'gpx' ? orderRouteGpxUrl(orderKey) : orderRouteGeoJsonUrl(orderKey),
+        name,
+      )
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDownloading(false)
     }
-  }, [autoBuild, doBuild, doLoad])
+  }
+
+  const savedMeta = data ? orderRouteProfileMeta(data.profile) : null
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -91,6 +131,8 @@ export function OrderRouteModal({
       >
         <h2>Маршрут обследования</h2>
         <p className="muted small">{heading}</p>
+
+        <OrderRouteProfileSelect value={profile} disabled={loading} onChange={setProfile} />
 
         {error && <p className="error-banner small">{error}</p>}
 
@@ -120,13 +162,15 @@ export function OrderRouteModal({
                     <td>{formatDistance(data.total_distance_m)}</td>
                   </tr>
                   <tr>
-                    <td className="muted">Время (пешком)</td>
+                    <td className="muted">{orderRouteDurationLabel(data.profile)}</td>
                     <td>{formatDuration(data.total_duration_s)}</td>
                   </tr>
                   <tr>
-                    <td className="muted">Профили</td>
+                    <td className="muted">Граф</td>
                     <td>
-                      {[...new Set(data.segments.map((s) => s.profile))].join(', ') || 'foot'}
+                      {savedMeta
+                        ? `${savedMeta.label} (${savedMeta.letter})`
+                        : data.profile || 'foot'}
                     </td>
                   </tr>
                 </tbody>
@@ -135,7 +179,7 @@ export function OrderRouteModal({
 
             {data.polygon_coverage_pct != null && data.polygon_coverage_pct < 95 && (
               <p className="error-banner small">
-                Покрытие &lt; 95%. Возможно, часть полигона не охвачена пешеходной
+                Покрытие &lt; 95%. Возможно, часть полигона не охвачена выбранной
                 сетью OSRM. Непокрытые зоны отмечены красным на карте.
               </p>
             )}
@@ -152,24 +196,22 @@ export function OrderRouteModal({
         <div className="modal-actions">
           {data && (
             <>
-              <a
-                href={orderRouteGpxUrl(orderKey)}
+              <button
+                type="button"
                 className="btn"
-                download
-                target="_blank"
-                rel="noopener noreferrer"
+                disabled={loading || downloading}
+                onClick={() => void handleDownload('gpx')}
               >
                 Скачать GPX
-              </a>
-              <a
-                href={orderRouteGeoJsonUrl(orderKey)}
+              </button>
+              <button
+                type="button"
                 className="btn"
-                download
-                target="_blank"
-                rel="noopener noreferrer"
+                disabled={loading || downloading}
+                onClick={() => void handleDownload('geojson')}
               >
                 Скачать GeoJSON
-              </a>
+              </button>
             </>
           )}
           <button

@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from app.crm.date_utils import parse_attribute_date
+
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
@@ -122,9 +124,9 @@ def format_ru_date_value(value: str | datetime | None) -> str:
         try:
             dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:
-            # Already a date-like string without time.
-            if len(text) >= 10 and text[2] == "." and text[5] == ".":
-                return text[:10]
+            parsed = parse_attribute_date(text)
+            if parsed is not None:
+                return parsed.strftime("%d.%m.%Y")
             return text
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=MSK)

@@ -394,6 +394,7 @@ export type AppView =
   | 'server_monitor'
   | 'ozn_match'
   | 'order_routes'
+  | 'letter_review'
 
 export type FieldScoreValue = 'unsatisfactory' | 'satisfactory' | 'good'
 
@@ -458,6 +459,8 @@ export interface FieldScoreContext {
 // Order route (OSRM)
 // ---------------------------------------------------------------------------
 
+export type OrderRouteProfile = 'driving' | 'bicycle' | 'foot'
+
 export interface OrderRouteSegment {
   profile: string
   chunk_index: number
@@ -488,6 +491,7 @@ export interface OrderRouteContext {
   total_duration_s: number | null
   built_by: string | null
   built_at: string | null
+  profile?: OrderRouteProfile
 }
 
 export interface TrackFeature {
@@ -542,6 +546,53 @@ export const TRACK_TABLE_COLUMNS: TrackTableColumn[] = [
   { field: 'duration_sec', label: 'Продолжительность', format: 'duration_sec' },
 ]
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+function ruDateParts(day: number, month: number, year: number): string | null {
+  if (year < 1000 || year > 9999) return null
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  const d = new Date(year, month - 1, day)
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) {
+    return null
+  }
+  return `${pad2(day)}.${pad2(month)}.${year}`
+}
+
+/** Display dates as ДД.ММ.ГГГГ. Dotted/slash values are DD.MM unless the second part is > 12 (MM.DD). */
+export function formatRuDate(value: unknown): string {
+  if (value == null || value === '') return ''
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return ''
+    return ruDateParts(value.getDate(), value.getMonth() + 1, value.getFullYear()) ?? ''
+  }
+  const text = String(value).trim()
+  if (!text) return ''
+
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) {
+    return ruDateParts(Number(iso[3]), Number(iso[2]), Number(iso[1])) ?? text
+  }
+
+  const dotted = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/)
+  if (dotted) {
+    const first = Number(dotted[1])
+    const second = Number(dotted[2])
+    const year = Number(dotted[3])
+    if (second > 12) {
+      return ruDateParts(second, first, year) ?? text
+    }
+    return ruDateParts(first, second, year) ?? text
+  }
+
+  const d = new Date(text)
+  if (!Number.isNaN(d.getTime())) {
+    return ruDateParts(d.getDate(), d.getMonth() + 1, d.getFullYear()) ?? text
+  }
+  return text
+}
+
 export function formatTrackTableCell(value: unknown, format?: TrackTableColumn['format']): string {
   if (value == null || value === '') return ''
   if (format === 'datetime') {
@@ -549,8 +600,7 @@ export function formatTrackTableCell(value: unknown, format?: TrackTableColumn['
     return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('ru-RU')
   }
   if (format === 'date') {
-    const d = new Date(String(value))
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('ru-RU')
+    return formatRuDate(value) || String(value)
   }
   if (format === 'duration_sec') {
     const sec = Number(value)
@@ -781,6 +831,32 @@ export interface OatiLetterGenerateResult {
   fid: number
   filename: string
   download_url: string
+}
+
+export type LetterReviewStatus = 'approved' | 'rejected'
+
+export const LETTER_REVIEW_LIMITS = [20, 50, 100, 200] as const
+export type LetterReviewLimit = (typeof LETTER_REVIEW_LIMITS)[number]
+
+export interface OatiLetterReviewItem {
+  fid: number
+  task_key: string
+  report_id: number | null
+  created_by: string
+  created_at: string | null
+  review_status: LetterReviewStatus | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  street: string
+  address: string
+  rayon: string
+  customer: string
+  executor: string
+  description: string
+  today: string
+  coordinates: string
+  lon: number | null
+  lat: number | null
 }
 
 export interface MissingLink {
@@ -1038,29 +1114,44 @@ export const TASK_MODAL_EXTRA_COLUMNS: Partial<Record<string, TaskTableColumn[]>
 
 export const ORDER_GROUP_SEARCH_FIELDS: Record<
   string,
-  { id: string; executor?: string; customer?: string; address?: string }
+  {
+    id: string
+    executor?: string
+    customer?: string
+    address?: string
+    workStart?: string
+    workEnd?: string
+  }
 > = {
   [OATI_ORDERS_SUBGROUP]: {
     id: 'order_number',
     executor: 'general_contractor',
     customer: 'customer_construction',
     address: 'work_place_description',
+    workStart: 'work_start_date',
+    workEnd: 'work_end_date',
   },
   [EARTHWORK_SUBGROUP]: {
     id: 'registration_number_notifications',
     executor: 'executor',
     address: 'work_place_description',
+    workStart: 'work_start_date',
+    workEnd: 'work_end_date',
   },
   [AVR_SUBGROUP]: {
     id: 'em_call_reg_num',
     executor: 'lead_of_work',
     customer: 'balanceholder',
     address: 'work_place_description',
+    workStart: 'work_start_date',
+    workEnd: 'work_end_date',
   },
   [LOCAL_REPAIR_SUBGROUP]: {
     id: 'global_id',
     customer: 'customer',
     address: 'work_place_description',
+    workStart: 'actual_start_date',
+    workEnd: 'actual_end_date',
   },
 }
 
@@ -1297,8 +1388,7 @@ export function formatTaskTableCell(value: unknown, format?: TaskTableColumn['fo
   if (format === 'area_hectares') return formatAreaHectares(value)
   if (value == null || value === '') return ''
   if (format === 'date') {
-    const d = new Date(String(value))
-    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('ru-RU')
+    return formatRuDate(value) || String(value)
   }
   return String(value)
 }

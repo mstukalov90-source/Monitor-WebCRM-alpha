@@ -10,9 +10,13 @@ interface OrderGroupSearchModalProps {
   onShowOnMap: (hit: OrderSearchHit) => void
 }
 
-function attrText(attrs: Record<string, unknown>, field: string | undefined): string {
+function attrText(
+  attrs: Record<string, unknown>,
+  field: string | undefined,
+  format?: 'date',
+): string {
   if (!field) return ''
-  return formatTaskTableCell(attrs[field])
+  return formatTaskTableCell(attrs[field], format)
 }
 
 function hitTitle(hit: OrderSearchHit): string {
@@ -90,6 +94,8 @@ export function OrderGroupSearchModal({ rayon, onClose, onShowOnMap }: OrderGrou
                   <th />
                   <th>Район</th>
                   <th>Номер</th>
+                  <th>Начало работ</th>
+                  <th>Окончание работ</th>
                   <th>Исполнитель</th>
                   <th>Заказчик</th>
                   <th>Адрес</th>
@@ -114,6 +120,8 @@ export function OrderGroupSearchModal({ rayon, onClose, onShowOnMap }: OrderGrou
                         {hit.in_selected_rayon ? 'Этот район' : 'Другой район'}
                       </td>
                       <td>{attrText(hit.attributes, fields?.id)}</td>
+                      <td>{attrText(hit.attributes, fields?.workStart, 'date')}</td>
+                      <td>{attrText(hit.attributes, fields?.workEnd, 'date')}</td>
                       <td>{attrText(hit.attributes, fields?.executor)}</td>
                       <td>{attrText(hit.attributes, fields?.customer)}</td>
                       <td>{attrText(hit.attributes, fields?.address)}</td>

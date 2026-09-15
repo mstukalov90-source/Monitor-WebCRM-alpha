@@ -22,6 +22,11 @@ from psycopg2.extras import RealDictCursor, Json
 
 from app.config import get_settings
 from app.crm.tasks_area import _task_geom_union_sql  # noqa: WPS436 — reuse existing SQL helper
+from app.routing.osrm_profiles import (
+    NETWORK_ADJECTIVE,
+    canonicalize_osrm_profile,
+    profile_from_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +387,7 @@ def build_order_route(
     *,
     start_lng_lat: tuple[float, float] | None = None,
     actor_login: str = "",
+    profile: str = "foot",
 ) -> dict[str, Any]:
     """Build, validate, save and return the order route context.
 
@@ -391,6 +397,11 @@ def build_order_route(
     settings = get_settings()
     buffer_m = settings.order_route_buffer_m
     grid_m = settings.order_route_grid_m
+    try:
+        profile = canonicalize_osrm_profile(profile)
+    except ValueError as exc:
+        raise OrderRouteError(str(exc), status_code=400) from exc
+    network = NETWORK_ADJECTIVE[profile]
 
     # 1. Fetch order
     order = _fetch_order(conn, order_key)
@@ -426,15 +437,15 @@ def build_order_route(
             "Недостаточно точек для построения маршрута (нужно ≥2)"
         )
 
-    # 5. Snap to foot network
-    snapped = _snap_waypoints("foot", waypoints)
+    # 5. Snap to selected OSRM graph
+    snapped = _snap_waypoints(profile, waypoints)
     if len(snapped) < 2:
         raise OrderRouteError(
-            "Не удалось привязать точки к пешеходной дорожной сети OSRM"
+            f"Не удалось привязать точки к {network} дорожной сети OSRM"
         )
 
     # 6. Build route via trip
-    route_coords, distance, duration, segments = _build_route_via_trip("foot", snapped)
+    route_coords, distance, duration, segments = _build_route_via_trip(profile, snapped)
     if not route_coords:
         raise OrderRouteError("OSRM не смог построить маршрут")
 
@@ -462,10 +473,7 @@ def build_order_route(
             len(gap_centroids),
         )
 
-        extra_snapped = _snap_waypoints("foot", gap_centroids)
-        if not extra_snapped:
-            # Try bike profile as fallback
-            extra_snapped = _snap_waypoints("bike", gap_centroids)
+        extra_snapped = _snap_waypoints(profile, gap_centroids)
         if not extra_snapped:
             break
 
@@ -474,7 +482,7 @@ def build_order_route(
         if len(combined) > MAX_WAYPOINTS:
             combined = combined[:MAX_WAYPOINTS]
 
-        new_coords, new_dist, new_dur, new_segs = _build_route_via_trip("foot", combined)
+        new_coords, new_dist, new_dur, new_segs = _build_route_via_trip(profile, combined)
         if new_coords:
             route_coords = new_coords
             distance = new_dist
@@ -535,6 +543,7 @@ def build_order_route(
     params_json = {
         "buffer_m": buffer_m,
         "grid_m": grid_m,
+        "profile": profile,
         "start": list(start_lng_lat) if start_lng_lat else None,
         "refine_iterations": min(MAX_REFINE_ITERATIONS, 3),
     }
@@ -587,6 +596,7 @@ def build_order_route(
         "total_duration_s": round(duration, 1),
         "built_by": actor_login or None,
         "built_at": now.isoformat(),
+        "profile": profile,
     }
 
 
@@ -654,6 +664,7 @@ def fetch_saved_route(conn: PgConnection, order_key: str) -> dict[str, Any] | No
         "total_duration_s": float(data["total_duration_s"]) if data.get("total_duration_s") is not None else None,
         "built_by": data.get("built_by"),
         "built_at": data.get("built_at"),
+        "profile": profile_from_params(data.get("params")),
     }
 
 
@@ -686,6 +697,8 @@ def fetch_route_geojson_export(conn: PgConnection, order_key: str) -> dict[str, 
             "type": "Feature",
             "properties": {
                 "layer": "route",
+                "profile": saved.get("profile"),
+                "task_number": (saved.get("order") or {}).get("task_number"),
                 "total_distance_m": saved.get("total_distance_m"),
                 "total_duration_s": saved.get("total_duration_s"),
             },

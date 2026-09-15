@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import get_settings
+from app.routing.osrm_profiles import canonicalize_osrm_profile
 
 logger = logging.getLogger(__name__)
 
@@ -53,21 +54,17 @@ class OsrmRouteResult:
 
 _PROFILE_ATTR = {
     "foot": "osrm_foot_url",
-    "walking": "osrm_foot_url",
     "bicycle": "osrm_bike_url",
-    "bike": "osrm_bike_url",
     "driving": "osrm_driving_url",
-    "car": "osrm_driving_url",
 }
 
 
-def _base_url(profile: str) -> str:
+def _resolved_profile(profile: str) -> tuple[str, str]:
+    """Return (canonical profile for OSRM path, base URL)."""
+    canon = canonicalize_osrm_profile(profile)
     settings = get_settings()
-    attr = _PROFILE_ATTR.get(profile)
-    if not attr:
-        raise ValueError(f"Unknown OSRM profile: {profile}")
-    url: str = getattr(settings, attr)
-    return url.rstrip("/")
+    url: str = getattr(settings, _PROFILE_ATTR[canon])
+    return canon, url.rstrip("/")
 
 
 def _timeout() -> float:
@@ -107,7 +104,7 @@ def nearest(
     number: int = 1,
 ) -> list[OsrmWaypoint]:
     """Find ``number`` nearest road-network points for *coord*."""
-    base = _base_url(profile)
+    profile, base = _resolved_profile(profile)
     url = f"{base}/nearest/v1/{profile}/{coord[0]},{coord[1]}?number={number}"
     data = _get_json(url)
     if data.get("code") != "Ok":
@@ -135,7 +132,7 @@ def route(
     """Build a route through *coords* (≥2 points)."""
     if len(coords) < 2:
         raise ValueError("route() requires at least 2 coordinates")
-    base = _base_url(profile)
+    profile, base = _resolved_profile(profile)
     cs = _coords_str(coords)
     params = urllib.parse.urlencode({
         "overview": overview,
@@ -194,7 +191,7 @@ def trip(
     """Solve a travelling-salesman ordering via OSRM Trip service."""
     if len(coords) < 2:
         raise ValueError("trip() requires at least 2 coordinates")
-    base = _base_url(profile)
+    profile, base = _resolved_profile(profile)
     cs = _coords_str(coords)
     params = urllib.parse.urlencode({
         "roundtrip": "true" if roundtrip else "false",

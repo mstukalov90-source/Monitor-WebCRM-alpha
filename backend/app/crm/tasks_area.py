@@ -260,6 +260,52 @@ def complete_area_survey(conn: PgConnection, key: str, login: str) -> str:
     return _transition_area_status(conn, key, login=login, from_status="wip", to_status="done")
 
 
+def bulk_send_area_to_survey(
+    conn: PgConnection,
+    *,
+    rayon: str,
+    executor: str,
+    login: str,
+) -> dict[str, int]:
+    from app.crm.personnel import PersonnelError, _validate_executor
+    from app.layers.geojson import normalize_rayon_name, sql_rayon_matches
+
+    rayon_norm = normalize_rayon_name(rayon)
+    if not rayon_norm:
+        raise PersonnelError("Район не указан")
+    exec_login = (executor or "").strip()
+    if not exec_login:
+        raise PersonnelError("Исполнитель не указан")
+    _validate_executor(conn, exec_login)
+    ensure_tasks_area_audit_columns(conn)
+    audit = make_user_audit(login)
+    rayon_pred = sql_rayon_matches('"rayon"', allow_null=False)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f'SELECT COUNT(*) FROM crm.tasks_area WHERE {rayon_pred}',
+            (rayon_norm,),
+        )
+        total_row = cur.fetchone()
+        total = int(total_row[0]) if total_row else 0
+        cur.execute(
+            f"""
+            UPDATE crm.tasks_area SET
+                status = 'wip',
+                executor = %s,
+                user_last_edit = %s::text[],
+                user_created = COALESCE(user_created, %s::text[])
+            WHERE {rayon_pred}
+              AND COALESCE(status, '') = 'free'
+            RETURNING key
+            """,
+            (exec_login, audit, audit, rayon_norm),
+        )
+        updated = int(cur.rowcount or 0)
+    conn.commit()
+    return {"updated": updated, "skipped": max(0, total - updated)}
+
+
 def _moscow_reset_at_sql() -> str:
     """Most recent ANALISE_RESET_HOUR:00 Europe/Moscow as timestamptz."""
     hhmm = f"{ANALISE_RESET_HOUR:02d}:00:00"

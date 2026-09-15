@@ -33,6 +33,7 @@ import { MyClosedTasksModal } from './components/MyClosedTasksModal'
 import { ZipCloseModal } from './components/ZipCloseModal'
 import { GpkgAreaUploadModal } from './components/GpkgAreaUploadModal'
 import { PersonnelScreen } from './components/PersonnelScreen'
+import { LetterReviewScreen } from './components/LetterReviewScreen'
 import { ServerMonitorScreen } from './components/ServerMonitorScreen'
 import { StatisticsScreen } from './components/StatisticsScreen'
 import { flattenLayers } from './components/LayerControl'
@@ -800,6 +801,16 @@ function App() {
     )
   }
 
+  if (appView === 'letter_review' && user.can_manage_personnel) {
+    return (
+      <LetterReviewScreen
+        userLogin={userDisplayName}
+        onBack={() => setAppView('workspace')}
+        onLogout={logout}
+      />
+    )
+  }
+
   if (appView === 'statistics') {
     return (
       <StatisticsScreen
@@ -904,6 +915,7 @@ function App() {
           onCollect={handleCollect}
           onLoadFieldTasks={handleLoadFieldTasks}
           onOpenPersonnel={() => setAppView('personnel')}
+          onOpenLetterReview={() => setAppView('letter_review')}
           onOpenEmployeeLocations={() => setAppView('employee_locations')}
           onOpenOrderTracks={() => setAppView('order_tracks')}
           onOpenOrderRoutes={() => setAppView('order_routes')}
@@ -1049,6 +1061,11 @@ function App() {
             {user.can_manage_personnel && (
               <button type="button" className="btn" onClick={() => setAppView('personnel')}>
                 Персонал
+              </button>
+            )}
+            {user.can_manage_personnel && (
+              <button type="button" className="btn" onClick={() => setAppView('letter_review')}>
+                Ревью писем
               </button>
             )}
             {user.can_manage_personnel && (

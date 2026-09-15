@@ -72,7 +72,7 @@ export function TaskExecutorAssign({
               disabled={loading}
             >
               <option value="">— не назначен —</option>
-              {users.map((u) => (
+              {users.filter((u) => u.role === 'field').map((u) => (
                 <option key={u.uuid} value={u.login}>
                   {personnelUserLabel(u)}
                 </option>

@@ -34,27 +34,27 @@
 Дедуп (~30 м) → truncate ≤ 300 точек
         │
         ▼
-Snap к графу OSRM foot (nearest, отброс если > 500 м от сети)
+Snap к выбранному графу OSRM (driving / bicycle / foot)
         │
         ▼
-OSRM Trip (foot, roundtrip=false, source=first), чанки по 90 точек
+OSRM Trip (тот же профиль, roundtrip=false, source=first), чанки по 90 точек
         │
         ▼
 Проверка PostGIS: % полигона в буфере 100 м, % задач в буфере
         │
         ├── ≥ 95% покрытия полигона → сохранить
-        └── иначе до 3 итераций: центроиды «дыр» → snap (foot, иначе bike) → снова Trip
+        └── иначе до 3 итераций: центроиды «дыр» → snap на том же графе → снова Trip
 ```
 
 **Профили OSRM на прод .219** (только localhost сервера):
 
-| Контейнер | Порт | Профиль в URL |
-|-----------|------|----------------|
-| `monitor-osrm-car` | `127.0.0.1:5000` | `driving` |
-| `monitor-osrm-bicycle` | `127.0.0.1:5001` | `bicycle` / `bike` |
-| `monitor-osrm-foot` | `127.0.0.1:5002` | `foot` |
+| Контейнер | Порт | Профиль в URL | Буква в имени файла |
+|-----------|------|----------------|---------------------|
+| `monitor-osrm-car` | `127.0.0.1:5000` | `driving` | **А** |
+| `monitor-osrm-bicycle` | `127.0.0.1:5001` | `bicycle` | **В** |
+| `monitor-osrm-foot` | `127.0.0.1:5002` | `foot` | **П** |
 
-Текущая реализация **ведёт обход пешком (`foot`)**. Профиль `bike` используется только как fallback snap для точек в «дырах» покрытия. `driving` в сборке маршрута **не вызывается** (зарезервирован в конфиге).
+Профиль задаётся в POST `profile` (`driving` / `bicycle` / `foot`, также А/В/П). По умолчанию `foot`. Snap и Trip идут **только** по выбранному графу.
 
 Константы движка:
 
@@ -117,9 +117,12 @@ Base: `http://172.21.198.219` (без завершающего `/`).
 ```json
 {
   "start_lng": 37.6173,
-  "start_lat": 55.7558
+  "start_lat": 55.7558,
+  "profile": "foot"
 }
 ```
+
+`profile`: `driving` (А), `bicycle` (В), `foot` (П). По умолчанию `foot`.
 
 Если старт не передан, обход начинается с точек задач/сетки (порядок Trip OSRM, `source=first` — первая точка списка после дедупа).
 
@@ -140,7 +143,7 @@ Base: `http://172.21.198.219` (без завершающего `/`).
 `GET /api/crm/tasks-area/{key}/route.gpx`  
 `Accept` не обязателен.  
 `Content-Type: application/gpx+xml`  
-`Content-Disposition: attachment; filename="route_<8 символов uuid>.gpx"`
+`Content-Disposition: attachment; filename="<номер_заказа>_П.gpx"` (буква А/В/П по сохранённому профилю).
 
 GPX 1.1, один `<trk>` / `<trkseg>`, точки `lat`/`lon` (не lng-lat JSON). Подходит для импорта в OSMAnd / органического трека на карте.
 
@@ -194,7 +197,8 @@ GPX 1.1, один `<trk>` / `<trkseg>`, точки `lat`/`lon` (не lng-lat JSO
   "total_distance_m": 1495.4,
   "total_duration_s": 1076.4,
   "built_by": "admin",
-  "built_at": "2026-09-04T05:26:00+00:00"
+  "built_at": "2026-09-07T10:15:00+00:00",
+  "profile": "foot"
 }
 ```
 
@@ -204,7 +208,8 @@ GPX 1.1, один `<trk>` / `<trkseg>`, точки `lat`/`lon` (не lng-lat JSO
 | `buffer_m` | Не хардкодить 100 — брать из ответа. |
 | `polygon_coverage_pct` | Показать оператору; предупреждение если &lt; 95. |
 | `task_coverage_pct` / `tasks_total` | Сколько задач «закрыто» буфером. |
-| `total_duration_s` | Оценка **пешком** по графу OSRM, не GPS. |
+| `total_duration_s` | Оценка по выбранному графу OSRM (`profile`), не GPS. |
+| `profile` | `driving` / `bicycle` / `foot`. Имя файла GPX: `{task_number}_А|В|П.gpx`. |
 | `tasks_covered` | После GET сохранённого маршрута может быть `null` (в таблице не хранится отдельно). |
 | `uncovered_geometry` | Опционально; `ST_Difference`, может быть GeometryCollection. |
 
@@ -281,10 +286,10 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 curl -sS -m 120 -X POST "$BASE/api/crm/tasks-area/$KEY/build-route" \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"start_lng":37.77,"start_lat":55.79}'
+  -d '{"start_lng":37.77,"start_lat":55.79,"profile":"driving"}'
 
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  -o route.gpx "$BASE/api/crm/tasks-area/$KEY/route.gpx"
+  -OJ "$BASE/api/crm/tasks-area/$KEY/route.gpx"
 ```
 
 ---

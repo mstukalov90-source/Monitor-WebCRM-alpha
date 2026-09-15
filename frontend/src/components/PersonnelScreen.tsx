@@ -92,7 +92,7 @@ export function PersonnelScreen({
   )
 
   const executorUsers = useMemo(
-    () => users.filter((u) => u.role === 'field' || u.role === 'office'),
+    () => users.filter((u) => u.role === 'field'),
     [users],
   )
 

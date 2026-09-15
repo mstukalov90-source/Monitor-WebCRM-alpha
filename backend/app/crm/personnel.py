@@ -22,6 +22,7 @@ from app.crm.store import (
 from app.layers.geojson import list_districts_with_gid
 
 MANAGEABLE_ROLES = ("field", "office")
+EXECUTOR_ROLES = ("field",)
 PERSONNEL_LIST_ROLES = ("field", "office", "manager", "admin")
 CREATABLE_ROLES = ("field", "office", "manager")
 WorkflowTarget = Literal["active", "field", "clear"]
@@ -400,7 +401,7 @@ def _validate_executor(conn: PgConnection, executor: str | None) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM crm.users WHERE login = %s AND role = ANY(%s)",
-            (login, list(MANAGEABLE_ROLES)),
+            (login, list(EXECUTOR_ROLES)),
         )
         if not cur.fetchone():
             raise PersonnelError(f"Исполнитель «{login}» не найден или недоступен для назначения")

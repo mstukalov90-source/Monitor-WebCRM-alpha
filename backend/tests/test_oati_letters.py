@@ -398,6 +398,9 @@ class DocxFillTests(unittest.TestCase):
         self.assertRegex(format_ru_date(), r"\d{2}\.\d{2}\.\d{4}")
         self.assertEqual(format_ru_datetime("2026-07-22T12:30:00+03:00"), "22.07.2026 12:30")
         self.assertEqual(format_ru_date_value("2026-07-22T12:30:00+03:00"), "22.07.2026")
+        self.assertEqual(format_ru_date_value("03.04.2026"), "03.04.2026")
+        self.assertEqual(format_ru_date_value("03.15.2026"), "15.03.2026")
+        self.assertEqual(format_ru_date_value("2026-03-04"), "04.03.2026")
         self.assertEqual(
             letter_download_filename(street="улица Фомичёвой", today="27.07.2026", fid=15),
             "Об инциденте улица Фомичёвой от 27.07.2026 №15.docx",

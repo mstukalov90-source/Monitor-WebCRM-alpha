@@ -20,6 +20,7 @@ from app.routes import (
     field_score,
     gpkg_area,
     layers,
+    letter_review,
     letters,
     monitor,
     order_routes,
@@ -77,6 +78,7 @@ app.include_router(excel_uploads.router)
 app.include_router(layers.router)
 app.include_router(tasks.router)
 app.include_router(letters.router)
+app.include_router(letter_review.router)
 app.include_router(order_tracks.router)
 app.include_router(ozn_match.router)
 app.include_router(employee_locations.router)

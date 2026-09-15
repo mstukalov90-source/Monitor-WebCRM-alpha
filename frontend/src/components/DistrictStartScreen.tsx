@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fetchAllTasksAreaGeoJson, fetchDistricts, fetchEmployeeLocations } from '../api/client'
+import {
+  bulkSendAreaToSurvey,
+  fetchAllTasksAreaGeoJson,
+  fetchDistricts,
+  fetchEmployeeLocations,
+  fetchPersonnelUsers,
+} from '../api/client'
 import { DistrictPickerMap } from './DistrictPickerMap'
 import {
   areaOrderDisplayName,
@@ -7,7 +13,12 @@ import {
   groupAreaOrdersByRayon,
 } from '../lib/areaOrders'
 import type { DistrictHoodMeta } from '../lib/hoodLayer'
-import type { CollectProgress, EmployeeLocationFeature, UserRole } from '../types'
+import type {
+  CollectProgress,
+  EmployeeLocationFeature,
+  PersonnelUser,
+  UserRole,
+} from '../types'
 import {
   analiseWorkflowStatus,
   analiseWorkflowStatusClass,
@@ -17,6 +28,7 @@ import {
   formatPreAnaliseWorkflowStatus,
   isOwnOpenOfficeOrder,
   normalizeRayonName,
+  personnelUserLabel,
   preAnaliseWorkflowStatus,
 } from '../types'
 
@@ -39,6 +51,7 @@ interface DistrictStartScreenProps {
   onCollect: () => void
   onLoadFieldTasks: () => void
   onOpenPersonnel?: () => void
+  onOpenLetterReview?: () => void
   onOpenEmployeeLocations?: () => void
   onOpenOrderTracks?: () => void
   onOpenOrderRoutes?: () => void
@@ -71,6 +84,7 @@ export function DistrictStartScreen({
   onCollect,
   onLoadFieldTasks,
   onOpenPersonnel,
+  onOpenLetterReview,
   onOpenEmployeeLocations,
   onOpenOrderTracks,
   onOpenOrderRoutes,
@@ -91,6 +105,12 @@ export function DistrictStartScreen({
   const [areaOrdersError, setAreaOrdersError] = useState<string | null>(null)
   const [areaOrdersByRayon, setAreaOrdersByRayon] = useState<ReturnType<typeof groupAreaOrdersByRayon>>([])
   const [ownOrdersOnly, setOwnOrdersOnly] = useState(false)
+  const [surveyRefreshKey, setSurveyRefreshKey] = useState(0)
+  const [fieldUsers, setFieldUsers] = useState<PersonnelUser[]>([])
+  const [surveyExecutor, setSurveyExecutor] = useState('')
+  const [surveyBusy, setSurveyBusy] = useState(false)
+  const [surveyMessage, setSurveyMessage] = useState<string | null>(null)
+  const [surveyConfirm, setSurveyConfirm] = useState(false)
   const showOwnOrdersFilter = userRole === 'office'
 
   useEffect(() => {
@@ -160,7 +180,7 @@ export function DistrictStartScreen({
     return () => {
       cancelled = true
     }
-  }, [areaOrdersRefreshKey])
+  }, [areaOrdersRefreshKey, surveyRefreshKey])
 
   useEffect(() => {
     if (!canManagePersonnel) {
@@ -182,6 +202,24 @@ export function DistrictStartScreen({
     }
   }, [canManagePersonnel])
 
+  useEffect(() => {
+    if (!canManagePersonnel) {
+      setFieldUsers([])
+      return
+    }
+    let cancelled = false
+    fetchPersonnelUsers()
+      .then((users) => {
+        if (!cancelled) setFieldUsers(users.filter((u) => u.role === 'field'))
+      })
+      .catch(() => {
+        if (!cancelled) setFieldUsers([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [canManagePersonnel])
+
   const visibleOrdersByRayon = useMemo(() => {
     if (!ownOrdersOnly || !showOwnOrdersFilter) return areaOrdersByRayon
     const login = (sessionLogin ?? '').trim()
@@ -197,6 +235,39 @@ export function DistrictStartScreen({
     () => visibleOrdersByRayon.reduce((sum, group) => sum + group.orders.length, 0),
     [visibleOrdersByRayon],
   )
+
+  const selectedRayonFreeCount = useMemo(() => {
+    if (!rayon) return 0
+    const key = normalizeRayonName(rayon)
+    const group = areaOrdersByRayon.find((g) => normalizeRayonName(g.rayon) === key)
+    if (!group) return 0
+    return group.orders.filter((order) => areaStatusFromAttributes(order.attributes) === 'free')
+      .length
+  }, [areaOrdersByRayon, rayon])
+
+  useEffect(() => {
+    setSurveyConfirm(false)
+    setSurveyMessage(null)
+  }, [rayon])
+
+  const handleBulkSendToSurvey = async () => {
+    if (!rayon || !surveyExecutor) return
+    setSurveyBusy(true)
+    setSurveyMessage(null)
+    try {
+      const result = await bulkSendAreaToSurvey(rayon, surveyExecutor)
+      setSurveyConfirm(false)
+      setSurveyMessage(
+        `Отправлено на обследование: ${result.updated}` +
+          (result.skipped > 0 ? `, пропущено: ${result.skipped}` : ''),
+      )
+      setSurveyRefreshKey((n) => n + 1)
+    } catch (e) {
+      setSurveyMessage(String(e))
+    } finally {
+      setSurveyBusy(false)
+    }
+  }
 
   const handleSubmit = () => {
     if (canCollect) {
@@ -215,6 +286,11 @@ export function DistrictStartScreen({
             {canManagePersonnel && onOpenPersonnel && (
               <button type="button" className="btn" onClick={onOpenPersonnel}>
                 Персонал
+              </button>
+            )}
+            {canManagePersonnel && onOpenLetterReview && (
+              <button type="button" className="btn" onClick={onOpenLetterReview}>
+                Ревью писем
               </button>
             )}
             {canManagePersonnel && onOpenEmployeeLocations && (
@@ -325,6 +401,68 @@ export function DistrictStartScreen({
                 ? 'Получить задачу'
                 : 'Загрузить задачи'}
           </button>
+
+          {canManagePersonnel && (
+            <div className="district-survey-block">
+              <h3 className="district-orders-title">Обследование района</h3>
+              <p className="district-hint">
+                Свободных заказов в выбранном районе: {rayon ? selectedRayonFreeCount : '—'}
+              </p>
+              <label className="district-field">
+                <span>Исполнитель</span>
+                <select
+                  value={surveyExecutor}
+                  disabled={!rayon || surveyBusy || loading}
+                  onChange={(e) => setSurveyExecutor(e.target.value)}
+                >
+                  <option value="">— выберите —</option>
+                  {fieldUsers.map((u) => (
+                    <option key={u.uuid} value={u.login}>
+                      {personnelUserLabel(u)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {surveyConfirm ? (
+                <div className="status-confirm">
+                  <p>
+                    Отправить {selectedRayonFreeCount} свободных заказов района на обследование
+                    исполнителю {surveyExecutor}?
+                  </p>
+                  <div className="personnel-actions">
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={surveyBusy || selectedRayonFreeCount === 0}
+                      onClick={() => void handleBulkSendToSurvey()}
+                    >
+                      {surveyBusy ? 'Отправка…' : 'Подтвердить'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={surveyBusy}
+                      onClick={() => setSurveyConfirm(false)}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={
+                    !rayon || !surveyExecutor || surveyBusy || loading || selectedRayonFreeCount === 0
+                  }
+                  onClick={() => setSurveyConfirm(true)}
+                >
+                  Отправить район на обследование
+                </button>
+              )}
+              {surveyMessage && <p className="personnel-message">{surveyMessage}</p>}
+            </div>
+          )}
 
           {showAreaOrders && (
             <div className="district-orders-list">

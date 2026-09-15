@@ -25,6 +25,11 @@ import {
   type DistrictOrderVisual,
 } from '../lib/districtOrderStyle'
 import {
+  bindDistrictPolygonLabel,
+  largestDistrictPath,
+  unbindDistrictPolygonLabel,
+} from '../lib/districtPolygonLabel'
+import {
   extractDistrictMeta,
   filterDistrictGeoJsonByOkrug,
   findHoodLayerKey,
@@ -127,6 +132,7 @@ function HoodDistrictsLayer({
   styleByRayon,
   areaOrdersByRayon,
   areaOrdersReady,
+  showLabels,
 }: {
   layerKey: string | null
   selectedRayon: string
@@ -138,11 +144,15 @@ function HoodDistrictsLayer({
   styleByRayon: Map<string, DistrictOrderVisual>
   areaOrdersByRayon: AreaOrdersByRayon[]
   areaOrdersReady: boolean
+  showLabels: boolean
 }) {
   const map = useMap()
   const baseGroupRef = useRef<L.FeatureGroup | null>(null)
   const hatchGroupRef = useRef<L.FeatureGroup | null>(null)
   const rendererRef = useRef<L.SVG | null>(null)
+  const labeledPathsRef = useRef<L.Path[]>([])
+  const layersGenRef = useRef(0)
+  const [layersGen, setLayersGen] = useState(0)
   const metaReportedRef = useRef(false)
   const selectedNorm = useMemo(() => normalizeRayonName(selectedRayon), [selectedRayon])
   const selectedNormRef = useRef(selectedNorm)
@@ -153,6 +163,10 @@ function HoodDistrictsLayer({
   areaOrdersRef.current = areaOrdersByRayon
 
   useEffect(() => {
+    for (const path of labeledPathsRef.current) {
+      unbindDistrictPolygonLabel(path)
+    }
+    labeledPathsRef.current = []
     if (baseGroupRef.current) {
       map.removeLayer(baseGroupRef.current)
       baseGroupRef.current = null
@@ -211,8 +225,6 @@ function HoodDistrictsLayer({
               path._districtRayon = rayonNorm
               path._districtVisual = visual ?? undefined
               applyDistrictBlinkClass(path, districtBlinkClassName(visual?.blink ?? 'none'))
-              const label = rayonNorm || 'Район'
-              path.bindTooltip(label, { sticky: true, opacity: 0.9 })
               path.bindPopup(popupHtml, {
                 maxWidth: 360,
                 className: 'district-orders-popup',
@@ -247,8 +259,11 @@ function HoodDistrictsLayer({
             districtBlinkClassName(path._districtVisual?.blink ?? 'none'),
           )
         })
+
         baseGroupRef.current = baseGroup
         hatchGroupRef.current = hatchGroup
+        layersGenRef.current += 1
+        setLayersGen(layersGenRef.current)
 
         const bounds = baseGroup.getBounds()
         if (bounds.isValid()) {
@@ -259,6 +274,10 @@ function HoodDistrictsLayer({
 
     return () => {
       cancelled = true
+      for (const path of labeledPathsRef.current) {
+        unbindDistrictPolygonLabel(path)
+      }
+      labeledPathsRef.current = []
       if (baseGroupRef.current) {
         map.removeLayer(baseGroupRef.current)
         baseGroupRef.current = null
@@ -283,6 +302,41 @@ function HoodDistrictsLayer({
     areaOrdersReady,
     areaOrdersByRayon,
   ])
+
+  useEffect(() => {
+    for (const path of labeledPathsRef.current) {
+      unbindDistrictPolygonLabel(path)
+    }
+    labeledPathsRef.current = []
+    if (!showLabels || !layersGen) return
+
+    const baseGroup = baseGroupRef.current
+    if (!baseGroup) return
+
+    const pathsByRayon = new Map<string, L.Path[]>()
+    baseGroup.eachLayer((pathLayer) => {
+      const path = pathLayer as DistrictPath
+      const key = path._districtRayon ?? ''
+      const list = pathsByRayon.get(key) ?? []
+      list.push(path)
+      pathsByRayon.set(key, list)
+    })
+    const labeled: L.Path[] = []
+    for (const [rayon, paths] of pathsByRayon) {
+      const largest = largestDistrictPath(paths)
+      if (!largest) continue
+      bindDistrictPolygonLabel(largest, map, rayon || 'Район')
+      labeled.push(largest)
+    }
+    labeledPathsRef.current = labeled
+
+    return () => {
+      for (const path of labeledPathsRef.current) {
+        unbindDistrictPolygonLabel(path)
+      }
+      labeledPathsRef.current = []
+    }
+  }, [showLabels, layersGen, map])
 
   useEffect(() => {
     const baseGroup = baseGroupRef.current
@@ -340,6 +394,7 @@ export function DistrictPickerMap({
 }: DistrictPickerMapProps) {
   const [layerKey, setLayerKey] = useState<string | null>(null)
   const [mapMode, setMapMode] = useState<DistrictMapMode>('field')
+  const [showLabels, setShowLabels] = useState(false)
 
   const styleByRayon = useMemo(
     () => buildDistrictStyleByRayon(areaOrdersByRayon, mapMode),
@@ -355,7 +410,17 @@ export function DistrictPickerMap({
   return (
     <div className="district-map">
       <div className="district-map-toolbar">
-        <p className="district-map-hint">Или выберите район на карте</p>
+        <div className="district-map-toolbar-start">
+          <p className="district-map-hint">Или выберите район на карте</p>
+          <label className="district-map-labels-toggle">
+            <input
+              type="checkbox"
+              checked={showLabels}
+              onChange={(e) => setShowLabels(e.target.checked)}
+            />
+            Названия районов
+          </label>
+        </div>
         <div className="district-map-modes" role="group" aria-label="Режим карты">
           {DISTRICT_MAP_MODES.map((item) => (
             <button
@@ -390,6 +455,7 @@ export function DistrictPickerMap({
           styleByRayon={styleByRayon}
           areaOrdersByRayon={areaOrdersByRayon}
           areaOrdersReady={areaOrdersReady}
+          showLabels={showLabels}
         />
         {employeeLocations.length > 0 && (
           <EmployeeLocationMarkersLayer locations={employeeLocations} />

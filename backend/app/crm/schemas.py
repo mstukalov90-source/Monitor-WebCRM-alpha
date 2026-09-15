@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.routing.osrm_profiles import UnknownOsrmProfile, canonicalize_osrm_profile
+
 
 class CollectTasksRequest(BaseModel):
     rayon: str
@@ -662,6 +664,41 @@ class OatiLetterGenerateOut(BaseModel):
     download_url: str
 
 
+class OatiLetterReviewOut(BaseModel):
+    fid: int
+    task_key: str = ""
+    report_id: int | None = None
+    created_by: str = ""
+    created_at: str | None = None
+    review_status: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
+    street: str = ""
+    address: str = ""
+    rayon: str = ""
+    customer: str = ""
+    executor: str = ""
+    description: str = ""
+    today: str = ""
+    coordinates: str = ""
+    lon: float | None = None
+    lat: float | None = None
+
+
+class OatiLetterReviewUpdate(BaseModel):
+    status: str | None = None
+
+
+class BulkSendAreaToSurveyRequest(BaseModel):
+    rayon: str
+    executor: str
+
+
+class BulkSendAreaToSurveyOut(BaseModel):
+    updated: int
+    skipped: int
+
+
 # ---------------------------------------------------------------------------
 # Order route (OSRM)
 # ---------------------------------------------------------------------------
@@ -669,6 +706,15 @@ class OatiLetterGenerateOut(BaseModel):
 class OrderRouteBuildRequest(BaseModel):
     start_lng: float | None = None
     start_lat: float | None = None
+    profile: str = "foot"
+
+    @field_validator("profile")
+    @classmethod
+    def _canon_profile(cls, value: str) -> str:
+        try:
+            return canonicalize_osrm_profile(value)
+        except UnknownOsrmProfile as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class OrderRouteSegmentOut(BaseModel):
@@ -701,3 +747,4 @@ class OrderRouteContextOut(BaseModel):
     total_duration_s: float | None = None
     built_by: str | None = None
     built_at: str | None = None
+    profile: str = "foot"

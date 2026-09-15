@@ -13,6 +13,12 @@ from app.crm.order_route import (
 )
 from app.routing.gpx_export import route_to_gpx
 from app.routing.osrm_client import OsrmRouteResult, OsrmWaypoint
+from app.routing.osrm_profiles import (
+    UnknownOsrmProfile,
+    canonicalize_osrm_profile,
+    route_content_disposition,
+    route_export_names,
+)
 
 
 class DedupeNearbyTests(unittest.TestCase):
@@ -89,6 +95,29 @@ class OsrmClientResultTests(unittest.TestCase):
     def test_waypoint(self) -> None:
         wp = OsrmWaypoint(location=(37.6, 55.7), distance=12.5, name="foo")
         self.assertEqual(wp.location, (37.6, 55.7))
+
+
+class OsrmProfileTests(unittest.TestCase):
+    def test_aliases(self) -> None:
+        self.assertEqual(canonicalize_osrm_profile("А"), "driving")
+        self.assertEqual(canonicalize_osrm_profile("car"), "driving")
+        self.assertEqual(canonicalize_osrm_profile("В"), "bicycle")
+        self.assertEqual(canonicalize_osrm_profile("bike"), "bicycle")
+        self.assertEqual(canonicalize_osrm_profile("П"), "foot")
+        self.assertEqual(canonicalize_osrm_profile(None), "foot")
+
+    def test_unknown(self) -> None:
+        with self.assertRaises(UnknownOsrmProfile):
+            canonicalize_osrm_profile("train")
+
+    def test_export_names_use_order_and_letter(self) -> None:
+        ascii_name, utf_name = route_export_names("Измайлово-12", "abcd1234-key", "foot", "gpx")
+        self.assertEqual(utf_name, "Измайлово-12_П.gpx")
+        self.assertTrue(ascii_name.endswith("_P.gpx"))
+        header = route_content_disposition("12345", "abcd", "driving", "geojson")
+        self.assertIn("filename*=UTF-8''", header)
+        self.assertIn("_A.geojson", header)
+        self.assertIn("%D0%90", header)
 
 
 class MockOsrmNearestTests(unittest.TestCase):

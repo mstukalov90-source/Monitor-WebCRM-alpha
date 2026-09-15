@@ -45,6 +45,8 @@ from app.crm.schemas import (
     AnaliseDispatchContextOut,
     AnaliseDispatchRequest,
     AnaliseDispatchResultOut,
+    BulkSendAreaToSurveyOut,
+    BulkSendAreaToSurveyRequest,
     CameraBlockOptionsOut,
     CameraBlockRequest,
     CameraBlockResultOut,
@@ -89,6 +91,7 @@ from app.crm.link_resolver import (
     resolve_link_layer_infos,
     resolve_linked_features,
 )
+from app.crm.personnel import PersonnelError
 from app.crm.office_tasks import create_office_task
 from app.crm.order_search import MIN_QUERY_LENGTH, search_order_group
 from app.crm.field_data_loader import (
@@ -105,6 +108,7 @@ from app.crm.tasks_area import (
     fetch_analise_dispatch_context,
     fetch_tasks_area_geojson,
     send_area_to_survey,
+    bulk_send_area_to_survey,
     release_area_from_survey,
     complete_area_survey,
     complete_area_analise,
@@ -819,6 +823,28 @@ def get_feature_lookup(
     if feature is None:
         raise HTTPException(status_code=404, detail="Feature not found")
     return feature
+
+
+@router.post("/crm/tasks-area/bulk-send-to-survey", response_model=BulkSendAreaToSurveyOut)
+def post_area_bulk_send_to_survey(
+    body: BulkSendAreaToSurveyRequest,
+    user: UserSession = Depends(require_manager_or_admin),
+) -> BulkSendAreaToSurveyOut:
+    rayon = (body.rayon or "").strip()
+    if not rayon:
+        raise HTTPException(status_code=400, detail="Район не указан")
+    check_rayon(user, rayon)
+    try:
+        with get_connection() as conn:
+            result = bulk_send_area_to_survey(
+                conn,
+                rayon=rayon,
+                executor=body.executor,
+                login=user.login,
+            )
+    except PersonnelError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return BulkSendAreaToSurveyOut(**result)
 
 
 @router.post("/crm/tasks-area/{key}/send-to-survey")

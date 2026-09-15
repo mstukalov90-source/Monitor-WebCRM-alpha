@@ -159,10 +159,29 @@ body,
   flex-wrap: wrap;
 }
 
+.district-map-toolbar-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .district-map-hint {
   margin: 0;
   color: #666;
   font-size: 0.85rem;
+}
+
+.district-map-labels-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #444;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
 }
 
 .district-map-modes {
@@ -177,6 +196,12 @@ body,
   border-radius: 8px;
   border: 1px solid #dde3ea;
   z-index: 0;
+}
+
+.district-hood-label {
+  fill: #000;
+  font-weight: 600;
+  pointer-events: none;
 }
 
 .district-map-fallback {
@@ -1295,7 +1320,7 @@ a.btn {
 }
 
 .modal.order-group-search-modal {
-  width: min(960px, 96vw);
+  width: min(1120px, 96vw);
 }
 
 .order-group-search-form {
@@ -1452,6 +1477,40 @@ a.btn {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: flex-end;
+}
+
+.order-route-profile-select {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  min-width: 100%;
+  background: #fafafa;
+}
+
+.order-route-profile-select legend {
+  padding: 0 4px;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.order-route-profile-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.order-route-profile-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.order-route-modal .order-route-profile-select {
+  margin: 8px 0 12px;
 }
 
 .order-status-item-main {
@@ -3053,4 +3112,106 @@ a.btn {
 
 .map-popup-build-route {
   margin-top: 8px;
+}
+
+.letter-review-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 24px;
+}
+
+.letter-review-table-wrap {
+  overflow: auto;
+}
+
+.letter-review-table tr {
+  cursor: pointer;
+}
+
+.letter-review-table tr.selected {
+  background: #fff3e0;
+}
+
+.letter-review-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.letter-review-btn {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #cfd8dc;
+  background: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.letter-review-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.letter-review-btn--ok {
+  color: #2e7d32;
+}
+
+.letter-review-btn--ok.is-active {
+  background: #2e7d32;
+  border-color: #1b5e20;
+  color: #fff;
+}
+
+.letter-review-btn--no {
+  color: #c62828;
+}
+
+.letter-review-btn--no.is-active {
+  background: #c62828;
+  border-color: #b71c1c;
+  color: #fff;
+}
+
+.letter-review-btn--hide {
+  color: #546e7a;
+}
+
+.letter-review-preview {
+  width: min(720px, 96vw);
+}
+
+.letter-review-preview-meta p {
+  margin: 4px 0;
+}
+
+.letter-review-map-wrap {
+  height: 280px;
+  margin-top: 12px;
+  border: 1px solid #cfd8dc;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.letter-review-map {
+  height: 100%;
+}
+
+.letter-review-preview-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.district-survey-block {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
