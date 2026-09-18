@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -9,13 +10,14 @@ from typing import Any
 from psycopg2.extensions import connection as PgConnection
 from psycopg2.extras import RealDictCursor
 
-from app.config import crm_task_store_config
+from app.config import crm_task_store_config, crm_tasks_config
 from app.crm.reports.catalog import (
     DATASETS,
     MAX_EXPORT_ROWS,
     MAX_PARENT_KEYS,
     NEST_NESTED,
     NEST_RELATED,
+    OFFICE_CLOSED_ACTIONS,
     SURVEYED_TASK_SOURCES,
     ColumnDef,
     ReportSheetSpec,
@@ -30,9 +32,14 @@ from app.crm.statistics import (
     fetch_office_statistics_breakdown,
     fetch_recent_order_closures,
 )
-from app.crm.store import TASK_ID_COLUMNS
+from app.crm.store import TASK_ID_COLUMNS, parse_scoped_business_id
 from app.crm.tasks_area import _task_geom_union_sql
-from app.layers.geojson import normalize_rayon_name, sql_normalize_rayon_expr
+from app.layers.geojson import (
+    _parent_table_from_split,
+    normalize_rayon_name,
+    sql_normalize_rayon_expr,
+)
+from app.layers.registry import LayerDef, get_registry
 
 EXPORT_STATEMENT_TIMEOUT = "120s"
 TASK_QUERY_CHUNK = 400
@@ -54,6 +61,7 @@ EMPTY_SURVEYED_COUNTS = {
 
 ID_COLUMN_SQL = ", ".join(f'sn."{col}"' for col in TASK_ID_COLUMNS)
 ACTIVE_ID_COLUMN_SQL = ", ".join(f't."{col}"' for col in TASK_ID_COLUMNS)
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
@@ -74,6 +82,114 @@ class QueryScope:
     user_role: str | None = None
     object_type: str | None = None
     rayons: tuple[str, ...] = ()
+
+
+def _quote_ident(name: str) -> str:
+    if not _SAFE_IDENT.match(name):
+        raise ValueError(f"unsafe identifier: {name}")
+    return f'"{name}"'
+
+
+def _layers_for_subgroup(subgroup_name: str) -> list[LayerDef]:
+    for group_cfg in crm_tasks_config().get("groups", []):
+        for sub in group_cfg.get("subgroups", []):
+            if sub.get("name") == subgroup_name:
+                layers, _ = get_registry().resolve_subgroup_layers(
+                    sub.get("layers") or [],
+                    sub.get("groups") or [],
+                )
+                return layers
+    return []
+
+
+def parent_number_lookup_sql(
+    layer: LayerDef,
+    source_field: str,
+    link_field: str,
+) -> str | None:
+    parent = _parent_table_from_split(layer.qualified_table)
+    if not parent:
+        return None
+    src = _quote_ident(source_field)
+    link = _quote_ident(link_field)
+    return f"""
+        SELECT TRIM(t.{src}::text) AS raw_id,
+               NULLIF(TRIM(p.{link}::text), '') AS order_number
+        FROM {layer.qualified_table} t
+        LEFT JOIN {parent} p ON p.id = t.source_id
+        WHERE TRIM(t.{src}::text) = ANY(%s)
+    """
+
+
+def apply_data_mos_order_numbers(
+    rows: list[dict[str, Any]],
+    column: str,
+    lookup: dict[str, str],
+) -> None:
+    if not lookup:
+        return
+    for row in rows:
+        value = row.get(column)
+        if not value:
+            continue
+        key = str(value).strip()
+        mapped = lookup.get(key)
+        if mapped:
+            row[column] = mapped
+            continue
+        prefix, raw = parse_scoped_business_id(key)
+        if not prefix:
+            continue
+        mapped = lookup.get(f"{prefix}:{raw}") or lookup.get(raw)
+        if mapped:
+            row[column] = mapped
+
+
+def rewrite_scoped_task_ids(
+    conn: PgConnection,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replace point:/line:/polygon: task ids with data_mos parent order numbers."""
+    if not rows:
+        return rows
+    subgroups = crm_task_store_config().get("subgroups") or {}
+    for subgroup_name, mapping in subgroups.items():
+        column = mapping.get("task_column")
+        if column not in TASK_ID_COLUMNS or not mapping.get("scoped_geometry_id"):
+            continue
+        link_field = str(mapping.get("link_lookup_field") or "")
+        source_field = str(mapping.get("source_field") or "id")
+        if not _SAFE_IDENT.match(link_field) or not _SAFE_IDENT.match(source_field):
+            continue
+        ids_by_prefix: dict[str, set[str]] = {}
+        for row in rows:
+            value = row.get(column)
+            if not value:
+                continue
+            prefix, raw = parse_scoped_business_id(str(value))
+            if prefix and raw:
+                ids_by_prefix.setdefault(prefix, set()).add(raw)
+        if not ids_by_prefix:
+            continue
+        lookup: dict[str, str] = {}
+        for layer in _layers_for_subgroup(str(subgroup_name)):
+            prefix = layer.geometry_type
+            raw_ids = sorted(ids_by_prefix.get(prefix) or ())
+            if not raw_ids:
+                continue
+            sql = parent_number_lookup_sql(layer, source_field, link_field)
+            if not sql:
+                continue
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(sql, (raw_ids,))
+                for rec in cur.fetchall():
+                    raw_id = rec.get("raw_id")
+                    number = rec.get("order_number")
+                    if raw_id in (None, "") or number in (None, ""):
+                        continue
+                    lookup[f"{prefix}:{str(raw_id).strip()}"] = str(number).strip()
+        apply_data_mos_order_numbers(rows, str(column), lookup)
+    return rows
 
 
 def apply_export_timeout(conn: PgConnection, timeout: str = EXPORT_STATEMENT_TIMEOUT) -> None:
@@ -281,6 +397,10 @@ def _fetch_dataset(
         return fetch_active_tasks_in_orders(conn, parent_keys)
     if dataset_id == "surveyed_order_summary":
         return fetch_surveyed_order_summary(conn, scope)
+    if dataset_id == "office_closed_orders":
+        return fetch_office_closed_orders(conn, scope, filters)
+    if dataset_id == "office_closed_tasks":
+        return fetch_office_closed_tasks_in_orders(conn, scope, parent_keys, filters)
     raise ReportError(f"Неизвестный набор данных: {dataset_id}")
 
 
@@ -476,7 +596,305 @@ def fetch_closed_tasks_in_orders(
         for col in TASK_ID_COLUMNS:
             value = row.get(col)
             row[col] = str(value).strip() if value not in (None, "") else None
-    return rows
+    return rewrite_scoped_task_ids(conn, rows)
+
+
+def _office_closed_actions_from_sources(filters: dict[str, Any]) -> list[str]:
+    sources = [str(item) for item in (filters.get("sources") or []) if str(item).strip()]
+    if not sources:
+        return list(OFFICE_CLOSED_ACTIONS)
+    wanted = set(sources)
+    actions = [
+        action
+        for action, source in (
+            ("office_closed_legal", "done_legal"),
+            ("office_closed_illegal", "done_illegal"),
+        )
+        if source in wanted
+    ]
+    return actions
+
+
+def _office_closed_event_clauses(
+    scope: QueryScope,
+    *,
+    actions: list[str],
+    object_type: str,
+) -> tuple[str, list[Any]]:
+    from app.crm.statistics import _period_bounds
+
+    start, end = _period_bounds(scope.date_from, scope.date_to)
+    action_ph = ", ".join(["%s"] * len(actions))
+    clauses = [
+        "s.user_role = 'office'",
+        "s.object_type = %s",
+        "s.created_at >= %s",
+        "s.created_at <= %s",
+        f"s.action IN ({action_ph})",
+    ]
+    params: list[Any] = [object_type, start, end, *actions]
+    if scope.user_login:
+        clauses.append("s.user_login = %s")
+        params.append(scope.user_login.strip())
+    return " AND ".join(clauses), params
+
+
+def _normalize_office_order_row(row: dict[str, Any]) -> dict[str, Any]:
+    _iso_datetime(row, "closed_at")
+    area = row.get("area_hectares")
+    row["area_hectares"] = 0.0 if area is None else float(area)
+    number = row.get("task_number")
+    row["task_number"] = str(number).strip() if number is not None else None
+    rayon = row.get("rayon")
+    row["rayon"] = str(rayon).strip() if rayon else None
+    executor = row.get("executor")
+    row["executor"] = str(executor).strip() if executor else None
+    closed_by = row.get("closed_by")
+    row["closed_by"] = str(closed_by).strip() if closed_by else None
+    score = row.get("order_score")
+    row["order_score"] = str(score).strip() if score else None
+    return row
+
+
+def fetch_office_closed_orders(
+    conn: PgConnection,
+    scope: QueryScope,
+    filters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    from app.crm.statistics import STATISTICS_SCHEMA, STATISTICS_TABLE
+
+    actions = list(OFFICE_CLOSED_ACTIONS)
+    task_where, task_params = _office_closed_event_clauses(
+        scope, actions=actions, object_type="task"
+    )
+    order_where, order_params = _office_closed_event_clauses(
+        scope, actions=actions, object_type="order"
+    )
+
+    statuses = [str(item) for item in (filters.get("status") or []) if str(item).strip()]
+    status_sql = ""
+    status_params: list[Any] = []
+    if statuses:
+        placeholders = ", ".join(["%s"] * len(statuses))
+        status_sql = f"AND ta.status IN ({placeholders})"
+        status_params.extend(statuses)
+
+    rayon_sql, rayon_params = _rayon_in_sql("ta.rayon", _normalized_rayons(scope.rayons))
+    rayon_clause = f"AND {rayon_sql}" if rayon_params else ""
+
+    geom_union = _task_geom_union_sql()
+    stats = f'"{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}"'
+    query = f"""
+        WITH task_events AS (
+            SELECT DISTINCT ON (s.object_key)
+                s.object_key AS task_key,
+                s.created_at AS closed_at,
+                s.user_login AS closed_by
+            FROM {stats} s
+            WHERE {task_where}
+            ORDER BY s.object_key, s.created_at DESC
+        ),
+        geoms AS (
+            SELECT task_key, geom
+            FROM ({geom_union}) g
+            WHERE g.task_key IS NOT NULL AND g.geom IS NOT NULL
+        ),
+        from_tasks AS (
+            SELECT DISTINCT ON (ta.key)
+                ta.key,
+                ta.task_number,
+                ta.rayon,
+                ta.status,
+                te.closed_at,
+                te.closed_by,
+                COALESCE(ta.area, 0) / 10000.0 AS area_hectares,
+                ta.executor
+            FROM task_events te
+            JOIN geoms g ON g.task_key = te.task_key
+            JOIN crm.tasks_area ta
+              ON ta.geom IS NOT NULL
+             AND ta.geom && ST_Transform(g.geom, 4326)
+             AND ST_Intersects(ST_Transform(g.geom, 4326), ta.geom)
+            WHERE TRUE
+              {rayon_clause}
+              {status_sql}
+            ORDER BY ta.key, te.closed_at DESC
+        ),
+        from_orders AS (
+            SELECT DISTINCT ON (ta.key)
+                ta.key,
+                ta.task_number,
+                ta.rayon,
+                ta.status,
+                s.created_at AS closed_at,
+                s.user_login AS closed_by,
+                COALESCE(ta.area, 0) / 10000.0 AS area_hectares,
+                ta.executor
+            FROM {stats} s
+            JOIN crm.tasks_area ta ON s.object_key = ta.key
+            WHERE {order_where}
+              {rayon_clause}
+              {status_sql}
+            ORDER BY ta.key, s.created_at DESC
+        )
+        SELECT
+            u.key::text AS order_key,
+            u.task_number,
+            u.rayon,
+            u.status,
+            u.closed_at,
+            u.closed_by,
+            u.area_hectares,
+            u.executor,
+            fs.order_score
+        FROM (
+            SELECT DISTINCT ON (key)
+                key, task_number, rayon, status, closed_at, closed_by, area_hectares, executor
+            FROM (
+                SELECT * FROM from_tasks
+                UNION ALL
+                SELECT * FROM from_orders
+            ) merged
+            ORDER BY key, closed_at DESC
+        ) u
+        LEFT JOIN crm.field_score fs ON fs.order_key = u.key
+        ORDER BY u.closed_at DESC, u.task_number
+    """
+    params = [
+        *task_params,
+        *rayon_params,
+        *status_params,
+        *order_params,
+        *rayon_params,
+        *status_params,
+    ]
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, params)
+        rows = [dict(row) for row in cur.fetchall()]
+    return [_normalize_office_order_row(row) for row in rows]
+
+
+def fetch_office_closed_tasks_in_orders(
+    conn: PgConnection,
+    scope: QueryScope,
+    parent_keys: list[str],
+    filters: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not parent_keys:
+        return []
+    from app.crm.statistics import STATISTICS_SCHEMA, STATISTICS_TABLE
+
+    actions = _office_closed_actions_from_sources(filters)
+    if not actions:
+        return []
+
+    sources = [
+        "done_legal" if action == "office_closed_legal" else "done_illegal"
+        for action in actions
+    ]
+    snap_parts: list[str] = []
+    for source in sources:
+        mapping = SNAPSHOT_SOURCE_MAP.get(source)
+        if mapping is None:
+            continue
+        schema, table = _snapshot_table(*mapping)
+        snap_parts.append(
+            f"""
+            SELECT
+                '{source}' AS closure_kind,
+                sn.task_key,
+                sn.type AS group_name,
+                sn.sent_at,
+                COALESCE(sn.is_field_data, FALSE) AS is_field_data,
+                COALESCE(sn.is_office_task, FALSE) AS is_office_task,
+                {ID_COLUMN_SQL}
+            FROM "{schema}"."{table}" sn
+            """
+        )
+    snaps_sql = " UNION ALL ".join(snap_parts) if snap_parts else (
+        "SELECT NULL::text AS closure_kind, NULL::uuid AS task_key, "
+        "NULL::text AS group_name, NULL::timestamptz AS sent_at, "
+        "FALSE AS is_field_data, FALSE AS is_office_task, "
+        + ", ".join(f"NULL::text AS {col}" for col in TASK_ID_COLUMNS)
+        + " WHERE FALSE"
+    )
+
+    event_where, event_params = _office_closed_event_clauses(
+        scope, actions=actions, object_type="task"
+    )
+    geom_union = _task_geom_union_sql()
+    stats = f'"{STATISTICS_SCHEMA}"."{STATISTICS_TABLE}"'
+    query = f"""
+        WITH task_events AS (
+            SELECT DISTINCT ON (s.object_key)
+                s.object_key AS task_key,
+                CASE s.action
+                    WHEN 'office_closed_legal' THEN 'done_legal'
+                    ELSE 'done_illegal'
+                END AS closure_kind,
+                s.created_at AS closed_at,
+                s.user_login AS closed_by
+            FROM {stats} s
+            WHERE {event_where}
+            ORDER BY s.object_key, s.created_at DESC
+        ),
+        snaps AS (
+            {snaps_sql}
+        ),
+        geoms AS (
+            SELECT task_key, geom
+            FROM ({geom_union}) g
+            WHERE g.task_key IS NOT NULL AND g.geom IS NOT NULL
+        ),
+        orders AS (
+            SELECT
+                ta.key,
+                ta.task_number,
+                ta.rayon,
+                ta.geom
+            FROM crm.tasks_area ta
+            WHERE ta.key = ANY(%s::uuid[])
+              AND ta.geom IS NOT NULL
+        )
+        SELECT DISTINCT ON (o.key, te.task_key)
+            o.key::text AS order_key,
+            o.task_number AS order_task_number,
+            o.rayon AS order_rayon,
+            te.closure_kind,
+            sn.group_name,
+            te.task_key::text AS task_key,
+            COALESCE(sn.sent_at, te.closed_at) AS sent_at,
+            te.closed_by,
+            COALESCE(sn.is_field_data, FALSE) AS is_field_data,
+            COALESCE(sn.is_office_task, FALSE) AS is_office_task,
+            {", ".join(f"sn.{col}" for col in TASK_ID_COLUMNS)}
+        FROM task_events te
+        JOIN geoms g ON g.task_key = te.task_key
+        JOIN orders o
+          ON o.geom && ST_Transform(g.geom, 4326)
+         AND ST_Intersects(ST_Transform(g.geom, 4326), o.geom)
+        LEFT JOIN snaps sn
+          ON sn.task_key = te.task_key
+         AND sn.closure_kind = te.closure_kind
+        ORDER BY o.key, te.task_key, te.closed_at DESC
+    """
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(query, (*event_params, parent_keys))
+        rows = [dict(row) for row in cur.fetchall()]
+    for row in rows:
+        _iso_datetime(row, "sent_at")
+        number = row.get("order_task_number")
+        row["order_task_number"] = str(number).strip() if number is not None else None
+        rayon = row.get("order_rayon")
+        row["order_rayon"] = str(rayon).strip() if rayon else None
+        closed_by = row.get("closed_by")
+        row["closed_by"] = str(closed_by).strip() if closed_by else None
+        row["is_field_data"] = bool(row.get("is_field_data"))
+        row["is_office_task"] = bool(row.get("is_office_task"))
+        for col in TASK_ID_COLUMNS:
+            value = row.get(col)
+            row[col] = str(value).strip() if value not in (None, "") else None
+    return rewrite_scoped_task_ids(conn, rows)
 
 
 def fetch_active_tasks_in_orders(
@@ -534,7 +952,7 @@ def fetch_active_tasks_in_orders(
         for col in TASK_ID_COLUMNS:
             value = row.get(col)
             row[col] = str(value).strip() if value not in (None, "") else None
-    return rows
+    return rewrite_scoped_task_ids(conn, rows)
 
 
 def resolve_surveyed_task_outcome(kinds: list[str] | set[str] | tuple[str, ...]) -> str | None:

@@ -61,6 +61,7 @@ ORDER_SCORE_LABELS: dict[str, str] = {
 
 CLOSED_TASK_SOURCES = ("done_legal", "done_illegal")
 SURVEYED_TASK_SOURCES = ("done_illegal", "done_legal", "clear")
+OFFICE_CLOSED_ACTIONS = ("office_closed_legal", "office_closed_illegal")
 
 ValueType = Literal["str", "int", "float", "datetime", "bool"]
 NestMode = Literal["related_sheet", "nested_rows"]
@@ -208,6 +209,24 @@ CLOSED_TASK_COLUMNS = (
     _col("avr_mos_id", "АВР"),
 )
 
+OFFICE_CLOSED_TASK_COLUMNS = (
+    _col("order_key", "Ключ заказа"),
+    _col("order_task_number", "Номер заказа"),
+    _col("order_rayon", "Район заказа"),
+    _col("closure_kind", "Вид закрытия", fmt="closure_kind"),
+    _col("group_name", "Группа"),
+    _col("task_key", "Ключ задачи"),
+    _col("sent_at", "Дата закрытия задачи", "datetime"),
+    _col("closed_by", "Закрыл"),
+    _col("is_field_data", "Полевые данные", "bool"),
+    _col("is_office_task", "Камеральная задача", "bool"),
+    _col("ogh_id", "ОГХ"),
+    _col("oati_id", "ОАТИ"),
+    _col("earthwork_id", "Земляные работы"),
+    _col("localwork_id", "Местные работы"),
+    _col("avr_mos_id", "АВР"),
+)
+
 SURVEYED_ORDER_SUMMARY_COLUMNS = (
     _col("order_key", "Ключ заказа"),
     _col("task_number", "Номер заказа"),
@@ -329,10 +348,31 @@ DATASETS: dict[str, DatasetDef] = {
         ),
         columns=SURVEYED_ORDER_SUMMARY_COLUMNS,
     ),
+    "office_closed_orders": DatasetDef(
+        id="office_closed_orders",
+        label="Заказы, закрытые офисом",
+        description=(
+            "Заказы из crm.tasks_area, в которых офис закрыл задачи "
+            "(office_closed_legal / office_closed_illegal) за период."
+        ),
+        columns=CLOSED_ORDER_COLUMNS,
+        filters=(STATUS_FILTER,),
+    ),
+    "office_closed_tasks": DatasetDef(
+        id="office_closed_tasks",
+        label="Задачи, закрытые офисом",
+        description=(
+            "Задачи, закрытые пользователями с ролью office внутри выбранных заказов."
+        ),
+        columns=OFFICE_CLOSED_TASK_COLUMNS,
+        filters=(SOURCES_FILTER,),
+        parent_datasets=("office_closed_orders",),
+    ),
 }
 
 PRESET_CLOSED_ORDERS_WITH_TASKS_ID = "closed_orders_with_tasks"
 PRESET_SURVEYED_ORDER_SUMMARY_ID = "surveyed_order_summary"
+PRESET_OFFICE_CLOSED_ORDERS_WITH_TASKS_ID = "office_closed_orders_with_tasks"
 
 
 class ReportSheetSpec(BaseModel):
@@ -439,6 +479,49 @@ def preset_surveyed_order_summary() -> ReportSpec:
     )
 
 
+def preset_office_closed_orders_with_tasks() -> ReportSpec:
+    return ReportSpec(
+        name="Закрытые офисом заказы и задачи",
+        sheets=[
+            ReportSheetSpec(
+                id="orders",
+                dataset="office_closed_orders",
+                title="Заказы",
+                columns=[
+                    "task_number",
+                    "rayon",
+                    "status",
+                    "closed_at",
+                    "closed_by",
+                    "area_hectares",
+                    "executor",
+                    "order_score",
+                ],
+            ),
+            ReportSheetSpec(
+                id="tasks",
+                dataset="office_closed_tasks",
+                title="Задачи внутри заказов",
+                parent_sheet="orders",
+                nest=NEST_RELATED,
+                columns=[
+                    "order_task_number",
+                    "order_rayon",
+                    "closure_kind",
+                    "group_name",
+                    "task_key",
+                    "sent_at",
+                    "closed_by",
+                    "oati_id",
+                    "earthwork_id",
+                    "ogh_id",
+                ],
+                filters={"sources": list(CLOSED_TASK_SOURCES)},
+            ),
+        ],
+    )
+
+
 def _child_datasets(dataset_id: str) -> list[dict[str, str]]:
     children = []
     for item in DATASETS.values():
@@ -481,6 +564,7 @@ def catalog_payload() -> dict[str, Any]:
         )
     closed_preset = preset_closed_orders_with_tasks()
     surveyed_preset = preset_surveyed_order_summary()
+    office_preset = preset_office_closed_orders_with_tasks()
     return {
         "datasets": datasets,
         "presets": [
@@ -493,6 +577,11 @@ def catalog_payload() -> dict[str, Any]:
                 "id": PRESET_SURVEYED_ORDER_SUMMARY_ID,
                 "name": surveyed_preset.name,
                 "spec": surveyed_preset.model_dump(),
+            },
+            {
+                "id": PRESET_OFFICE_CLOSED_ORDERS_WITH_TASKS_ID,
+                "name": office_preset.name,
+                "spec": office_preset.model_dump(),
             },
         ],
         "nest_modes": [

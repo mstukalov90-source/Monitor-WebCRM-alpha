@@ -17,6 +17,7 @@ from app.crm.reports.catalog import (
     catalog_payload,
     format_cell_value,
     preset_closed_orders_with_tasks,
+    preset_office_closed_orders_with_tasks,
     preset_surveyed_order_summary,
     validate_report_spec,
 )
@@ -24,6 +25,7 @@ from app.crm.reports.errors import ReportError
 from app.crm.reports.excel import build_workbook_bytes, content_disposition
 from app.crm.reports.query import (
     SheetData,
+    _office_closed_actions_from_sources,
     aggregate_surveyed_order_counts,
     resolve_surveyed_task_outcome,
 )
@@ -169,7 +171,44 @@ class ValidateReportSpecTests(unittest.TestCase):
         preset_ids = {item["id"] for item in payload["presets"]}
         self.assertEqual(
             preset_ids,
-            {"closed_orders_with_tasks", "surveyed_order_summary"},
+            {
+                "closed_orders_with_tasks",
+                "surveyed_order_summary",
+                "office_closed_orders_with_tasks",
+            },
+        )
+
+    def test_office_closed_preset_is_valid(self) -> None:
+        spec = validate_report_spec(preset_office_closed_orders_with_tasks())
+        self.assertEqual(spec.sheets[0].dataset, "office_closed_orders")
+        self.assertEqual(spec.sheets[1].dataset, "office_closed_tasks")
+        self.assertEqual(spec.sheets[1].parent_sheet, "orders")
+        self.assertIn("closed_by", spec.sheets[1].columns)
+
+    def test_catalog_lists_office_closed_parent_child(self) -> None:
+        payload = catalog_payload()
+        datasets = {item["id"]: item for item in payload["datasets"]}
+        self.assertIn("office_closed_orders", datasets)
+        self.assertIn("office_closed_tasks", datasets)
+        child_ids = {item["id"] for item in datasets["office_closed_orders"]["child_datasets"]}
+        self.assertIn("office_closed_tasks", child_ids)
+        self.assertEqual(
+            datasets["office_closed_tasks"]["parent_datasets"],
+            ["office_closed_orders"],
+        )
+
+    def test_office_closed_actions_from_sources(self) -> None:
+        self.assertEqual(
+            _office_closed_actions_from_sources({}),
+            ["office_closed_legal", "office_closed_illegal"],
+        )
+        self.assertEqual(
+            _office_closed_actions_from_sources({"sources": ["done_legal"]}),
+            ["office_closed_legal"],
+        )
+        self.assertEqual(
+            _office_closed_actions_from_sources({"sources": ["done_illegal"]}),
+            ["office_closed_illegal"],
         )
 
     def test_surveyed_analise_flags_format_as_yes_no(self) -> None:
@@ -397,6 +436,87 @@ class SurveyedOutcomeTests(unittest.TestCase):
                 "tasks_open": 0,
             },
         )
+
+
+class DataMosOrderNumberRewriteTests(unittest.TestCase):
+    def test_parent_sql_joins_split_table_to_items(self) -> None:
+        from app.layers.registry import LayerDef
+        from app.crm.reports.query import parent_number_lookup_sql
+
+        layer = LayerDef(
+            layer_key="oati_points",
+            display_name="oati_points",
+            schema="data_mos",
+            table_name="items_2855_points",
+            geometry_column="geom",
+            geometry_type="point",
+            symbology={},
+        )
+        sql = parent_number_lookup_sql(layer, "id", "order_number")
+        self.assertIsNotNone(sql)
+        assert sql is not None
+        self.assertIn('FROM "data_mos"."items_2855_points" t', sql)
+        self.assertIn('LEFT JOIN "data_mos"."items_2855" p ON p.id = t.source_id', sql)
+        self.assertIn('p."order_number"', sql)
+
+    def test_apply_replaces_scoped_business_ids(self) -> None:
+        from app.crm.reports.query import apply_data_mos_order_numbers
+
+        rows = [
+            {"oati_id": "point:101", "earthwork_id": "line:7"},
+            {"oati_id": "polygon:999", "earthwork_id": None},
+        ]
+        apply_data_mos_order_numbers(rows, "oati_id", {"point:101": "ОРД-1"})
+        apply_data_mos_order_numbers(rows, "earthwork_id", {"line:7": "УВ-7"})
+        self.assertEqual(rows[0]["oati_id"], "ОРД-1")
+        self.assertEqual(rows[0]["earthwork_id"], "УВ-7")
+        self.assertEqual(rows[1]["oati_id"], "polygon:999")
+
+    def test_rewrite_looks_up_parent_numbers(self) -> None:
+        from app.crm.reports.query import rewrite_scoped_task_ids
+
+        class FakeCursor:
+            def execute(self, sql: str, params: tuple) -> None:
+                ids = set(params[0])
+                mapping: dict[str, str] = {}
+                if "items_2855" in sql:
+                    mapping = {"101": "ОРД-1"}
+                elif "items_62501" in sql:
+                    mapping = {"7": "УВ-7"}
+                elif "items_62461" in sql:
+                    mapping = {"3": "АВР-3"}
+                self._rows = [
+                    {"raw_id": raw_id, "order_number": mapping[raw_id]}
+                    for raw_id in ids
+                    if raw_id in mapping
+                ]
+
+            def fetchall(self) -> list[dict[str, str]]:
+                return self._rows
+
+            def __enter__(self) -> "FakeCursor":
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        class FakeConn:
+            def cursor(self, cursor_factory=None) -> FakeCursor:
+                return FakeCursor()
+
+        rows = [
+            {
+                "oati_id": "point:101",
+                "earthwork_id": "line:7",
+                "avr_mos_id": "polygon:3",
+                "ogh_id": "42",
+            }
+        ]
+        rewrite_scoped_task_ids(FakeConn(), rows)
+        self.assertEqual(rows[0]["oati_id"], "ОРД-1")
+        self.assertEqual(rows[0]["earthwork_id"], "УВ-7")
+        self.assertEqual(rows[0]["avr_mos_id"], "АВР-3")
+        self.assertEqual(rows[0]["ogh_id"], "42")
 
 
 if __name__ == "__main__":
