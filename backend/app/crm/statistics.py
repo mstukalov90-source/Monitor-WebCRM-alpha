@@ -681,7 +681,6 @@ def fetch_geo_statistics(
                 FROM odh_export.hood
                 WHERE rayon IS NOT NULL
                   AND TRIM(rayon::text) <> ''
-                  AND TRIM(COALESCE(okrug_shor, '')) NOT IN ('НАО', 'ТАО')
             ) h
             ORDER BY rayon_norm, gid
         ),

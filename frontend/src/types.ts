@@ -657,9 +657,8 @@ export function formatEmployeeLocationTableCell(
 export const HOOD_BOUNDARIES_DISPLAY_NAME = 'Границы районов'
 export const DISTRICT_RAYON_FIELD = 'rayon'
 export const DISTRICT_OKRUG_FIELD = 'okrug_shor'
-export const EXCLUDED_OKRUG_SHORT = ['НАО', 'ТАО'] as const
-/** Bbox Москвы и ближайшей области: minLon,minLat,maxLon,maxLat */
-export const MOSCOW_MAP_BBOX = '36.8,55.4,38.2,56.1'
+/** Bbox Москвы включая Новую Москву: minLon,minLat,maxLon,maxLat */
+export const MOSCOW_MAP_BBOX = '36.7,55.1,38.2,56.1'
 
 /** Collapse whitespace (incl. CR/LF) and strip spaces around hyphens. */
 export function normalizeRayonName(value: string): string {
@@ -671,22 +670,6 @@ export function resolveRayonFromDistricts(raw: unknown, districts: string[]): st
   if (!normalized) return ''
   const match = districts.find((d) => normalizeRayonName(d) === normalized)
   return match ?? normalized
-}
-
-export function isExcludedDistrictOkrug(okrugShor: unknown): boolean {
-  const value = normalizeRayonName(String(okrugShor ?? ''))
-  return (EXCLUDED_OKRUG_SHORT as readonly string[]).includes(value)
-}
-
-export function filterDistrictGeoJson(
-  geojson: GeoJSON.FeatureCollection,
-): GeoJSON.FeatureCollection {
-  return {
-    ...geojson,
-    features: geojson.features.filter(
-      (feature) => !isExcludedDistrictOkrug(feature.properties?.[DISTRICT_OKRUG_FIELD]),
-    ),
-  }
 }
 
 export interface Symbology {

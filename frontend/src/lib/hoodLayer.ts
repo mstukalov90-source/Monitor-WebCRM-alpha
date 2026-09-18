@@ -2,7 +2,6 @@ import type { LayerGroupConfig } from '../types'
 import {
   DISTRICT_OKRUG_FIELD,
   DISTRICT_RAYON_FIELD,
-  filterDistrictGeoJson,
   HOOD_BOUNDARIES_DISPLAY_NAME,
   normalizeRayonName,
 } from '../types'
@@ -29,13 +28,12 @@ export interface DistrictHoodMeta {
   rayonToOkrug: Record<string, string>
 }
 
-/** Build okrug list and rayon↔okrug map from hood GeoJSON (after НАО/ТАО filter). */
+/** Build okrug list and rayon↔okrug map from hood GeoJSON. */
 export function extractDistrictMeta(geojson: GeoJSON.FeatureCollection): DistrictHoodMeta {
-  const filtered = filterDistrictGeoJson(geojson)
   const okrugSet = new Set<string>()
   const rayonToOkrug: Record<string, string> = {}
 
-  for (const feature of filtered.features) {
+  for (const feature of geojson.features) {
     const rayon = normalizeRayonName(String(feature.properties?.[DISTRICT_RAYON_FIELD] ?? ''))
     const okrug = normalizeRayonName(String(feature.properties?.[DISTRICT_OKRUG_FIELD] ?? ''))
     if (okrug) okrugSet.add(okrug)

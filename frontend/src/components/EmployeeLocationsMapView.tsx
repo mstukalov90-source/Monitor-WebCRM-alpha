@@ -10,7 +10,6 @@ import { MapResizeObserver } from './MapResizeObserver'
 import type { EmployeeLocationFeature } from '../types'
 import {
   DISTRICT_RAYON_FIELD,
-  filterDistrictGeoJson,
   MOSCOW_MAP_BBOX,
   normalizeRayonName,
 } from '../types'
@@ -65,8 +64,7 @@ function DistrictBoundaryLayer({ districtName }: { districtName: string }) {
     fetchGeoJson(layerKey, MOSCOW_MAP_BBOX, 500)
       .then((geojson) => {
         if (cancelled) return
-        const filtered = filterDistrictGeoJson(geojson)
-        const features = filtered.features.filter(
+        const features = geojson.features.filter(
           (feature) =>
             normalizeRayonName(String(feature.properties?.[DISTRICT_RAYON_FIELD] ?? '')) === districtNorm,
         )

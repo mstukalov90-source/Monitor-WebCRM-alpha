@@ -220,7 +220,6 @@ def get_districts(user: UserSession = Depends(get_current_user)) -> dict:
             schema,
             table,
             field,
-            exclude_okrug_shor=["НАО", "ТАО"],
             allowed_gids=allowed_gids,
         )
     return {"districts": rayons}

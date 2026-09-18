@@ -38,7 +38,6 @@ import {
 import type { EmployeeLocationFeature } from '../types'
 import {
   DISTRICT_RAYON_FIELD,
-  filterDistrictGeoJson,
   MOSCOW_MAP_BBOX,
   normalizeRayonName,
   resolveRayonFromDistricts,
@@ -191,10 +190,7 @@ function HoodDistrictsLayer({
           onHoodMetaRef.current?.(extractDistrictMeta(geojson))
         }
 
-        const filtered = filterDistrictGeoJsonByOkrug(
-          filterDistrictGeoJson(geojson),
-          selectedOkrug,
-        )
+        const filtered = filterDistrictGeoJsonByOkrug(geojson, selectedOkrug)
         const renderer = createAreaSvgRenderer(map)
         rendererRef.current = renderer
 

@@ -42,7 +42,6 @@ def list_personnel_districts(conn: PgConnection) -> list[dict[str, Any]]:
         HOOD_SCHEMA,
         HOOD_TABLE,
         field,
-        exclude_okrug_shor=["НАО", "ТАО"],
     )
 
 

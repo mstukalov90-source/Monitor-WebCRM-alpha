@@ -17,7 +17,6 @@ import { MapResizeObserver } from './MapResizeObserver'
 import { YandexMapsControl } from './YandexMapsControl'
 import {
   DISTRICT_RAYON_FIELD,
-  filterDistrictGeoJson,
   MOSCOW_MAP_BBOX,
   normalizeRayonName,
   buildTaskPopupHtml,
@@ -91,8 +90,7 @@ function DistrictBoundaryLayer({ districtName }: { districtName?: string | null 
       .then((geojson) => {
         if (cancelled) return
 
-        const filtered = filterDistrictGeoJson(geojson)
-        const features = filtered.features.filter(
+        const features = geojson.features.filter(
           (feature) =>
             normalizeRayonName(String(feature.properties?.[DISTRICT_RAYON_FIELD] ?? '')) === districtNorm,
         )
